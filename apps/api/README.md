@@ -64,6 +64,15 @@ This directory contains the backend for the TRACE-X platform, built with FastAPI
     ```bash
     python scripts/generate_data.py
     ```
+
+4.  **Clear the database (Optional):**
+
+    To delete all data from your database, you can run the `clear_database.py` script.
+
+    ```bash
+    python scripts/clear_database.py
+    ```
+    
     -   After the script finishes, you can restart the server.
 
 ## Project Structure

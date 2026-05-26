@@ -1,4 +1,3 @@
-import asyncio
 import random
 from datetime import datetime, timedelta
 from faker import Faker
@@ -9,7 +8,6 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from app.db.session import get_db
-from app.core.config import settings
 
 fake = Faker()
 
@@ -17,7 +15,7 @@ fake = Faker()
 NUM_ACCOUNTS = 100
 NUM_TRANSACTIONS = 500
 
-async def create_account(session):
+def create_account(session):
     account_id = f"ACC_{fake.uuid4()[:8]}"
     entity_id = f"ENT_{fake.uuid4()[:8]}"
     account_type = random.choice(["SAVINGS", "CURRENT", "WALLET"])
@@ -46,14 +44,14 @@ async def create_account(session):
     })
     RETURN a.account_id
     """
-    result = await session.run(query, {
+    result = session.run(query, {
         "account_id": account_id, "entity_id": entity_id, "account_type": account_type,
         "kyc_tier": kyc_tier, "status": status, "opened_on": opened_on,
         "risk_category": risk_category
     })
-    return await result.single()
+    return result.single()
 
-async def create_transaction(session, sender_id, receiver_id):
+def create_transaction(session, sender_id, receiver_id):
     txn_id = f"TXN_{fake.uuid4()[:8]}"
     amount = round(random.uniform(100.0, 100000.0), 2)
     channel = random.choice(["UPI", "NEFT", "RTGS", "IMPS", "CASH"])
@@ -81,23 +79,23 @@ async def create_transaction(session, sender_id, receiver_id):
         narration: $narration
     })
     """
-    await session.run(query, {
+    session.run(query, {
         "sender_id": sender_id, "receiver_id": receiver_id, "txn_id": txn_id,
         "amount": amount, "channel": channel, "txn_ts": txn_ts, "status": status,
         "narration": narration
     })
 
-async def main():
+def main():
     driver = get_db()
-    async with driver.session() as session:
+    with driver.session() as session:
         # Clear existing data
-        await session.run("MATCH (n) DETACH DELETE n")
+        session.run("MATCH (n) DETACH DELETE n")
         print("Cleared existing data.")
 
         # Create accounts
         account_ids = []
         for _ in range(NUM_ACCOUNTS):
-            record = await create_account(session)
+            record = create_account(session)
             if record:
                 account_ids.append(record[0])
         print(f"Created {len(account_ids)} accounts.")
@@ -105,7 +103,7 @@ async def main():
         # Create transactions
         for i in range(NUM_TRANSACTIONS):
             sender_id, receiver_id = random.sample(account_ids, 2)
-            await create_transaction(session, sender_id, receiver_id)
+            create_transaction(session, sender_id, receiver_id)
             if (i + 1) % 100 == 0:
                 print(f"Created {i + 1}/{NUM_TRANSACTIONS} transactions.")
         
@@ -114,16 +112,5 @@ async def main():
     driver.close()
 
 if __name__ == "__main__":
-    # Note: The neo4j-python-driver's async support is experimental.
-    # For this script, we are using the sync driver in an async-like manner.
-    # A more robust solution would use an async-native driver if available.
-    
-    # A simple way to run this async main function
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    loop.run_until_complete(main())
+    main()
 
