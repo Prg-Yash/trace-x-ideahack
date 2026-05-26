@@ -21,6 +21,10 @@ coverage
 # Vercel
 .vercel
 
+#python environment
+venv/
+__pycache__/
+
 # Build Outputs
 .next/
 out/

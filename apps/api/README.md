@@ -1,6 +1,6 @@
-# G-TEN Platform API
+# TRACE-X Platform API
 
-This directory contains the backend for the G-TEN platform, built with FastAPI.
+This directory contains the backend for the TRACE-X platform, built with FastAPI.
 
 ## Development Setup
 
@@ -29,20 +29,42 @@ This directory contains the backend for the G-TEN platform, built with FastAPI.
     Create a `.env` file in the `apps/api` directory and add the following, replacing the placeholder values with your Neo4j credentials:
 
     ```env
-    NEO4J_URI="bolt://localhost:7687"
+    NEO4J_URI="neo4j+s://your-aura-instance.databases.neo4j.io"
     NEO4J_USER="neo4j"
-    NEO4J_PASSWORD="your_password"
+    NEO4J_PASSWORD="your_aura_password"
     ```
 
 ### Running the Application
 
-To start the FastAPI server, run the following command from the `apps/api` directory:
+1.  **Start the FastAPI server:**
 
-```bash
-uvicorn app.main:app --reload
-```
+    To start the FastAPI server, run the following command from the `apps/api` directory:
 
-The API will be available at `http://127.0.0.1:8000`, and the interactive documentation can be accessed at `http://127.0.0.1:8000/docs`.
+    ```bash
+    uvicorn app.main:app --reload
+    ```
+
+    The API will be available at `http://127.0.0.1:8000`, and the interactive documentation can be accessed at `http://127.0.0.1:8000/docs`.
+
+2.  **Set up the database schema:**
+
+    Once the server is running, you need to set up the database schema. This only needs to be done once.
+
+    -   Open your browser and go to the API documentation at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
+    -   Find the `/api/v1/schema/setup` endpoint, expand it, and click "Try it out".
+    -   Click "Execute". This will create the necessary constraints and indexes in your Neo4j database.
+
+3.  **Generate synthetic data (Optional):**
+
+    To populate your database with sample data for development, run the data generation script.
+
+    -   Stop the `uvicorn` server (if it's running) by pressing `Ctrl+C`.
+    -   Run the script from the `apps/api` directory (make sure your virtual environment is active):
+
+    ```bash
+    python scripts/generate_data.py
+    ```
+    -   After the script finishes, you can restart the server.
 
 ## Project Structure
 

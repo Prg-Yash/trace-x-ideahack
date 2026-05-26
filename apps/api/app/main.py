@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.api import health
+from app.api import health, schema
 from app.core.config import settings
 
 app = FastAPI(
@@ -9,7 +9,8 @@ app = FastAPI(
 
 # API routers
 app.include_router(health.router, prefix=settings.API_V1_STR)
+app.include_router(schema.router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to the G-TEN Platform API"}
+    return {"message": "Welcome to the TRACE-X Platform API"}

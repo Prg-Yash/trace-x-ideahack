@@ -1,7 +1,7 @@
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "G-TEN Platform"
+    PROJECT_NAME: str = "TRACE-X"
     API_V1_STR: str = "/api/v1"
 
     NEO4J_URI: str
