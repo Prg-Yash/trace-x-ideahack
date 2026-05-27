@@ -3,23 +3,45 @@ from datetime import datetime, timedelta
 from faker import Faker
 import os
 import sys
+from tqdm import tqdm
 
 # Add the project root to the Python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from app.db.session import get_db
 
 fake = Faker()
 
 # --- Configuration ---
-NUM_ACCOUNTS = 100
-NUM_TRANSACTIONS = 500
-ALERT_RATIO = 0.05  # 5% of accounts will have an alert
+# Increased scale for better model training
+NUM_ACCOUNTS = 5000
+NUM_CLEAN_TRANSACTIONS = 25000
+NUM_LAYERING_CHAINS = 50
+NUM_SMURFING_CLUSTERS = 50
+NUM_DORMANCY_ACTIVATIONS = 50
 
-def create_account(session):
-    """Creates a single account with default metrics."""
-    account_id = f"ACC_{fake.uuid4().hex[:12]}"
-    entity_id = f"ENT_{fake.uuid4().hex[:8]}"
+def setup_schema(session):
+    """Creates constraints and indexes for the graph schema."""
+    print("Setting up schema constraints and indexes...")
+    
+    # Constraints ensure uniqueness
+    session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (a:Account) REQUIRE a.account_id IS UNIQUE")
+    session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (t:Transaction) REQUIRE t.txn_id IS UNIQUE")
+    session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (al:Alert) REQUIRE al.alert_id IS UNIQUE")
+
+    # Indexes speed up lookups
+    session.run("CREATE INDEX IF NOT EXISTS FOR (a:Account) ON (a.entity_id)")
+    session.run("CREATE INDEX IF NOT EXISTS FOR (a:Account) ON (a.is_fraud)")
+    session.run("CREATE INDEX IF NOT EXISTS FOR (t:Transaction) ON (t.sender_id)")
+    session.run("CREATE INDEX IF NOT EXISTS FOR (t:Transaction) ON (t.receiver_id)")
+    session.run("CREATE INDEX IF NOT EXISTS FOR (t:Transaction) ON (t.txn_ts)")
+    
+    print("Schema setup complete.")
+
+
+def create_account(session, entity_id, risk_category, kyc_tier, is_fraud=False, status='ACTIVE', opened_on=None):
+    """Creates a single account with specific characteristics."""
+    account_id = f"ACC_{fake.uuid4().replace('-', '')[:12]}"
     
     query = """
     CREATE (a:Account {
@@ -27,9 +49,12 @@ def create_account(session):
         entity_id: $entity_id,
         account_type: $account_type,
         kyc_tier: $kyc_tier,
-        status: 'ACTIVE',
+        status: $status,
         opened_on: $opened_on,
         risk_category: $risk_category,
+        is_fraud: $is_fraud,
+        
+        // Initialize behavioral metrics
         txn_count_7d: 0,
         txn_count_30d: 0,
         volume_7d: 0.0,
@@ -37,43 +62,40 @@ def create_account(session):
         avg_monthly_volume: 0.0,
         avg_monthly_count: 0.0,
         unique_counterparties_30d: 0,
-        last_active_ts: null
+        last_active_ts: null,
+        dormancy_days: $dormancy_days,
+        fraud_score: 0.0,
+        last_scored_ts: null
     })
     RETURN a.account_id
     """
+    
+    open_date = opened_on if opened_on else fake.date_between(start_date="-5y", end_date="today")
+    dormancy = (datetime.now().date() - open_date).days if status == 'ACTIVE' else 0
+
     result = session.run(query, {
         "account_id": account_id,
         "entity_id": entity_id,
         "account_type": random.choice(["SAVINGS", "CURRENT", "WALLET"]),
-        "kyc_tier": random.randint(0, 2),
-        "opened_on": fake.date_between(start_date="-5y", end_date="today"),
-        "risk_category": random.choice(["LOW", "MEDIUM", "HIGH"])
+        "kyc_tier": kyc_tier,
+        "status": status,
+        "opened_on": open_date,
+        "risk_category": risk_category,
+        "is_fraud": is_fraud,
+        "dormancy_days": dormancy
     })
-    return result.single()
+    return result.single()[0]
 
-def create_transaction(session, sender_id, receiver_id):
-    """Creates a transaction and updates account metrics."""
-    txn_ts = datetime.now() - timedelta(days=random.randint(0, 365))
-    amount = round(random.uniform(100.0, 100000.0), 2)
+def create_transaction(session, sender_id, receiver_id, amount, channel, txn_ts, narration=""):
+    """Creates a single transaction and updates account metrics."""
+    txn_id = f"TXN_{fake.uuid4().replace('-', '')[:12]}"
     
-    # Determine if the transaction is within the last 7 or 30 days
-    is_in_7d = (datetime.now() - txn_ts).days <= 7
-    is_in_30d = (datetime.now() - txn_ts).days <= 30
-
     query = """
     // Find sender and receiver
     MATCH (sender:Account {account_id: $sender_id})
     MATCH (receiver:Account {account_id: $receiver_id})
 
-    // Create the transaction relationship
-    CREATE (sender)-[r:TRANSFERRED_TO {
-        txn_id: $txn_id,
-        amount: $amount,
-        channel: $channel,
-        txn_ts: $txn_ts
-    }]->(receiver)
-
-    // Create the transaction node
+    // Create the Transaction node
     CREATE (t:Transaction {
         txn_id: $txn_id,
         sender_id: $sender_id,
@@ -85,96 +107,207 @@ def create_transaction(session, sender_id, receiver_id):
         narration: $narration
     })
 
-    // Update sender and receiver metrics
+    // Create the TRANSFERRED_TO relationship
+    CREATE (sender)-[r:TRANSFERRED_TO {
+        txn_id: $txn_id,
+        amount: $amount,
+        channel: $channel,
+        txn_ts: $txn_ts
+    }]->(receiver)
+
+    // Update metrics for both sender and receiver
     SET sender.last_active_ts = $txn_ts,
         receiver.last_active_ts = $txn_ts,
-        sender.txn_count_30d = sender.txn_count_30d + (CASE WHEN $is_in_30d THEN 1 ELSE 0 END),
-        sender.volume_30d = sender.volume_30d + (CASE WHEN $is_in_30d THEN $amount ELSE 0.0 END),
-        sender.txn_count_7d = sender.txn_count_7d + (CASE WHEN $is_in_7d THEN 1 ELSE 0 END),
-        sender.volume_7d = sender.volume_7d + (CASE WHEN $is_in_7d THEN $amount ELSE 0.0 END),
-        receiver.txn_count_30d = receiver.txn_count_30d + (CASE WHEN $is_in_30d THEN 1 ELSE 0 END),
-        receiver.volume_30d = receiver.volume_30d + (CASE WHEN $is_in_30d THEN $amount ELSE 0.0 END),
-        receiver.txn_count_7d = receiver.txn_count_7d + (CASE WHEN $is_in_7d THEN 1 ELSE 0 END),
-        receiver.volume_7d = receiver.volume_7d + (CASE WHEN $is_in_7d THEN $amount ELSE 0.0 END)
+        sender.dormancy_days = 0,
+        receiver.dormancy_days = 0,
+        
+        sender.txn_count_30d = sender.txn_count_30d + 1,
+        sender.volume_30d = sender.volume_30d + $amount,
+        sender.txn_count_7d = CASE WHEN $is_in_7d THEN sender.txn_count_7d + 1 ELSE sender.txn_count_7d END,
+        sender.volume_7d = CASE WHEN $is_in_7d THEN sender.volume_7d + $amount ELSE sender.volume_7d END,
+
+        receiver.txn_count_30d = receiver.txn_count_30d + 1,
+        receiver.volume_30d = receiver.volume_30d + $amount,
+        receiver.txn_count_7d = CASE WHEN $is_in_7d THEN receiver.txn_count_7d + 1 ELSE receiver.txn_count_7d END,
+        receiver.volume_7d = CASE WHEN $is_in_7d THEN receiver.volume_7d + $amount ELSE receiver.volume_7d END
     """
+    
+    is_in_7d = (datetime.now() - txn_ts).days <= 7
+    
     session.run(query, {
         "sender_id": sender_id,
         "receiver_id": receiver_id,
-        "txn_id": f"TXN_{fake.uuid4().hex[:12]}",
+        "txn_id": txn_id,
         "amount": amount,
-        "channel": random.choice(["UPI", "NEFT", "RTGS", "IMPS", "CASH"]),
+        "channel": channel,
         "txn_ts": txn_ts,
-        "narration": fake.sentence(),
-        "is_in_7d": is_in_7d,
-        "is_in_30d": is_in_30d
+        "narration": narration,
+        "is_in_7d": is_in_7d
     })
 
-def create_alert(session, account_id):
-    """Creates an alert and flags an account."""
-    query = """
-    MATCH (a:Account {account_id: $account_id})
+def create_alert(session, pattern, accounts, total_amount, hop_depth=0, time_window_hrs=0):
+    """Creates a single alert linked to multiple accounts."""
+    alert_id = f"ALT_{fake.uuid4().replace('-', '')[:12]}"
+    
+    # Create the Alert node
+    alert_query = """
     CREATE (al:Alert {
         alert_id: $alert_id,
         alert_ts: $alert_ts,
-        model: $model,
+        model: 'SYNTHETIC',
         pattern: $pattern,
-        fraud_prob: $fraud_prob,
-        tier: $tier,
+        fraud_prob: 1.0,
+        tier: 'CRITICAL',
         total_amount: $total_amount,
         hop_depth: $hop_depth,
         time_window_hrs: $time_window_hrs,
         status: 'NEW'
     })
-    CREATE (a)-[r:FLAGGED_IN {role: $role}]->(al)
+    RETURN al.alert_id
     """
-    session.run(query, {
-        "account_id": account_id,
-        "alert_id": f"ALT_{fake.uuid4().hex[:12]}",
-        "alert_ts": datetime.now() - timedelta(hours=random.randint(1, 72)),
-        "model": random.choice(["GNN", "LSTM", "ISOLATION_FOREST"]),
-        "pattern": random.choice(["LAYERING", "SMURFING", "DORMANCY"]),
-        "fraud_prob": round(random.uniform(0.6, 1.0), 2),
-        "tier": random.choice(["WATCH", "ESCALATE", "CRITICAL"]),
-        "total_amount": round(random.uniform(50000, 1000000), 2),
-        "hop_depth": random.randint(2, 10),
-        "time_window_hrs": random.randint(1, 24),
-        "role": random.choice(["SOURCE", "INTERMEDIARY", "DESTINATION"])
+    session.run(alert_query, {
+        "alert_id": alert_id,
+        "alert_ts": datetime.now(),
+        "pattern": pattern,
+        "total_amount": total_amount,
+        "hop_depth": hop_depth,
+        "time_window_hrs": time_window_hrs
     })
+
+    # Link the alert to all involved accounts
+    link_query = """
+    MATCH (a:Account) WHERE a.account_id IN $account_ids
+    MATCH (al:Alert {alert_id: $alert_id})
+    CREATE (a)-[:FLAGGED_IN {role: 'PARTICIPANT'}]->(al)
+    """
+    session.run(link_query, {"account_ids": accounts, "alert_id": alert_id})
+
+
+def create_layering_chain(session, chain_length=5):
+    """Creates a multi-hop layering chain."""
+    entity_id = f"ENT_{fake.uuid4().replace('-', '')[:8]}"
+    accounts = [create_account(session, entity_id, 'HIGH', 1, is_fraud=True) for _ in range(chain_length)]
+    
+    total_amount = 0
+    start_amount = random.uniform(500000, 2000000)
+    
+    for i in range(chain_length - 1):
+        sender = accounts[i]
+        receiver = accounts[i+1]
+        
+        # Amount slightly decreases at each hop
+        amount = start_amount * (1 - (i * 0.05)) 
+        amount = round(amount, 2)
+        total_amount += amount
+        
+        txn_ts = datetime.now() - timedelta(hours=chain_length - i)
+        
+        create_transaction(session, sender, receiver, amount, "NEFT", txn_ts, "Fund Transfer")
+
+    create_alert(session, "LAYERING", accounts, total_amount, hop_depth=chain_length, time_window_hrs=chain_length)
+    return accounts
+
+def create_smurfing_cluster(session, num_smurfs=10):
+    """Creates a smurfing cluster converging on a hub account."""
+    hub_entity = f"ENT_{fake.uuid4().replace('-', '')[:8]}"
+    hub_account = create_account(session, hub_entity, 'HIGH', 1, is_fraud=True)
+    
+    smurf_accounts = []
+    for _ in range(num_smurfs):
+        smurf_entity = f"ENT_{fake.uuid4().replace('-', '')[:8]}"
+        smurf_accounts.append(create_account(session, smurf_entity, 'MEDIUM', 1, is_fraud=True))
+        
+    total_amount = 0
+    time_window_hrs = 24
+    
+    for smurf in smurf_accounts:
+        # Multiple small transactions from each smurf
+        for _ in range(random.randint(2, 5)):
+            amount = random.uniform(10000, 49000) # Below reporting thresholds
+            total_amount += amount
+            txn_ts = datetime.now() - timedelta(hours=random.uniform(1, time_window_hrs))
+            create_transaction(session, smurf, hub_account, amount, "IMPS", txn_ts, "Deposit")
+            
+    all_involved = smurf_accounts + [hub_account]
+    create_alert(session, "SMURFING", all_involved, total_amount, time_window_hrs=time_window_hrs)
+    return all_involved
+
+def create_dormancy_activation(session):
+    """Creates a dormant account that suddenly becomes active."""
+    entity_id = f"ENT_{fake.uuid4().replace('-', '')[:8]}"
+    dormant_account = create_account(
+        session, entity_id, 'HIGH', 0, is_fraud=True, status='DORMANT',
+        opened_on=fake.date_between(start_date="-3y", end_date="-2y")
+    )
+    
+    # Create a destination account for the funds
+    dest_account = create_account(session, f"ENT_{fake.uuid4().replace('-', '')[:8]}", 'LOW', 2)
+    
+    total_amount = 0
+    time_window_hrs = 12
+    
+    # Sudden burst of activity
+    for _ in range(random.randint(5, 10)):
+        amount = random.uniform(100000, 500000)
+        total_amount += amount
+        txn_ts = datetime.now() - timedelta(minutes=random.uniform(1, time_window_hrs * 60))
+        create_transaction(session, dormant_account, dest_account, amount, "RTGS", txn_ts, "Urgent Payout")
+        
+    all_involved = [dormant_account, dest_account]
+    create_alert(session, "DORMANCY", all_involved, total_amount, time_window_hrs=time_window_hrs)
+    return all_involved
 
 def main():
     driver = get_db()
     with driver.session() as session:
-        # Clear existing data
+        # 1. Clear existing data and set up schema
         print("Clearing existing data...")
         session.run("MATCH (n) DETACH DELETE n")
-        print("Cleared existing data.")
+        setup_schema(session)
 
-        # Create accounts
-        print("Creating accounts...")
-        account_ids = []
-        for _ in range(NUM_ACCOUNTS):
-            record = create_account(session)
-            if record:
-                account_ids.append(record[0])
-        print(f"Created {len(account_ids)} accounts.")
-
-        # Create transactions
-        print("Creating transactions and updating account metrics...")
-        for i in range(NUM_TRANSACTIONS):
-            sender_id, receiver_id = random.sample(account_ids, 2)
-            create_transaction(session, sender_id, receiver_id)
-            if (i + 1) % 100 == 0:
-                print(f"  ...created {i + 1}/{NUM_TRANSACTIONS} transactions.")
-        print("Finished creating transactions.")
-
-        # Create alerts
-        print("Creating alerts...")
-        num_alerts = int(NUM_ACCOUNTS * ALERT_RATIO)
-        accounts_to_alert = random.sample(account_ids, num_alerts)
-        for account_id in accounts_to_alert:
-            create_alert(session, account_id)
-        print(f"Created {num_alerts} alerts.")
+        # 2. Create personas: clean and fraudulent accounts
+        print("Creating account personas...")
+        clean_accounts = []
+        fraud_accounts = []
         
+        # Create a base of clean accounts
+        for _ in tqdm(range(NUM_ACCOUNTS), desc="Creating Clean Accounts"):
+            entity_id = f"ENT_{fake.uuid4().replace('-', '')[:8]}"
+            risk = random.choice(['LOW'] * 7 + ['MEDIUM'] * 3) # 70% low, 30% medium
+            kyc = random.choice([1, 2, 2, 2])
+            clean_accounts.append(create_account(session, entity_id, risk, kyc))
+
+        # 3. Generate structured fraud patterns
+        print("\nGenerating structured fraud patterns...")
+        for _ in tqdm(range(NUM_LAYERING_CHAINS), desc="Generating Layering Chains"):
+            fraud_accounts.extend(create_layering_chain(session, random.randint(4, 8)))
+            
+        for _ in tqdm(range(NUM_SMURFING_CLUSTERS), desc="Generating Smurfing Clusters"):
+            fraud_accounts.extend(create_smurfing_cluster(session, random.randint(8, 15)))
+
+        for _ in tqdm(range(NUM_DORMANCY_ACTIVATIONS), desc="Generating Dormancy Activations"):
+            fraud_accounts.extend(create_dormancy_activation(session))
+            
+        # 4. Generate clean, non-fraudulent transactions
+        print("\nGenerating clean background transactions...")
+        for _ in tqdm(range(NUM_CLEAN_TRANSACTIONS), desc="Generating Clean Transactions"):
+            sender, receiver = random.sample(clean_accounts, 2)
+            amount = random.uniform(100, 50000)
+            channel = random.choice(["UPI", "IMPS"])
+            txn_ts = datetime.now() - timedelta(days=random.randint(0, 365))
+            create_transaction(session, sender, receiver, amount, channel, txn_ts, fake.sentence())
+
+        # 5. Final summary
+        print("\n--- Data Generation Summary ---")
+        total_accounts = session.run("MATCH (a:Account) RETURN count(a) AS count").single()['count']
+        total_txns = session.run("MATCH ()-[r:TRANSFERRED_TO]->() RETURN count(r) AS count").single()['count']
+        total_alerts = session.run("MATCH (al:Alert) RETURN count(al) AS count").single()['count']
+        
+        print(f"Total Accounts Created: {total_accounts}")
+        print(f"  - Clean Accounts: {len(clean_accounts)}")
+        print(f"  - Fraud Accounts: {len(set(fraud_accounts))}")
+        print(f"Total Transactions Created: {total_txns}")
+        print(f"Total Alerts Created: {total_alerts}")
         print("\nSynthetic data generation complete.")
 
     driver.close()
