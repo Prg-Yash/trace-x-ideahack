@@ -78,12 +78,10 @@ This directory contains the backend for the TRACE-X platform, built with FastAPI
 ## Project Structure
 
 -   `app/`: Main application folder.
-    -   `api/`: API endpoint definitions (routers).
+-   `routers/`: API endpoint definitions (routers).
     -   `core/`: Application configuration and settings.
     -   `db/`: Database connection and session management.
-    -   `models/`: Pydantic models for data validation and schema definition.
-    -   `services/`: Business logic and interaction with the database.
-    -   `utils/`: Utility functions.
+-   Shared schemas live in `packages/py-schemas` as `trace_x_schemas`.
 -   `main.py`: FastAPI application entry point.
 -   `requirements.txt`: Python dependencies.
 -   `scripts/`: Standalone scripts (e.g., for data generation).

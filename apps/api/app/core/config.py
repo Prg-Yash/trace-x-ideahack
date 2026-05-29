@@ -1,4 +1,11 @@
-from pydantic_settings import BaseSettings
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+API_DIR = Path(__file__).resolve().parents[2]
+ROOT_DIR = Path(__file__).resolve().parents[4]
+API_ENV = API_DIR / ".env"
+ROOT_ENV = ROOT_DIR / ".env"
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "TRACE-X"
@@ -8,7 +15,6 @@ class Settings(BaseSettings):
     NEO4J_USER: str
     NEO4J_PASSWORD: str
 
-    class Config:
-        env_file = ".env"
+    model_config = SettingsConfigDict(env_file=(str(ROOT_ENV), str(API_ENV)))
 
 settings = Settings()

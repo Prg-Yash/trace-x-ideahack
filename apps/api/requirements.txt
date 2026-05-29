@@ -4,3 +4,17 @@ python-dotenv
 neo4j
 pydantic
 pydantic-settings
+pandas
+numpy
+joblib
+scikit-learn
+torch
+shap
+-e ../../packages/py-schemas
+pandas
+numpy
+torch
+scikit-learn
+joblib
+shap
+-e ../../packages/py-schemas
