@@ -70,9 +70,9 @@ export default function AnalyticsPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   useEffect(() => {
-    fetchJson<{ total: number; alerts: AlertItem[] }>("/alerts?limit=50")
+    fetchJson<{ total: number; alerts: AlertItem[] }>("/alerts/quick?limit=200")
       .then((r) => setAlerts(r.alerts))
-      .catch(() => {})
+      .catch((e) => console.error(e))
       .finally(() => setLoading(false));
   }, []);
 

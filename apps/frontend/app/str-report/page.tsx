@@ -152,6 +152,30 @@ export default function STRReportPage() {
 
   useEffect(() => () => { if (typewriterRef.current) clearTimeout(typewriterRef.current); }, []);
 
+  const handlePrint = () => {
+    if (!fullText) return;
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>STR Report - ${reportData?.account_id}</title>
+          <style>
+            body { font-family: 'Courier New', Courier, monospace; font-size: 13px; white-space: pre-wrap; padding: 40px; color: black; background: white; line-height: 1.6; }
+            @media print { body { padding: 0; } }
+          </style>
+        </head>
+        <body>${fullText}</body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 250);
+  };
+
   const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" });
 
   return (
@@ -293,6 +317,17 @@ export default function STRReportPage() {
               ) : (
                 <><svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Submit to FIU-IND</>
               )}
+            </button>
+
+            <button
+              onClick={handlePrint}
+              disabled={!reportText || generating}
+              className={`w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-3 text-sm font-bold text-slate-300 hover:bg-white/[0.08] transition flex items-center justify-center gap-2 disabled:opacity-40`}
+            >
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Export as PDF
             </button>
           </div>
         </div>
