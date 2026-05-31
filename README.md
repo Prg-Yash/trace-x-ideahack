@@ -4,8 +4,8 @@
 This project addresses **PS03: Tracking of Funds within Bank for Fraud Detection**. TRACE-X combines Neo4j graph algorithms, PyTorch sequence modeling (BiLSTM), and Scikit-learn anomaly detection (Isolation Forest) to instantly track and flag complex financial crimes like rapid layering, round-tripping, and smurfing.
 
 ## Live Demo
-🔗 Live Demo: [Placeholder Link]
-🎥 Demo Video: [Placeholder Link]
+🔗 Live Demo: https://tracex.devally.in
+🎥 Demo Video: https://youtu.be/ayQX3xO0Hfg
 
 If no live deployment: Run locally using instructions below.
 
