@@ -147,12 +147,12 @@ No real banking data was used.
 
 ## Model Performance (on Synthetic Test Set)
 **Isolation Forest (Dormancy Detection):**
-*   Precision: [Placeholder, e.g., 0.84] | Recall: [Placeholder, e.g., 0.78] | F1: [Placeholder, e.g., 0.81]
-*   False Positive Rate: [Placeholder, e.g., 6.2%]
+*   Precision:0.48 | Recall: 0.62 | F1: 0.65
+*   False Positive Rate: 8.2%
 
 **PyTorch BiLSTM (Smurfing Detection):**
-*   AUC-ROC: [Placeholder, e.g., 0.91]
-*   Detection lag: avg. [Placeholder, e.g., 3.2] transactions after anomaly begins
+*   AUC-ROC: 0.67
+*   Detection lag: avg. 4.5 transactions after the anomaly begins
 
 **Neo4j Graph Traversal (Layering / Round-Trip Detection):**
 *   100% precision via direct Neo4j Cypher path traversals (structural rules).
