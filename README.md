@@ -176,7 +176,7 @@ Note: These results are on synthetic data. Performance on real bank data would r
 ## Contact
 For any queries about this submission:
 Team Name: DevAlly
-Institute: [Your College Name Placeholder]
-Email: [Team Email Placeholder]
+Institute: SIES Graduate School of Technolofy
+Email: yashnimse92@gmail.com
 
 iDEA 2.0 Phase 2 Submission
