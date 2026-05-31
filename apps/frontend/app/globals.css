@@ -17,31 +17,32 @@
   --muted: #64748b;
 }
 
-@theme inline {
+@theme {
   --color-background: var(--bg);
   --color-foreground: var(--foreground);
   --font-sans: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
+@layer base {
+  html {
+    background: var(--bg);
+    scroll-behavior: smooth;
+  }
 
-html {
-  background: var(--bg);
-  scroll-behavior: smooth;
+  body {
+    background: var(--bg);
+    color: var(--foreground);
+    font-family: "Inter", system-ui, sans-serif;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: inherit; text-decoration: none; }
+  button, input, select, textarea { font: inherit; }
 }
 
-body {
-  background: var(--bg);
-  color: var(--foreground);
-  font-family: "Inter", system-ui, sans-serif;
-  min-height: 100vh;
-  -webkit-font-smoothing: antialiased;
-}
 
-a { color: inherit; text-decoration: none; }
-
-button, input, select, textarea { font: inherit; }
 
 ::selection { background: rgba(34, 211, 238, 0.25); color: #f8fafc; }
 

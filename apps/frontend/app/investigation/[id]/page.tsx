@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { fetchJson } from "../../lib/tracex";
+import * as d3 from "d3";
 
 /* ─── Types ─────────────────────────────────────────── */
 type ScoreResponse = {
@@ -78,158 +79,188 @@ function getInsights(score: ScoreResponse): string[] {
 /* ─── D3 Graph ─────────────────────────────────────── */
 function FundFlowGraph({ chain, amounts, suspicious }: { chain: string[]; amounts: number[]; suspicious: boolean }) {
   const svgRef = useRef<SVGSVGElement>(null);
-  const [ready, setReady] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!chain.length || !svgRef.current) return;
-    const el = svgRef.current;
-    const W = el.clientWidth || 600;
-    const H = el.clientHeight || 320;
+    if (!chain.length || !svgRef.current || !wrapperRef.current) return;
+    
+    const svg = d3.select(svgRef.current);
+    svg.selectAll("*").remove();
 
-    // Clear
-    while (el.firstChild) el.removeChild(el.firstChild);
-
-    const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-    // Arrow marker
-    const mkArrow = (id: string, color: string) => {
-      const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
-      marker.setAttribute("id", id);
-      marker.setAttribute("markerWidth", "8");
-      marker.setAttribute("markerHeight", "8");
-      marker.setAttribute("refX", "6");
-      marker.setAttribute("refY", "3");
-      marker.setAttribute("orient", "auto");
-      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute("d", "M0,0 L0,6 L8,3 z");
-      path.setAttribute("fill", color);
-      marker.appendChild(path);
-      return marker;
-    };
-    // Glow filter
-    const filter = document.createElementNS("http://www.w3.org/2000/svg", "filter");
-    filter.setAttribute("id", "glow");
-    const fe = document.createElementNS("http://www.w3.org/2000/svg", "feGaussianBlur");
-    fe.setAttribute("stdDeviation", "4");
-    fe.setAttribute("result", "coloredBlur");
-    filter.appendChild(fe);
-    defs.appendChild(mkArrow("arrow-normal", "#475569"));
-    defs.appendChild(mkArrow("arrow-sus", "#f43f5e"));
-    defs.appendChild(filter);
-    el.appendChild(defs);
-
-    const n = chain.length;
-    const padX = 60;
-    const spacing = (W - padX * 2) / Math.max(n - 1, 1);
-
-    // Draw edges first
-    for (let i = 0; i < n - 1; i++) {
-      const x1 = padX + i * spacing;
-      const x2 = padX + (i + 1) * spacing;
-      const y = H / 2;
-
-      // Edge line
-      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      line.setAttribute("x1", String(x1 + 24));
-      line.setAttribute("y1", String(y));
-      line.setAttribute("x2", String(x2 - 24));
-      line.setAttribute("y2", String(y));
-      line.setAttribute("stroke", suspicious ? "#f43f5e" : "#334155");
-      line.setAttribute("stroke-width", suspicious ? "2" : "1.5");
-      line.setAttribute("marker-end", suspicious ? "url(#arrow-sus)" : "url(#arrow-normal)");
-      line.setAttribute("stroke-dasharray", suspicious ? "none" : "none");
-      line.style.opacity = "0";
-      line.style.transition = `opacity 0.3s ${i * 150 + 200}ms`;
-      el.appendChild(line);
-      setTimeout(() => { line.style.opacity = "1"; }, 10);
-
-      // Amount label
-      if (amounts[i] != null) {
-        const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        txt.setAttribute("x", String((x1 + x2) / 2));
-        txt.setAttribute("y", String(y - 16));
-        txt.setAttribute("text-anchor", "middle");
-        txt.setAttribute("font-size", "10");
-        txt.setAttribute("fill", suspicious ? "#fda4af" : "#64748b");
-        txt.setAttribute("font-family", "JetBrains Mono, monospace");
-        txt.textContent = fmtInr(amounts[i]);
-        txt.style.opacity = "0";
-        txt.style.transition = `opacity 0.3s ${i * 150 + 350}ms`;
-        el.appendChild(txt);
-        setTimeout(() => { txt.style.opacity = "1"; }, 10);
-      }
+    const width = wrapperRef.current.clientWidth || 600;
+    const height = wrapperRef.current.clientHeight || 400;
+    
+    // Prepare data
+    const nodes = chain.map((id, i) => ({ 
+      id, 
+      label: id.replace("ACC_", ""),
+      isOrigin: i === 0,
+      isDest: i === chain.length - 1
+    }));
+    
+    const links = [];
+    for (let i = 0; i < chain.length - 1; i++) {
+      links.push({
+        source: chain[i],
+        target: chain[i + 1],
+        amount: amounts[i]
+      });
     }
 
-    // Draw nodes
-    chain.forEach((nodeId, i) => {
-      const x = padX + i * spacing;
-      const y = H / 2;
-      const delay = i * 150;
-
-      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      g.setAttribute("transform", `translate(${x},${y})`);
-      g.style.opacity = "0";
-      g.style.transition = `opacity 0.4s ${delay}ms, transform 0.4s ${delay}ms`;
-      g.style.transform = `translate(${x}px,${y}px) scale(0)`;
-
-      // Outer glow (suspicious)
-      if (suspicious) {
-        const glow = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        glow.setAttribute("r", "28");
-        glow.setAttribute("fill", "rgba(244,63,94,0.12)");
-        glow.setAttribute("filter", "url(#glow)");
-        g.appendChild(glow);
-      }
-
-      // Main circle
-      const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-      const isFirst = i === 0, isLast = i === n - 1;
-      circle.setAttribute("r", "22");
-      circle.setAttribute("fill", suspicious
-        ? (isFirst ? "rgba(244,63,94,0.25)" : isLast ? "rgba(244,63,94,0.15)" : "rgba(244,63,94,0.1)")
-        : "rgba(34,211,238,0.1)");
-      circle.setAttribute("stroke", suspicious ? "#f43f5e" : isFirst ? "#22d3ee" : "#334155");
-      circle.setAttribute("stroke-width", isFirst || isLast ? "2" : "1.5");
-      g.appendChild(circle);
-
-      // Label inside
-      const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      lbl.setAttribute("text-anchor", "middle");
-      lbl.setAttribute("dominant-baseline", "central");
-      lbl.setAttribute("font-size", "7.5");
-      lbl.setAttribute("font-family", "JetBrains Mono, monospace");
-      lbl.setAttribute("fill", suspicious ? "#fda4af" : "#67e8f9");
-      lbl.setAttribute("font-weight", "600");
-      lbl.textContent = nodeId.replace("ACC_", "");
-      g.appendChild(lbl);
-
-      // Label below
-      const sub = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      sub.setAttribute("y", "34");
-      sub.setAttribute("text-anchor", "middle");
-      sub.setAttribute("font-size", "8");
-      sub.setAttribute("fill", "#475569");
-      sub.textContent = isFirst ? "origin" : isLast ? "destination" : `hop ${i}`;
-      g.appendChild(sub);
-
-      el.appendChild(g);
-
-      // Animate in
-      setTimeout(() => {
-        g.style.opacity = "1";
-        g.style.transform = `translate(${x}px,${y}px) scale(1)`;
-        setReady(true);
-      }, delay + 10);
+    // Set up zoom & pan
+    const zoom = d3.zoom().scaleExtent([0.3, 4]).on("zoom", (e) => {
+      gMain.attr("transform", e.transform);
     });
+    svg.call(zoom as any);
+
+    const gMain = svg.append("g");
+
+    // Defs for arrows & glow
+    const defs = svg.append("defs");
+    
+    const createMarker = (id: string, color: string) => {
+      defs.append("marker")
+        .attr("id", id)
+        .attr("viewBox", "0 -5 10 10")
+        .attr("refX", 28)
+        .attr("refY", 0)
+        .attr("markerWidth", 6)
+        .attr("markerHeight", 6)
+        .attr("orient", "auto")
+        .append("path")
+        .attr("d", "M0,-5L10,0L0,5")
+        .attr("fill", color);
+    };
+    createMarker("arrow-normal", "#475569");
+    createMarker("arrow-sus", "#f43f5e");
+
+    const filter = defs.append("filter").attr("id", "glow");
+    filter.append("feGaussianBlur").attr("stdDeviation", "5").attr("result", "coloredBlur");
+    const feMerge = filter.append("feMerge");
+    feMerge.append("feMergeNode").attr("in", "coloredBlur");
+    feMerge.append("feMergeNode").attr("in", "SourceGraphic");
+
+    // Simulation
+    const simulation = d3.forceSimulation(nodes as any)
+      .force("link", d3.forceLink(links).id((d: any) => d.id).distance(140))
+      .force("charge", d3.forceManyBody().strength(-1200))
+      .force("center", d3.forceCenter(width / 2, height / 2))
+      .force("collide", d3.forceCollide().radius(50));
+
+    // Links
+    const linkGroup = gMain.append("g")
+      .attr("stroke-opacity", 0.6)
+      .selectAll("g")
+      .data(links)
+      .enter().append("g");
+
+    const linkPaths = linkGroup.append("line")
+      .attr("stroke", suspicious ? "#f43f5e" : "#334155")
+      .attr("stroke-width", suspicious ? 2 : 1.5)
+      .attr("marker-end", suspicious ? "url(#arrow-sus)" : "url(#arrow-normal)");
+
+    const linkLabels = linkGroup.append("text")
+      .attr("font-size", "10")
+      .attr("fill", suspicious ? "#fda4af" : "#64748b")
+      .attr("font-family", "JetBrains Mono, monospace")
+      .attr("text-anchor", "middle")
+      .attr("dy", -6)
+      .text((d: any) => d.amount != null ? fmtInr(d.amount) : "");
+
+    // Nodes
+    const nodeGroup = gMain.append("g")
+      .selectAll("g")
+      .data(nodes)
+      .enter().append("g")
+      .style("cursor", "grab")
+      .call(d3.drag()
+        .on("start", function(e, d: any) {
+          d3.select(this).style("cursor", "grabbing");
+          if (!e.active) simulation.alphaTarget(0.3).restart();
+          d.fx = d.x; d.fy = d.y;
+        })
+        .on("drag", (e, d: any) => {
+          d.fx = e.x; d.fy = e.y;
+        })
+        .on("end", function(e, d: any) {
+          d3.select(this).style("cursor", "grab");
+          if (!e.active) simulation.alphaTarget(0);
+          d.fx = null; d.fy = null;
+        }) as any);
+
+    // Node outer glow / pulsing rings
+    nodeGroup.append("circle")
+      .attr("r", 28)
+      .attr("fill", "transparent")
+      .attr("stroke", (d: any) => suspicious ? "rgba(244,63,94,0.3)" : "rgba(34,211,238,0.2)")
+      .attr("stroke-width", 1)
+      .attr("filter", suspicious ? "url(#glow)" : null)
+      .attr("class", suspicious ? "animate-pulse" : "");
+
+    // Node circles
+    nodeGroup.append("circle")
+      .attr("r", 22)
+      .attr("fill", (d: any) => suspicious 
+        ? (d.isOrigin ? "rgba(244,63,94,0.35)" : d.isDest ? "rgba(244,63,94,0.2)" : "rgba(244,63,94,0.1)")
+        : "rgba(34,211,238,0.15)")
+      .attr("stroke", (d: any) => suspicious ? "#f43f5e" : d.isOrigin ? "#22d3ee" : "#334155")
+      .attr("stroke-width", (d: any) => d.isOrigin || d.isDest ? 2 : 1.5)
+      .style("transition", "fill 0.3s");
+
+    // Node Labels
+    nodeGroup.append("text")
+      .attr("text-anchor", "middle")
+      .attr("dominant-baseline", "central")
+      .attr("font-size", "7.5")
+      .attr("font-family", "JetBrains Mono, monospace")
+      .attr("fill", suspicious ? "#fda4af" : "#67e8f9")
+      .attr("font-weight", "600")
+      .style("pointer-events", "none")
+      .text((d: any) => d.label);
+
+    nodeGroup.append("text")
+      .attr("y", 38)
+      .attr("text-anchor", "middle")
+      .attr("font-size", "9")
+      .attr("fill", "#64748b")
+      .style("pointer-events", "none")
+      .text((d: any, i) => d.isOrigin ? "Origin" : d.isDest ? "Destination" : `Hop ${i}`);
+
+    simulation.on("tick", () => {
+      linkPaths
+        .attr("x1", (d: any) => d.source.x)
+        .attr("y1", (d: any) => d.source.y)
+        .attr("x2", (d: any) => d.target.x)
+        .attr("y2", (d: any) => d.target.y);
+      
+      linkLabels
+        .attr("x", (d: any) => (d.source.x + d.target.x) / 2)
+        .attr("y", (d: any) => (d.source.y + d.target.y) / 2);
+
+      nodeGroup.attr("transform", (d: any) => `translate(${d.x},${d.y})`);
+    });
+
+    // Center initially
+    setTimeout(() => {
+      svg.transition().duration(750).call(
+        zoom.transform as any, 
+        d3.zoomIdentity.translate(width/2, height/2).scale(0.8).translate(-width/2, -height/2)
+      );
+    }, 100);
+
   }, [chain, amounts, suspicious]);
 
   return (
-    <div className="relative w-full h-full">
-      {!ready && chain.length > 0 && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="text-xs text-slate-500 animate-pulse">Rendering graph…</div>
-        </div>
-      )}
+    <div ref={wrapperRef} className="relative w-full h-full min-h-[400px] bg-slate-900/40 rounded-xl border border-white/[0.04] overflow-hidden cursor-move shadow-inner">
       <svg ref={svgRef} className="w-full h-full" />
+      <div className="absolute top-3 left-3 flex items-center gap-2 pointer-events-none bg-slate-900/60 px-3 py-1.5 rounded-lg border border-white/[0.05] backdrop-blur-md">
+        <svg width="12" height="12" fill="none" stroke="#22d3ee" strokeWidth="2" viewBox="0 0 24 24"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M19 9l3 3-3 3M9 19l3 3 3-3M2 12h20M12 2v20"/></svg>
+        <span className="text-[10px] uppercase tracking-widest text-cyan-400 font-semibold">Interactive D3 Force Graph</span>
+      </div>
+      <div className="absolute bottom-3 right-3 pointer-events-none text-[10px] text-slate-500 font-mono flex flex-col items-end gap-1">
+        <span>Scroll to zoom</span>
+        <span>Drag to pan / move nodes</span>
+      </div>
     </div>
   );
 }
@@ -367,12 +398,12 @@ export default function InvestigationPage() {
               </div>
             </div>
 
-            {/* Dormancy info */}
-            {d.dormant && (
+            {/* Dormancy info — only show when account was actually dormant */}
+            {d.dormant && (d.dormant.dormancy_days ?? 0) > 0 && (
               <div className="space-y-2 mb-3">
                 <div className="flex justify-between text-xs">
                   <span className="text-slate-500">Days dormant</span>
-                  <span className="font-mono font-semibold text-amber-300">{d.dormant.dormancy_days ?? "—"}</span>
+                  <span className="font-mono font-semibold text-amber-300">{d.dormant.dormancy_days}</span>
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-slate-500">30d volume</span>
@@ -381,23 +412,23 @@ export default function InvestigationPage() {
               </div>
             )}
 
-            {/* KYC info */}
-            {d.kyc_mismatch && (
-              <div className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-3 space-y-1.5 mb-3">
-                <div className="text-[10px] text-slate-500 uppercase tracking-wide">KYC Profile</div>
+            {/* KYC info — only show when actually detected as mismatched */}
+            {d.kyc_mismatch && d.kyc_mismatch.detected && (
+              <div className="rounded-xl border border-cyan-400/20 bg-cyan-400/5 p-3 space-y-1.5 mb-3">
+                <div className="text-[10px] text-cyan-400/70 uppercase tracking-wide">KYC Profile</div>
                 <div className="flex justify-between text-xs">
                   <span className="text-slate-500">Expected / mo</span>
                   <span className="font-mono text-slate-300">{d.kyc_mismatch.expected_monthly != null ? fmtInr(d.kyc_mismatch.expected_monthly) : "—"}</span>
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-slate-500">Actual / mo</span>
-                  <span className={`font-mono font-semibold ${d.kyc_mismatch.detected ? "text-rose-400" : "text-slate-300"}`}>
+                  <span className="font-mono font-semibold text-rose-400">
                     {d.kyc_mismatch.actual_monthly != null ? fmtInr(d.kyc_mismatch.actual_monthly) : "—"}
                   </span>
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-slate-500">Mismatch ratio</span>
-                  <span className={`font-mono font-bold ${d.kyc_mismatch.detected ? "text-rose-300" : "text-slate-400"}`}>
+                  <span className="font-mono font-bold text-rose-300">
                     {d.kyc_mismatch.mismatch_ratio?.toFixed(2)}×
                   </span>
                 </div>
@@ -418,11 +449,22 @@ export default function InvestigationPage() {
           <div className="glass rounded-2xl p-4 flex-shrink-0 animate-fade-in-left delay-100">
             <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-3">Model Scores</div>
             <div className="space-y-3">
-              <ScoreBar label="Dormant (Isolation Forest)" value={d.dormant?.confidence ?? 0} color="#8b5cf6" detected={!!d.dormant?.detected} />
-              <ScoreBar label="Smurfing (BiLSTM)" value={d.smurfing?.confidence ?? 0} color="#f59e0b" detected={!!d.smurfing?.detected} />
-              <ScoreBar label="Layering (Neo4j)" value={d.layering?.confidence ?? 0} color="#f43f5e" detected={!!(d.layering?.detected && !d.layering.error)} />
-              <ScoreBar label="Round Trip (Graph)" value={d.round_trip?.confidence ?? 0} color="#10b981" detected={!!(d.round_trip?.detected && !d.round_trip.error)} />
-              <ScoreBar label="KYC Mismatch (Rules)" value={d.kyc_mismatch?.confidence ?? 0} color="#22d3ee" detected={!!d.kyc_mismatch?.detected} />
+              {/* Each ScoreBar is dimmed if its pattern is NOT in flagged_for */}
+              <div className={score?.flagged_for.includes("dormant") ? "" : "opacity-40"}>
+                <ScoreBar label="Dormant (Isolation Forest)" value={d.dormant?.confidence ?? 0} color="#8b5cf6" detected={!!d.dormant?.detected} />
+              </div>
+              <div className={score?.flagged_for.includes("smurfing") ? "" : "opacity-40"}>
+                <ScoreBar label="Smurfing (BiLSTM)" value={d.smurfing?.confidence ?? 0} color="#f59e0b" detected={!!d.smurfing?.detected} />
+              </div>
+              <div className={score?.flagged_for.includes("layering") ? "" : "opacity-40"}>
+                <ScoreBar label="Layering (Neo4j)" value={d.layering?.confidence ?? 0} color="#f43f5e" detected={!!(d.layering?.detected && !d.layering.error)} />
+              </div>
+              <div className={score?.flagged_for.includes("round_trip") ? "" : "opacity-40"}>
+                <ScoreBar label="Round Trip (Graph)" value={d.round_trip?.confidence ?? 0} color="#10b981" detected={!!(d.round_trip?.detected && !d.round_trip.error)} />
+              </div>
+              <div className={score?.flagged_for.includes("kyc_mismatch") ? "" : "opacity-40"}>
+                <ScoreBar label="KYC Mismatch (Rules)" value={d.kyc_mismatch?.confidence ?? 0} color="#22d3ee" detected={!!d.kyc_mismatch?.detected} />
+              </div>
             </div>
           </div>
 
