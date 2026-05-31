@@ -13,12 +13,14 @@ from app.db.session import get_db
 fake = Faker()
 
 # --- Configuration ---
-# Increased scale for better model training
-NUM_ACCOUNTS = 5000
-NUM_CLEAN_TRANSACTIONS = 25000
-NUM_LAYERING_CHAINS = 50
-NUM_SMURFING_CLUSTERS = 50
-NUM_DORMANCY_ACTIVATIONS = 50
+# Reduced scale for faster generation and snappy Neo4j Aura demo
+NUM_ACCOUNTS = 1000
+NUM_CLEAN_TRANSACTIONS = 5000
+NUM_LAYERING_CHAINS = 20
+NUM_SMURFING_CLUSTERS = 20
+NUM_DORMANCY_ACTIVATIONS = 20
+NUM_ROUND_TRIPS = 20
+NUM_KYC_MISMATCHES = 20
 
 def setup_schema(session):
     """Creates constraints and indexes for the graph schema."""
@@ -39,7 +41,7 @@ def setup_schema(session):
     print("Schema setup complete.")
 
 
-def create_account(session, entity_id, risk_category, kyc_tier, is_fraud=False, status='ACTIVE', opened_on=None):
+def create_account(session, entity_id, risk_category, kyc_tier, is_fraud=False, status='ACTIVE', opened_on=None, declared_annual_income=None):
     """Creates a single account with specific characteristics."""
     account_id = f"ACC_{fake.uuid4().replace('-', '')[:12]}"
     
@@ -53,6 +55,7 @@ def create_account(session, entity_id, risk_category, kyc_tier, is_fraud=False, 
         opened_on: $opened_on,
         risk_category: $risk_category,
         is_fraud: $is_fraud,
+        declared_annual_income: $declared_annual_income,
         
         // Initialize behavioral metrics
         txn_count_7d: 0,
@@ -72,6 +75,10 @@ def create_account(session, entity_id, risk_category, kyc_tier, is_fraud=False, 
     
     open_date = opened_on if opened_on else fake.date_between(start_date="-5y", end_date="today")
     dormancy = (datetime.now().date() - open_date).days if status == 'ACTIVE' else 0
+    
+    # Default to a reasonable income if not provided
+    if declared_annual_income is None:
+        declared_annual_income = random.uniform(300000, 2000000)
 
     result = session.run(query, {
         "account_id": account_id,
@@ -82,7 +89,8 @@ def create_account(session, entity_id, risk_category, kyc_tier, is_fraud=False, 
         "opened_on": open_date,
         "risk_category": risk_category,
         "is_fraud": is_fraud,
-        "dormancy_days": dormancy
+        "dormancy_days": dormancy,
+        "declared_annual_income": declared_annual_income
     })
     return result.single()[0]
 
@@ -107,12 +115,13 @@ def create_transaction(session, sender_id, receiver_id, amount, channel, txn_ts,
         narration: $narration
     })
 
-    // Create the TRANSFERRED_TO relationship
-    CREATE (sender)-[r:TRANSFERRED_TO {
+    // Create the SENT relationship (used by fraud_detector.py)
+    CREATE (sender)-[r:SENT {
         txn_id: $txn_id,
         amount: $amount,
         channel: $channel,
-        txn_ts: $txn_ts
+        txn_ts: $txn_ts,
+        status: 'SUCCESS'
     }]->(receiver)
 
     // Update metrics for both sender and receiver
@@ -257,6 +266,62 @@ def create_dormancy_activation(session):
     create_alert(session, "DORMANCY", all_involved, total_amount, time_window_hrs=time_window_hrs)
     return all_involved
 
+def create_roundtrip(session, cycle_length=4):
+    """Creates a circular flow of funds where money returns to the origin."""
+    entity_id = f"ENT_{fake.uuid4().replace('-', '')[:8]}"
+    accounts = [create_account(session, entity_id, 'HIGH', 1, is_fraud=True) for _ in range(cycle_length)]
+    
+    total_amount = 0
+    start_amount = random.uniform(500000, 2000000)
+    time_window_hrs = cycle_length
+    
+    for i in range(cycle_length):
+        sender = accounts[i]
+        # The last account sends back to the first
+        receiver = accounts[(i + 1) % cycle_length]
+        
+        # Keep amount very similar to simulate exact roundtrip
+        amount = start_amount * random.uniform(0.98, 1.0)
+        amount = round(amount, 2)
+        total_amount += amount
+        
+        txn_ts = datetime.now() - timedelta(hours=cycle_length - i)
+        
+        create_transaction(session, sender, receiver, amount, "RTGS", txn_ts, "Investment/Return")
+
+    create_alert(session, "ROUND_TRIP", accounts, total_amount, hop_depth=cycle_length, time_window_hrs=time_window_hrs)
+    return accounts
+
+def create_kyc_mismatch(session):
+    """Creates an account with massive volume but very low declared income."""
+    entity_id = f"ENT_{fake.uuid4().replace('-', '')[:8]}"
+    
+    # Very low declared income (e.g. student or low-income)
+    declared_income = random.uniform(100_000, 300_000)
+    
+    mismatch_account = create_account(
+        session, entity_id, 'HIGH', 1, is_fraud=True, 
+        declared_annual_income=declared_income
+    )
+    
+    # 30-day volume is over 10x the monthly expected income
+    expected_monthly = declared_income / 12
+    target_volume = expected_monthly * random.uniform(15, 30)
+    
+    total_amount = 0
+    # Simulate high volume over the last 30 days
+    dest_accounts = [create_account(session, f"ENT_{fake.uuid4().replace('-','')[:8]}", 'LOW', 2) for _ in range(3)]
+    
+    while total_amount < target_volume:
+        amount = random.uniform(50000, 200000)
+        total_amount += amount
+        txn_ts = datetime.now() - timedelta(days=random.uniform(1, 28))
+        receiver = random.choice(dest_accounts)
+        create_transaction(session, mismatch_account, receiver, amount, "IMPS", txn_ts, "Business Transfer")
+        
+    create_alert(session, "KYC_MISMATCH", [mismatch_account], total_amount, time_window_hrs=24*30)
+    return [mismatch_account]
+
 def main():
     driver = get_db()
     with driver.session() as session:
@@ -288,19 +353,25 @@ def main():
         for _ in tqdm(range(NUM_DORMANCY_ACTIVATIONS), desc="Generating Dormancy Activations"):
             fraud_accounts.extend(create_dormancy_activation(session))
             
+        for _ in tqdm(range(NUM_ROUND_TRIPS), desc="Generating Round Trips"):
+            fraud_accounts.extend(create_roundtrip(session, random.randint(3, 6)))
+            
+        for _ in tqdm(range(NUM_KYC_MISMATCHES), desc="Generating KYC Mismatches"):
+            fraud_accounts.extend(create_kyc_mismatch(session))
+            
         # 4. Generate clean, non-fraudulent transactions
         print("\nGenerating clean background transactions...")
         for _ in tqdm(range(NUM_CLEAN_TRANSACTIONS), desc="Generating Clean Transactions"):
             sender, receiver = random.sample(clean_accounts, 2)
             amount = random.uniform(100, 50000)
-            channel = random.choice(["UPI", "IMPS"])
+            channel = random.choice(["UPI", "IMPS", "NEFT"])
             txn_ts = datetime.now() - timedelta(days=random.randint(0, 365))
             create_transaction(session, sender, receiver, amount, channel, txn_ts, fake.sentence())
 
         # 5. Final summary
         print("\n--- Data Generation Summary ---")
         total_accounts = session.run("MATCH (a:Account) RETURN count(a) AS count").single()['count']
-        total_txns = session.run("MATCH ()-[r:TRANSFERRED_TO]->() RETURN count(r) AS count").single()['count']
+        total_txns = session.run("MATCH ()-[r:SENT]->() RETURN count(r) AS count").single()['count']
         total_alerts = session.run("MATCH (al:Alert) RETURN count(al) AS count").single()['count']
         
         print(f"Total Accounts Created: {total_accounts}")
