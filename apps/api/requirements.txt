@@ -10,11 +10,6 @@ joblib
 scikit-learn
 torch
 shap
--e ../../packages/py-schemas
-pandas
-numpy
-torch
-scikit-learn
-joblib
-shap
+xgboost
+networkx
 -e ../../packages/py-schemas
