@@ -3,7 +3,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 
 ROOT_DIR = Path(__file__).resolve().parents[4]
 PY_SCHEMAS_DIR = ROOT_DIR / "packages" / "py-schemas"
@@ -16,7 +16,7 @@ for path in (PY_SCHEMAS_DIR, AI_ML_DIR):
 from app.db.session import get_db
 from fraud_detector import (  # type: ignore[import-not-found]
     REL_TYPE,
-    NEO4J_DRIVER,
+    ASYNC_DRIVER,
     _coerce,
     _recompute_account_metrics,
     build_alert_candidates,
@@ -43,19 +43,27 @@ def _driver():
 
 # ── Stats ──────────────────────────────────────────────────────────────────────
 @router.get("/stats")
-def get_stats():
+async def get_stats():
     """
     Fast aggregate stats for the dashboard header cards.
     All data comes from Neo4j — no CSV reads.
     """
-    return _coerce(get_neo4j_stats())
+    return _coerce(await get_neo4j_stats())
 
 
 # ── Score ──────────────────────────────────────────────────────────────────────
 @router.get("/score/{account_id}")
-def get_score(account_id: str):
+async def get_score(account_id: str, background_tasks: BackgroundTasks):
     try:
-        return _coerce(score_account(account_id))
+        # Run flat inference only on the critical path
+        result = await score_account(account_id)
+        
+        # FIX 2: Only trigger deep path matching if flat models flagged the account
+        if result.get("is_flagged"):
+            background_tasks.add_task(detect_layering, account_id)
+            background_tasks.add_task(detect_roundtrip, account_id)
+        
+        return _coerce(result)
     except Exception as e:
         print(f"score_account error for {account_id}: {e}")
         return _coerce({
@@ -76,17 +84,20 @@ def get_score(account_id: str):
 
 
 # ── Alerts (full ML scoring - slow) ────────────────────────────────────────────
+import asyncio
+
 @router.get("/alerts")
-def get_alerts(limit: int = 50):
-    candidates = build_alert_candidates()
+async def get_alerts(limit: int = 50):
+    candidates = await build_alert_candidates()
     score_limit = min(len(candidates), limit * 3)
     candidates  = candidates[:score_limit]
 
     alerts: List[Dict[str, Any]] = []
-    for account_id in candidates:
-        try:
-            report = score_account(account_id)
-        except Exception:
+    tasks = [score_account(acc_id) for acc_id in candidates]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    for account_id, report in zip(candidates, results):
+        if isinstance(report, Exception):
             continue
         if report["is_flagged"]:
             alerts.append(_coerce({
@@ -103,12 +114,12 @@ def get_alerts(limit: int = 50):
 
 # ── Alerts Quick (reads Alert nodes directly from Neo4j — instant) ──────────────
 @router.get("/alerts/quick")
-def get_alerts_quick(limit: int = 200):
+async def get_alerts_quick(limit: int = 200):
     """
     Reads pre-generated Alert nodes from Neo4j.
     Instant — no ML inference. Used by the dashboard.
     """
-    if NEO4J_DRIVER is None:
+    if ASYNC_DRIVER is None:
         return {"total": 0, "alerts": []}
 
     query = """
@@ -125,8 +136,8 @@ def get_alerts_quick(limit: int = 200):
             coalesce(a.dormancy_days, 0)           AS dormancy_days
     """
     try:
-        with NEO4J_DRIVER.session() as session:
-            records = list(session.run(query))
+        from fraud_detector import _run_query
+        records = await _run_query(query)
     except Exception as e:
         print(f"Neo4j Error: {e}")
         return {"total": 0, "alerts": [], "error": str(e)}
@@ -175,21 +186,21 @@ def get_alerts_quick(limit: int = 200):
 
 # ── Trace (graph path for investigation page) ──────────────────────────────────
 @router.get("/trace/{account_id}")
-def get_trace(account_id: str, hint: str = ""):
+async def get_trace(account_id: str, hint: str = ""):
     """Returns layering chain or round-trip loop for the investigation graph.
     hint: 'layering' or 'round_trip' — forces search for that specific pattern."""
     try:
         # If a hint is provided, try that detector first
         if hint in ("layering", "LAYERING"):
-            result = detect_layering(account_id)
+            result = await detect_layering(account_id)
             if not result.get("detected"):
-                result = detect_roundtrip(account_id)
+                result = await detect_roundtrip(account_id)
         elif hint in ("round_trip", "ROUND_TRIP"):
-            result = detect_roundtrip(account_id)
+            result = await detect_roundtrip(account_id)
             if not result.get("detected"):
-                result = detect_layering(account_id)
+                result = await detect_layering(account_id)
         else:
-            result = trace_account(account_id)
+            result = await trace_account(account_id)
         return _coerce(result)
     except Exception as e:
         print(f"Neo4j Trace Error: {e}")
@@ -198,12 +209,12 @@ def get_trace(account_id: str, hint: str = ""):
 
 # ── Live Feed (real transactions from Neo4j) ───────────────────────────────────
 @router.get("/feed")
-def get_live_feed(limit: int = 30):
+async def get_live_feed(limit: int = 30):
     """
     Returns the most recent transactions from Neo4j for the live feed.
     Each row includes whether the sender account is flagged.
     """
-    if NEO4J_DRIVER is None:
+    if ASYNC_DRIVER is None:
         return {"transactions": []}
 
     query = f"""
@@ -220,8 +231,8 @@ def get_live_feed(limit: int = 30):
         ORDER BY r.txn_ts DESC
         LIMIT $limit
     """
-    with NEO4J_DRIVER.session() as session:
-        records = list(session.run(query, limit=limit))
+    from fraud_detector import _run_query
+    records = await _run_query(query, limit=limit)
 
     rows = []
     for rec in records:
@@ -240,27 +251,27 @@ def get_live_feed(limit: int = 30):
 
 # ── Report ─────────────────────────────────────────────────────────────────────
 @router.get("/report/{account_id}")
-def get_report(account_id: str):
-    return _coerce(build_evidence_package(account_id))
+async def get_report(account_id: str):
+    return _coerce(await build_evidence_package(account_id))
 
 
 # ── Explainability ─────────────────────────────────────────────────────────────
 @router.get("/explain/dormant/{account_id}")
-def get_dormant_explanation(account_id: str):
-    return _coerce(explain_dormant(account_id))
+async def get_dormant_explanation(account_id: str):
+    return _coerce(await explain_dormant(account_id))
 
 
 @router.get("/explain/smurfing/{account_id}")
-def get_smurfing_explanation(account_id: str):
-    return _coerce(explain_smurfing(account_id))
+async def get_smurfing_explanation(account_id: str):
+    return _coerce(await explain_smurfing(account_id))
 
 
 @router.get("/explain/{account_id}")
-def get_full_explanation(account_id: str):
+async def get_full_explanation(account_id: str):
     return _coerce({
         "account_id": account_id,
-        "dormant":   explain_dormant(account_id),
-        "smurfing":  explain_smurfing(account_id),
+        "dormant":   await explain_dormant(account_id),
+        "smurfing":  await explain_smurfing(account_id),
     })
 
 
@@ -272,43 +283,42 @@ def get_narrative(account_id: str):
 
 # ── Lab: Create Account ────────────────────────────────────────────────────────
 @router.post("/accounts")
-def create_account(account: Account):
+async def create_account(account: Account):
     record = account.model_dump()
     # upsert_account_record now writes to Neo4j AND CSV
-    upsert_account_record(record)
+    await upsert_account_record(record)
     refresh_data()
     return {"message": "account created", "account": record}
 
 
 # ── Lab: Create Transaction ────────────────────────────────────────────────────
 @router.post("/transactions")
-def create_transaction(transaction: Transaction):
+async def create_transaction(transaction: Transaction):
     record = transaction.model_dump()
 
     # Verify both accounts exist in Neo4j
-    driver = _driver()
-    with driver.session() as session:
-        sender = session.run(
-            "MATCH (a:Account {account_id: $id}) RETURN a.account_id AS id",
-            id=record["sender_id"],
-        ).single()
-        receiver = session.run(
-            "MATCH (a:Account {account_id: $id}) RETURN a.account_id AS id",
-            id=record["receiver_id"],
-        ).single()
+    from fraud_detector import _run_query
+    sender = await _run_query(
+        "MATCH (a:Account {account_id: $id}) RETURN a.account_id AS id",
+        id=record["sender_id"],
+    )
+    receiver = await _run_query(
+        "MATCH (a:Account {account_id: $id}) RETURN a.account_id AS id",
+        id=record["receiver_id"],
+    )
 
     if not sender or not receiver:
         raise HTTPException(status_code=404, detail="sender or receiver account not found in Neo4j")
 
     # Write the transaction (Neo4j + CSV)
-    upsert_transaction_record(record)
+    await upsert_transaction_record(record)
 
     # Recompute live metrics from Neo4j relationships
-    sender_updates   = _recompute_account_metrics(record["sender_id"])
-    receiver_updates = _recompute_account_metrics(record["receiver_id"])
+    sender_updates   = await _recompute_account_metrics(record["sender_id"])
+    receiver_updates = await _recompute_account_metrics(record["receiver_id"])
 
-    sender_score   = score_account(record["sender_id"])
-    receiver_score = score_account(record["receiver_id"])
+    sender_score   = await score_account(record["sender_id"])
+    receiver_score = await score_account(record["receiver_id"])
 
     # Update account nodes in Neo4j with fresh metrics
     for acc_id, updates, score in [
@@ -322,7 +332,7 @@ def create_transaction(transaction: Transaction):
             "is_fraud":      score["is_flagged"],
             "last_scored_ts": datetime.utcnow().isoformat(),
         }
-        upsert_account_record(merged)
+        await upsert_account_record(merged)
 
     response = {
         "message": "transaction created",

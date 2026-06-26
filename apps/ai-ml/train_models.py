@@ -52,6 +52,10 @@ def load_accounts() -> pd.DataFrame:
         raise FileNotFoundError(f"Missing {ACCOUNTS_CSV}")
 
     df = pd.read_csv(ACCOUNTS_CSV)
+    stats_csv = DATA_DIR / "account_stats.csv"
+    if stats_csv.exists():
+        df_stats = pd.read_csv(stats_csv)
+        df = df.merge(df_stats, on="account_id", how="left")
 
     if "last_active_ts" in df.columns:
         df["last_active_ts"] = pd.to_datetime(df["last_active_ts"], errors="coerce")
@@ -90,6 +94,15 @@ def train_isolation_forest(df_acc: pd.DataFrame) -> None:
         "avg_monthly_volume",
         "avg_monthly_count",
         "unique_counterparties_30d",
+        "risk_score_7d_ago",
+        "risk_score_delta_7d",
+        "tx_count_week1_post_dormancy",
+        "tx_count_week2_post_dormancy",
+        "volume_acceleration",
+        "has_foreign_inflow",
+        "inflow_source_type",
+        "kyc_update_recency_days",
+        "immediate_outflow_pct",
     ]
 
     missing = [col for col in feature_cols if col not in df_acc.columns]
@@ -102,7 +115,10 @@ def train_isolation_forest(df_acc: pd.DataFrame) -> None:
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    iso = IsolationForest(n_estimators=200, contamination=0.05, random_state=RANDOM_SEED)
+    fraud_rate = len(df_acc[df_acc["pattern_type"].str.contains("DORMANT_ACTIVATION", na=False)]) / max(len(df_acc), 1) if "pattern_type" in df_acc.columns else 0.008
+    # Fix: Set contamination exactly to the true dataset fraud rate to calibrate thresholds correctly
+    contamination = max(fraud_rate, 0.001)
+    iso = IsolationForest(n_estimators=200, contamination=contamination, random_state=RANDOM_SEED)
     iso.fit(X_scaled)
 
     predictions = iso.predict(X_scaled)
@@ -246,6 +262,69 @@ def build_sequence(group: pd.DataFrame, window: int) -> np.ndarray:
         seq.insert(0, [0.0, 0.0, 0.0, 0.0, 0.0])
 
     return np.array(seq[-window:], dtype=np.float32)
+
+
+def train_xgboost_kyc(X_train: pd.DataFrame, patterns: pd.Series) -> None:
+    print("Training Model C: XGBoost (Profile Mismatch detector)...")
+    try:
+        import xgboost as xgb
+    except ImportError:
+        print("XGBoost not installed. Skipping.")
+        return
+        
+    feature_cols = [
+        "kyc_tier", "declared_annual_income", "account_age_days", "volume_30d", "txn_count_30d", 
+        "income_utilization_ratio_30d", "age_band_encoded", "geography_tier_metro", "geography_tier_rural", "geography_tier_tier2",
+        "volume_vs_age_kyc_peer", "cash_inflow_pct", "upi_family_inflow_pct", "corporate_wire_inflow_pct",
+        "unknown_source_pct", "salary_credit_regular", "income_source_count", "volume_growth_rate_3m", 
+        "months_at_current_volume", "kyc_update_recency_days", "outflow_to_known_contacts", 
+        "outflow_to_new_accounts", "cash_withdrawal_ratio"
+    ]
+    
+    missing = [col for col in feature_cols if col not in X_train.columns]
+    if missing:
+        for col in missing:
+            if 'geography_tier' in col:
+                X_train[col] = 0
+            else:
+                print(f"Warning: XGBoost missing {col}")
+                X_train[col] = 0
+                
+    X = X_train[feature_cols].copy().fillna(0)
+    y = patterns.apply(lambda p: 1 if isinstance(p, str) and "PROFILE_MISMATCH" in p else 0).values
+    
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import average_precision_score
+    
+    X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED, stratify=y)
+    
+    model = xgb.XGBClassifier(
+        n_estimators=100,
+        max_depth=4,
+        learning_rate=0.1,
+        scale_pos_weight=(len(y_tr) - sum(y_tr)) / max(sum(y_tr), 1) if sum(y_tr) > 0 else 1,
+        random_state=RANDOM_SEED
+    )
+    model.fit(X_tr, y_tr)
+    
+    out_path = MODELS_DIR / "profile_mismatch_model.json"
+    model.save_model(out_path)
+    print(f"  Saved: {out_path}")
+    
+    # Evaluate on held-out test set
+    preds = model.predict(X_val)
+    probs = model.predict_proba(X_val)[:, 1]
+    auc_pr = average_precision_score(y_val, probs)
+    print(f"  XGBoost Validation F1: {f1_score(y_val, preds):.4f}")
+    print(f"  XGBoost Validation AUC-PR: {auc_pr:.4f}")
+    
+    # Print SHAP/Feature Importance check directly during training
+    importances = pd.Series(model.feature_importances_, index=feature_cols).sort_values(ascending=False)
+    print("\n  Top 5 Features by Weight (Leakage Check):")
+    for feat, imp in importances.head(5).items():
+        print(f"    {feat}: {imp:.4f}")
+    if importances.index[0] == "income_utilization_ratio_30d":
+        print("  [WARNING] income_utilization_ratio_30d is the top feature - potential leakage!")
 
 
 def train_smurf_lstm(df_acc: pd.DataFrame, df_txn: pd.DataFrame) -> None:
@@ -410,8 +489,23 @@ def main() -> None:
 
     acc_ids = df_acc["account_id"].tolist()
     np.save(MODELS_DIR / "acc_ids.npy", np.array(acc_ids))
+    
+    import sys
+    sys.path.append(str(Path(__file__).resolve().parent))
+    from scripts.feature_engineering import build_training_features
+    X_train, patterns = build_training_features(DATA_DIR)
+    
+    # Assign account_id back to X_train by merging in same order
+    df_ent = pd.read_csv(f"{DATA_DIR}/entities.csv")
+    df_acc_raw = pd.read_csv(f"{DATA_DIR}/accounts.csv")
+    df_stats = pd.read_csv(f"{DATA_DIR}/account_stats.csv")
+    X_orig = df_stats.merge(df_acc_raw, on="account_id").merge(df_ent, on="entity_id")
+    X_train['account_id'] = X_orig['account_id']
+    X_train['kyc_tier'] = X_orig['kyc_tier']
+    X_train['declared_annual_income'] = X_orig['declared_annual_income']
 
-    train_isolation_forest(df_acc)
+    train_isolation_forest(X_train)
+    train_xgboost_kyc(X_train, patterns)
     train_smurf_lstm(df_acc, df_txn)
 
     print("\nAll models trained and saved.")
