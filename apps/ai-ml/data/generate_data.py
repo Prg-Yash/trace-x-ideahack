@@ -299,8 +299,9 @@ def main() -> None:
             transactions.append(
                 make_txn(
                     counter, txn_width, master, recv, 
-                    random.uniform(900000, 990000), # Behavioral fix: specifically 90k-99k below 10L reporting threshold
-                    "NEFT", base_time + timedelta(minutes=random.randint(1, 120)),
+                    # Inject Gaussian noise / Jitter for data leakage prevention
+                    max(100000, random.gauss(950000, 75000)), 
+                    "NEFT", base_time + timedelta(minutes=random.randint(1, 120)) + timedelta(minutes=random.gauss(0, 30)),
                     "SUCCESS", "split transfer", True, "SMURFING"
                 )
             )

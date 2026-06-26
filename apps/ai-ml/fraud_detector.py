@@ -63,7 +63,7 @@ if not MODELS_DIR.exists():
 ISO_MODEL = joblib.load(MODELS_DIR / "isolation_forest.pkl")
 SCALER = joblib.load(MODELS_DIR / "scaler.pkl")
 
-XGB_MODEL = xgb.XGBClassifier()
+XGB_MODEL = xgb.Booster()
 if (MODELS_DIR / "profile_mismatch_model.json").exists():
     XGB_MODEL.load_model(MODELS_DIR / "profile_mismatch_model.json")
 elif (MODELS_DIR / "xgb_model.json").exists():
@@ -104,31 +104,18 @@ FEATURE_COLS = [
     "immediate_outflow_pct",
 ]
 
-SMURF_FEATURES = ["amount", "gap_min", "hour", "day", "is_upi"]
+SMURFING_FEATURES = [
+    'amount', 'tx_count_last_24h', 'total_volume_24h', 'channel_upi_ratio',
+    'tx_count_last_7d', 'tx_count_last_30d', 'total_volume_7d', 'total_volume_30d',
+    'near_threshold_count_30d', 'amount_variance_24h', 'amount_clustering_score',
+    'threshold_avoidance_ratio', 'time_gap_mean_min', 'time_gap_stddev', 'is_weekend',
+    'unique_recipients_24h', 'account_age_days', 'orig_balance_after_ratio'
+]
 
-
-class SmurfLSTM(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.lstm = nn.LSTM(
-            input_size=5, hidden_size=64, num_layers=2,
-            batch_first=True, bidirectional=True, dropout=0.3,
-        )
-        self.fc = nn.Sequential(
-            nn.Linear(128, 32), nn.ReLU(), nn.Dropout(0.3), nn.Linear(32, 2),
-        )
-
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        return self.fc(out[:, -1, :])
-
-
-LSTM_MODEL = SmurfLSTM()
 try:
-    LSTM_MODEL.load_state_dict(torch.load(MODELS_DIR / "lstm_model.pt", map_location="cpu", weights_only=True))
-    LSTM_MODEL.eval()
-except FileNotFoundError:
-    pass # Smurf model missing, safe to ignore for this hackathon demo
+    SMURF_MODEL = joblib.load(str(MODELS_DIR / "smurf_model.pkl"))
+except Exception:
+    SMURF_MODEL = None # Smurf model missing
 
 # ── Kept for backward-compat (upsert/lab endpoints still write CSV) ────────────
 # These globals are loaded ONCE at startup for the upsert helpers and are
@@ -183,6 +170,40 @@ def _neo4j_session():
     if ASYNC_DRIVER is None:
         raise RuntimeError("Neo4j connection not configured.")
     return ASYNC_DRIVER.session()
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import asyncio
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+def _fetch_postgres_account_stats(account_id: str) -> Optional[Dict]:
+    if not DATABASE_URL:
+        return None
+    try:
+        with psycopg2.connect(DATABASE_URL) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT a.*, s.*, e.declared_annual_income, e.age, e.geography_tier, f.*
+                    FROM accounts a
+                    LEFT JOIN account_stats s ON a.account_id = s.account_id
+                    LEFT JOIN entities e ON a.entity_id = e.entity_id
+                    LEFT JOIN account_ml_features f ON a.account_id = f.account_id
+                    WHERE a.account_id = %s
+                """, (account_id,))
+                rec = cur.fetchone()
+                if rec:
+                    return dict(rec)
+                return None
+    except Exception as e:
+        print(f"Postgres fetch error: {e}")
+        return None
+
+async def _fetch_smurf_features(account_id: str) -> Optional[Dict]:
+    """Fetch pre-computed tabular features from PostgreSQL."""
+    rec = await asyncio.to_thread(_fetch_postgres_account_stats, account_id)
+    if not rec:
+        return None
+    return dict(rec)
 
 
 async def _run_query(query: str, **params):
@@ -200,119 +221,94 @@ async def get_account_ids() -> List[str]:
     return [r["id"] for r in records if r["id"]]
 
 
-# ── Detector: Smurfing (Neo4j → BiLSTM) ───────────────────────────────────────
-async def _fetch_smurf_sequence(account_id: str) -> Tuple[np.ndarray, int]:
-    """
-    Query Neo4j for the last 30 outgoing SUCCESS transactions,
-    build a (30, 5) feature array for the LSTM.
-    Returns (sequence_array, actual_tx_count).
-    """
-    query = f"""
-        MATCH (a:Account {{account_id: $acc_id}})-[r:{REL_TYPE}]->(b:Account)
-        WHERE toUpper(r.status) = 'SUCCESS'
-        RETURN toFloat(r.amount) AS amount,
-               r.txn_ts         AS txn_ts,
-               toUpper(r.channel) AS channel
-        ORDER BY r.txn_ts DESC
-        LIMIT 30
-    """
-    records = await _run_query(query, acc_id=account_id)
-    if len(records) < 5:
-        return np.array([]), len(records)
+# ── Detector: Smurfing (Neo4j → XGBoost) ──────────────────────────────────────
 
-    # Records come newest-first; reverse to chronological order
-    records = list(reversed(records))
 
-    seq = []
-    prev_dt: Optional[datetime] = None
-    for rec in records:
-        raw_ts = rec["txn_ts"]
-        # Handle Neo4j DateTime objects and plain strings
-        if hasattr(raw_ts, "to_native"):
-            dt = raw_ts.to_native().replace(tzinfo=None)
+async def detect_smurfing(account_id: str) -> dict:
+    """
+    Layer 1 Inline Shield: Tabular XGBoost Only.
+    Bypasses live multi-account graph traversals to preserve SLA speeds.
+    """
+    # 1. Fetch the 18 pre-computed tabular properties asynchronously
+    props = await _fetch_smurf_features(account_id)
+    if not props:
+        return {"detected": False, "confidence": 0.0, "fraud_type": "STRUCTURING_SMURFING"}
+        
+    # 2. Reconstruct the precise feature sequence matrix matching training
+    X = pd.DataFrame([{c: float(props.get(c) or 0.0) for c in SMURFING_FEATURES}])
+    
+    # 3. Execute fast native tree inference
+    try:
+        if SMURF_MODEL is not None:
+            prob = float(SMURF_MODEL.predict_proba(X)[0][1])
         else:
-            dt = pd.to_datetime(str(raw_ts), errors="coerce")
-            if pd.isna(dt):
-                dt = datetime.utcnow()
-            else:
-                dt = dt.to_pydatetime().replace(tzinfo=None)
-
-        gap = 0.0 if prev_dt is None else (dt - prev_dt).total_seconds() / 60.0
-        amount = float(rec["amount"] or 0.0)
-        channel = str(rec["channel"] or "")
-
-        seq.append([
-            float(np.log1p(amount)) / 15.0,
-            min(gap / 1440.0, 1.0),
-            dt.hour / 23.0,
-            dt.weekday() / 6.0,
-            1.0 if channel == "UPI" else 0.0,
-        ])
-        prev_dt = dt
-
-    # Pad to exactly 30 steps
-    while len(seq) < 30:
-        seq.insert(0, [0.0, 0.0, 0.0, 0.0, 0.0])
-
-    return np.array(seq[-30:], dtype=np.float32), len(records)
+            prob = 0.0
+    except Exception:
+        prob = 0.0
+    
+    # Use robust calibrated threshold
+    SMURF_OPERATIONAL_THRESHOLD = 0.50
+    
+    return {
+        "detected": bool(prob >= SMURF_OPERATIONAL_THRESHOLD),
+        "confidence": round(prob, 4),
+        "fraud_type": "STRUCTURING_SMURFING"
+    }
 
 
-async def detect_smurfing(account_id: str) -> Dict:
+async def verify_coordinated_smurf_network(account_id: str) -> None:
     """
-    Fetches the account's outgoing transaction sequence from Neo4j,
-    then feeds it to the BiLSTM model.
+    Layer 2 Out-of-Line Escalation: Graph Query.
+    Checks paths connecting multiple sending accounts to multiple destination accounts.
+    Creates an Alert node if a coordinated network is detected.
     """
     if ASYNC_DRIVER is None:
-        return {"detected": False, "fraud_type": "SMURFING", "error": "Neo4j not configured"}
+        return
 
-    seq, tx_count = await _fetch_smurf_sequence(account_id)
-    if seq.size == 0:
-        return {
-            "detected": False, "fraud_type": "SMURFING",
-            "confidence": 0.0, "tx_count": tx_count,
-        }
-
-    x = torch.from_numpy(np.stack([seq])).float()
-    with torch.no_grad():
-        prob = float(torch.softmax(LSTM_MODEL(x), dim=1)[0, 1].item())
-
-    return _coerce({
-        "detected": bool(prob >= SMURF_THRESHOLD),
-        "fraud_type": "SMURFING",
-        "confidence": round(prob, 4),
-        "threshold": round(float(SMURF_THRESHOLD), 4),
-        "tx_count": tx_count,
-    })
+    query = f"""
+        MATCH (smurf:Account {{account_id: $acc_id}})-[r:{REL_TYPE}]->(dest:Account)
+        WHERE r.amount < 50000 AND r.txn_ts >= datetime() - duration('P7D')
+        WITH dest, smurf
+        MATCH (other_smurf:Account)-[r2:{REL_TYPE}]->(dest)
+        WHERE other_smurf.account_id <> smurf.account_id 
+          AND r2.amount < 50000 
+          AND r2.txn_ts >= datetime() - duration('P7D')
+        WITH dest, smurf, count(DISTINCT other_smurf) as other_smurf_count
+        WHERE other_smurf_count >= 2
+        MERGE (alert:Alert {{account_id: smurf.account_id, pattern: 'SMURFING'}})
+        ON CREATE SET alert.created_at = datetime(),
+                      alert.fraud_prob = 0.95,
+                      alert.tier = 'HIGH_RISK'
+        ON MATCH SET alert.fraud_prob = 0.95,
+                     alert.tier = 'HIGH_RISK'
+        MERGE (smurf)-[:FLAGGED_IN]->(alert)
+        RETURN alert
+    """
+    try:
+        await _run_query(query, acc_id=account_id)
+    except Exception as e:
+        print(f"[Background Task] Error verifying coordinated smurf network for {account_id}: {e}")
 
 
 # ── Detector: Dormant Activation (Neo4j → Isolation Forest) ───────────────────
-async def _fetch_account_features(account_id: str) -> Optional[Dict]:
-    """
-    Fetch pre-computed account-level behavioral features from Neo4j.
-    These are stored as node properties during data load.
-    """
-    query = """
-        MATCH (a:Account {account_id: $acc_id})
-        RETURN
-            coalesce(a.dormancy_days, 0)              AS dormancy_days,
-            coalesce(a.txn_count_7d, 0)               AS txn_count_7d,
-            coalesce(a.txn_count_30d, 0)              AS txn_count_30d,
-            coalesce(a.volume_7d, 0.0)                AS volume_7d,
-            coalesce(a.volume_30d, 0.0)               AS volume_30d,
-            coalesce(a.avg_monthly_volume, 0.0)        AS avg_monthly_volume,
-            coalesce(a.avg_monthly_count, 0.0)         AS avg_monthly_count,
-            coalesce(a.unique_counterparties_30d, 0)  AS unique_counterparties_30d,
-            coalesce(a.declared_annual_income, 0.0)   AS declared_annual_income,
-            a.last_active_ts                          AS last_active_ts,
-            a.status                                  AS status
-        LIMIT 1
-    """
-    records = await _run_query(query, acc_id=account_id)
-    if not records:
-        return None
-    rec = records[0]
-    return {k: rec[k] for k in rec.keys()}
 
+async def _fetch_account_features(account_id: str) -> Optional[Dict]:
+    rec = await asyncio.to_thread(_fetch_postgres_account_stats, account_id)
+    if not rec:
+        return None
+    return {
+        "dormancy_days": rec.get("dormancy_days", 0),
+        "txn_count_7d": rec.get("txn_count_7d", 0),
+        "txn_count_30d": rec.get("txn_count_30d", 0),
+        "volume_7d": rec.get("volume_7d", 0.0),
+        "volume_30d": rec.get("volume_30d", 0.0),
+        "avg_monthly_volume": rec.get("avg_monthly_volume", 0.0),
+        "avg_monthly_count": rec.get("avg_monthly_count", 0.0),
+        "unique_counterparties_30d": rec.get("unique_counterparties_30d", 0),
+        "declared_annual_income": rec.get("declared_annual_income", 0.0),
+        "last_active_ts": rec.get("last_active_ts"),
+        "status": rec.get("status")
+    }
 
 async def _fetch_full_ml_features(account_id: str) -> Optional[Dict]:
     query = """
@@ -321,15 +317,15 @@ async def _fetch_full_ml_features(account_id: str) -> Optional[Dict]:
         WITH a, count(in_node) AS in_degree
         OPTIONAL MATCH (a)-[:SENT]->(out_node)
         WITH a, in_degree, count(out_node) AS out_degree
-        RETURN properties(a) AS account_props, in_degree, out_degree
+        RETURN in_degree, out_degree
     """
     records = await _run_query(query, acc_id=account_id)
     if not records: return None
-    
-    rec = records[0]
-    props = rec["account_props"]
-    props["in_degree"] = rec["in_degree"]
-    props["out_degree"] = rec["out_degree"]
+    rec = await asyncio.to_thread(_fetch_postgres_account_stats, account_id)
+    if not rec: return None
+    props = dict(rec)
+    props["in_degree"] = records[0]["in_degree"]
+    props["out_degree"] = records[0]["out_degree"]
     props["pagerank"] = 0.0
     return props
 
@@ -347,7 +343,7 @@ async def detect_dormant(account_id: str) -> Dict:
     }])
 
     # predict returns -1 for anomaly, 1 for normal
-    pred = ISO_MODEL.predict(SCALER.transform(X))[0]
+    pred = ISO_MODEL.predict(SCALER.transform(X.values))[0]
     detected = bool(pred == -1)
 
     return _coerce({
@@ -387,11 +383,12 @@ async def detect_kyc_mismatch(account_id: str) -> Dict:
     X = pd.DataFrame([row_dict], columns=FEATURE_SEQUENCE)
     
     # Predict Proba
-    prob = XGB_MODEL.predict_proba(X)[0][1]
+    dmatrix = xgb.DMatrix(X)
+    prob = float(XGB_MODEL.predict(dmatrix)[0])
     detected = bool(prob >= 0.45)
 
     # Derive legacy variables for the UI
-    ratio = float(props.get("income_utilization_ratio_30d", 0.0))
+    ratio = float(props.get("income_utilization_ratio_30d") or 0.0)
     if prob > 0.8: severity = "CRITICAL"
     elif prob > 0.6: severity = "HIGH"
     elif prob >= 0.45: severity = "MEDIUM"
@@ -403,9 +400,9 @@ async def detect_kyc_mismatch(account_id: str) -> Dict:
         "confidence": round(float(prob), 4),
         "mismatch_ratio": round(ratio, 2),
         "severity": severity,
-        "expected_monthly": round(float(props.get("declared_annual_income", 0)) / 12.0, 2),
-        "actual_monthly": round(float(props.get("volume_30d", 0)), 2),
-        "kyc_tier": int(props.get("kyc_tier", 0)),
+        "expected_monthly": round(float(props.get("declared_annual_income") or 0) / 12.0, 2),
+        "actual_monthly": round(float(props.get("volume_30d") or 0), 2),
+        "kyc_tier": int(props.get("kyc_tier") or 1),
     })
 
 
@@ -670,78 +667,101 @@ async def score_account(account_id: str, deep_scan: bool = False) -> Dict:
 # ── Alert Candidates (Neo4j aggregate) ─────────────────────────────────────────
 async def build_alert_candidates() -> List[str]:
     """
-    Pull high-risk account IDs directly from Neo4j using stored node properties.
-    No CSV scanning needed.
+    Pull high-risk account IDs from Postgres based on stats.
     """
-    if ASYNC_DRIVER is None:
-        return []
-
     query = """
-        MATCH (a:Account)
+        SELECT a.account_id 
+        FROM accounts a
+        LEFT JOIN account_stats s ON a.account_id = s.account_id
+        LEFT JOIN entities e ON a.entity_id = e.entity_id
         WHERE
-            coalesce(a.dormancy_days, 0) >= 90
-            OR coalesce(a.txn_count_30d, 0) >= 10
+            COALESCE(s.dormancy_days, 0) >= 90
+            OR COALESCE(s.txn_count_30d, 0) >= 10
             OR (
-                coalesce(a.declared_annual_income, 0) > 0
-                AND coalesce(a.volume_30d, 0) / (coalesce(a.declared_annual_income, 1) / 12.0) >= 5
+                COALESCE(e.declared_annual_income, 0) > 0
+                AND COALESCE(s.volume_30d, 0) / (COALESCE(e.declared_annual_income, 1) / 12.0) >= 5
             )
-            OR coalesce(a.volume_30d, 0) >= 100000
-        RETURN a.account_id AS account_id
+            OR COALESCE(s.volume_30d, 0) >= 100000
         LIMIT 500
     """
-    records = await _run_query(query)
-    ids = [r["account_id"] for r in records if r["account_id"]]
+    try:
+        def fetch():
+            with psycopg2.connect(DATABASE_URL) as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute(query)
+                    return [row['account_id'] for row in cur.fetchall()]
+        ids = await asyncio.to_thread(fetch)
+    except Exception as e:
+        print(f"Error fetching candidates: {e}")
+        ids = []
 
-    # Fallback: just return any 200 accounts if heuristics find nothing
+    # Fallback
     if not ids:
-        fallback = await _run_query("MATCH (a:Account) RETURN a.account_id AS account_id LIMIT 200")
-        ids = [r["account_id"] for r in fallback if r["account_id"]]
-
+        try:
+            def fetch_fallback():
+                with psycopg2.connect(DATABASE_URL) as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("SELECT account_id FROM accounts LIMIT 200")
+                        return [row['account_id'] for row in cur.fetchall()]
+            ids = await asyncio.to_thread(fetch_fallback)
+        except Exception:
+            ids = []
     return ids
 
 
 # ── Stats (Neo4j aggregate for dashboard header cards) ─────────────────────────
-async def get_neo4j_stats() -> Dict:
+async def get_system_stats() -> Dict:
     """
-    Fast aggregate stats for the dashboard — all from Neo4j.
+    Fast aggregate stats for the dashboard — from PostgreSQL and Neo4j.
     """
-    if ASYNC_DRIVER is None:
-        return {
-            "total_accounts": 0, "total_transactions": 0,
-            "total_flagged": 0, "critical_count": 0, "fraud_volume_30d": 0.0,
-            "accounts_scanned": 0,
-        }
+    stats = {
+        "total_accounts": 0, "total_transactions": 0,
+        "total_flagged": 0, "critical_count": 0, "fraud_volume_30d": 0.0,
+        "accounts_scanned": 0,
+    }
+    
+    try:
+        def fetch_pg():
+            with psycopg2.connect(DATABASE_URL) as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("""
+                        SELECT 
+                            (SELECT COUNT(*) FROM accounts) AS total_accounts,
+                            (SELECT COALESCE(SUM(s.volume_30d), 0) FROM accounts a 
+                             JOIN account_stats s ON a.account_id = s.account_id 
+                             WHERE a.is_fraud = TRUE) AS fraud_volume_30d
+                    """)
+                    return cur.fetchone()
+        pg_rec = await asyncio.to_thread(fetch_pg)
+        if pg_rec:
+            stats["total_accounts"] = pg_rec["total_accounts"]
+            stats["accounts_scanned"] = pg_rec["total_accounts"]
+            stats["fraud_volume_30d"] = float(pg_rec["fraud_volume_30d"] or 0)
+    except Exception as e:
+        pass
 
-    # Count Alert nodes (not accounts with fraud_score) so stats card matches flagged list
-    acc_query = """
-        MATCH (a:Account)
-        RETURN count(a) AS total_accounts,
-               sum(CASE WHEN coalesce(a.is_fraud, false) THEN coalesce(a.volume_30d, 0.0) ELSE 0.0 END) AS fraud_volume_30d
-    """
-    alert_query = """
-        MATCH (a:Account)-[:FLAGGED_IN]->(al:Alert)
-        RETURN
-            count(DISTINCT a)                                                      AS total_flagged,
-            count(DISTINCT CASE WHEN al.tier IN ['CRITICAL'] THEN a END)          AS critical_count
-    """
-    txn_query = "MATCH ()-[r:SENT]->() RETURN count(r) AS total_transactions"
+    if ASYNC_DRIVER is not None:
+        try:
+            alert_query = """
+                MATCH (a:Account)-[:FLAGGED_IN]->(al:Alert)
+                RETURN
+                    count(DISTINCT a)                                                      AS total_flagged,
+                    count(DISTINCT CASE WHEN al.tier IN ['CRITICAL'] THEN a END)          AS critical_count
+            """
+            txn_query = "MATCH ()-[r:SENT]->() RETURN count(r) AS total_transactions"
 
-    acc_records   = await _run_query(acc_query)
-    alert_records = await _run_query(alert_query)
-    txn_records   = await _run_query(txn_query)
+            alert_records = await _run_query(alert_query)
+            txn_records   = await _run_query(txn_query)
 
-    r = acc_records[0]   if acc_records   else {}
-    al = alert_records[0] if alert_records else {}
-    t = txn_records[0]   if txn_records   else {}
+            al = alert_records[0] if alert_records else {}
+            t = txn_records[0]   if txn_records   else {}
+            stats["total_flagged"] = int(al.get("total_flagged", 0) or 0)
+            stats["critical_count"] = int(al.get("critical_count", 0) or 0)
+            stats["total_transactions"] = int(t.get("total_transactions", 0) or 0)
+        except Exception:
+            pass
 
-    return _coerce({
-        "total_accounts":     int(r.get("total_accounts", 0) or 0),
-        "total_transactions": int(t.get("total_transactions", 0) or 0),
-        "total_flagged":      int(al.get("total_flagged", 0) or 0),
-        "critical_count":     int(al.get("critical_count", 0) or 0),
-        "fraud_volume_30d":   round(float(r.get("fraud_volume_30d", 0.0) or 0.0), 2),
-        "accounts_scanned":   int(r.get("total_accounts", 0) or 0),
-    })
+    return _coerce(stats)
 
 
 # ── Graph Trace (for Investigation page) ───────────────────────────────────────
@@ -762,24 +782,24 @@ async def trace_account(account_id: str, hint: str = "") -> Dict:
             hint = "round_trip"
 
     if hint in ("layering", "LAYERING"):
-        result = detect_layering(account_id)
+        result = await detect_layering(account_id)
         if result.get("detected"):
             return result
-        result = detect_roundtrip(account_id)
+        result = await detect_roundtrip(account_id)
         if result.get("detected"):
             return result
     elif hint in ("round_trip", "ROUND_TRIP"):
-        result = detect_roundtrip(account_id)
+        result = await detect_roundtrip(account_id)
         if result.get("detected"):
             return result
-        result = detect_layering(account_id)
+        result = await detect_layering(account_id)
         if result.get("detected"):
             return result
     else:
-        result = detect_layering(account_id)
+        result = await detect_layering(account_id)
         if result.get("detected"):
             return result
-        result = detect_roundtrip(account_id)
+        result = await detect_roundtrip(account_id)
         if result.get("detected"):
             return result
 
@@ -854,106 +874,67 @@ async def explain_dormant(account_id: str) -> Dict:
     })
 
 
-def _smurf_model_fn(flattened: np.ndarray) -> np.ndarray:
-    arr = np.ascontiguousarray(flattened.reshape(-1, 30, 5), dtype=np.float32)
-    x = torch.from_numpy(arr)
-    with torch.no_grad():
-        return torch.softmax(LSTM_MODEL(x), dim=1)[:, 1].cpu().numpy()
-
-
-async def _get_smurf_background() -> np.ndarray:
-    global _SMURF_SHAP_BACKGROUND
-    if _SMURF_SHAP_BACKGROUND is not None:
-        return _SMURF_SHAP_BACKGROUND
-
-    query = f"""
-        MATCH (a:Account)-[:{REL_TYPE}]->(b:Account)
-        WITH a.account_id AS acc_id, count(*) AS cnt
-        WHERE cnt >= 5
-        RETURN acc_id LIMIT 30
-    """
-    records = await _run_query(query)
-    sequences = []
-    for rec in records:
-        seq, cnt = await _fetch_smurf_sequence(rec["acc_id"])
-        if seq.size > 0:
-            sequences.append(seq.flatten())
-        if len(sequences) >= 20:
-            break
-
-    if not sequences:
-        sequences = [np.zeros((30, 5), dtype=np.float32).flatten()]
-
-    _SMURF_SHAP_BACKGROUND = np.array(sequences, dtype=np.float32)
-    return _SMURF_SHAP_BACKGROUND
-
-
 async def explain_smurfing(account_id: str) -> Dict:
     """
-    SHAP/occlusion explanation for the LSTM smurfing score.
-    Transaction sequence is fetched from Neo4j.
+    TreeSHAP explanation for the XGBoost Smurfing score.
+    Tabular features are fetched instantly from Neo4j.
     """
-    seq, tx_count = await _fetch_smurf_sequence(account_id)
-    if seq.size == 0:
-        return {"error": "not enough transactions in Neo4j"}
+    props = await _fetch_smurf_features(account_id)
+    if not props:
+        return {"error": "Account features not found"}
+        
+    # We bypass complex DB lookups here and just use the mock logic:
+    X = pd.DataFrame([{c: float(props.get(c) or 0.0) for c in SMURFING_FEATURES}])
 
     start = time.time()
-    flat = seq.flatten().astype(np.float32)
 
     try:
-        import shap  # type: ignore
-
+        import shap
         global _SMURF_SHAP_EXPLAINER
-        if _SMURF_SHAP_EXPLAINER is None:
-            _SMURF_SHAP_EXPLAINER = shap.KernelExplainer(_smurf_model_fn, await _get_smurf_background())
+        if getattr(sys.modules[__name__], '_SMURF_SHAP_EXPLAINER', None) is None:
+            base_model = SMURF_MODEL.calibrated_classifiers_[0].estimator
+            _SMURF_SHAP_EXPLAINER = shap.TreeExplainer(base_model)
 
-        shap_values  = _SMURF_SHAP_EXPLAINER.shap_values(flat.reshape(1, -1), nsamples=50)
-        contributions = np.array(shap_values).reshape(30, 5)
-        method = "shap"
+        shap_values = _SMURF_SHAP_EXPLAINER.shap_values(X)
+        if isinstance(shap_values, list):
+            shap_values = shap_values[1] # For binary classification, take positive class
+        
+        contributions = shap_values[0]
+        method = "tree_shap"
     except Exception:
-        base_prob     = _smurf_model_fn(flat.reshape(1, -1))[0]
-        contributions = np.zeros((30, 5), dtype=np.float32)
-        for t in range(30):
-            for f in range(5):
-                perturbed      = flat.copy().reshape(30, 5)
-                perturbed[t, f] = 0.0
-                contributions[t, f] = base_prob - _smurf_model_fn(perturbed.reshape(1, -1))[0]
-        method = "occlusion"
+        # Fallback to feature importance
+        try:
+            base_model = SMURF_MODEL.calibrated_classifiers_[0].estimator
+            contributions = base_model.get_booster().get_score(importance_type="weight")
+            contributions = np.array([contributions.get(f, 0.0) for f in SMURFING_FEATURES])
+        except:
+            contributions = np.zeros(len(SMURFING_FEATURES))
+        method = "feature_importance_fallback"
 
-    feature_scores = contributions.sum(axis=0)
-    feature_rank   = sorted(zip(SMURF_FEATURES, feature_scores), key=lambda i: abs(i[1]), reverse=True)
-
-    top_steps = []
-    for t in np.argsort(np.abs(contributions).sum(axis=1))[::-1][:5]:
-        top_steps.append({
-            "step": int(t),
-            "features": {name: round(float(contributions[t, idx]), 6) for idx, name in enumerate(SMURF_FEATURES)},
-        })
+    feature_rank = sorted(zip(SMURFING_FEATURES, contributions), key=lambda i: abs(i[1]), reverse=True)
 
     return _coerce({
         "account_id":   account_id,
         "method":       method,
         "duration_ms":  int((time.time() - start) * 1000),
-        "top_features": [{"feature": str(n), "importance": round(float(v), 6)} for n, v in feature_rank],
-        "top_steps":    top_steps,
-        "sequence_len": tx_count,
+        "top_features": [{"feature": str(n), "importance": round(float(v), 6)} for n, v in feature_rank[:10]],
     })
 
 
 # ── Evidence Package ────────────────────────────────────────────────────────────
 async def build_evidence_package(account_id: str) -> Dict:
-    score = score_account(account_id)
+    score = await score_account(account_id)
     return _coerce({
         "account_id":    account_id,
         "generated_at":  datetime.utcnow().isoformat(),
         "score":         score,
         "traces": {
-            "layering":  detect_layering(account_id),
-            "roundtrip": detect_roundtrip(account_id),
+            "layering":  await detect_layering(account_id),
+            "roundtrip": await detect_roundtrip(account_id),
         },
         "explanations": {
-            "dormant":   explain_dormant(account_id),
-            "smurfing":  explain_smurfing(account_id),
+            "dormant":   await explain_dormant(account_id),
+            "smurfing":  await explain_smurfing(account_id),
         },
         "report_summary": {
             "risk_level":    score["risk_level"],
@@ -965,31 +946,46 @@ async def build_evidence_package(account_id: str) -> Dict:
 
 # ── Upsert helpers (still write CSVs for lab endpoint) ─────────────────────────
 async def upsert_account_record(account: Dict) -> Dict:
-    """Write account to Neo4j AND to CSV (for model retraining later)."""
-    # Neo4j upsert
+    """Write account to Postgres AND to Neo4j (sparse)."""
+    # Neo4j sparse upsert
     if ASYNC_DRIVER is not None:
         query = """
             MERGE (a:Account {account_id: $props.account_id})
-            SET a += $props
+            SET a.entity_id = $props.entity_id,
+                a.kyc_tier = $props.kyc_tier,
+                a.status = $props.status,
+                a.risk_category = $props.risk_category,
+                a.is_fraud = $props.is_fraud,
+                a.pattern_type = $props.pattern_type
         """
         props = {k: v for k, v in account.items() if v is not None}
         async with _neo4j_session() as session:
             await session.run(query, props=props)
 
-    # Also write to CSV for backward compat
-    _load_csv_once()
-    global _CSV_ACC
-    if _CSV_ACC is not None:
-        record = account.copy()
-        _CSV_ACC = _CSV_ACC[_CSV_ACC["account_id"] != record["account_id"]].copy()
-        _CSV_ACC = pd.concat([_CSV_ACC, pd.DataFrame([record])], ignore_index=True)
-        _CSV_ACC.to_csv(DATA_DIR / "accounts.csv", index=False)
+    # Postgres Upsert for accounts table
+    try:
+        def pg_upsert():
+            with psycopg2.connect(DATABASE_URL) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO accounts (account_id, entity_id, account_type, kyc_tier, status, opened_on, branch_code, current_balance, is_fraud, risk_category, pattern_type)
+                        VALUES (%(account_id)s, %(entity_id)s, %(account_type)s, %(kyc_tier)s, %(status)s, %(opened_on)s, %(branch_code)s, %(current_balance)s, %(is_fraud)s, %(risk_category)s, %(pattern_type)s)
+                        ON CONFLICT (account_id) DO UPDATE SET
+                            kyc_tier = EXCLUDED.kyc_tier,
+                            status = EXCLUDED.status,
+                            is_fraud = EXCLUDED.is_fraud,
+                            risk_category = EXCLUDED.risk_category,
+                            pattern_type = EXCLUDED.pattern_type
+                    """, account)
+        await asyncio.to_thread(pg_upsert)
+    except Exception as e:
+        print(f"Postgres upsert account error: {e}")
 
     return account
 
 
 async def upsert_transaction_record(transaction: Dict) -> Dict:
-    """Write transaction to Neo4j AND to CSV."""
+    """Write transaction to Postgres AND create edge in Neo4j."""
     if ASYNC_DRIVER is not None:
         rel_query = f"""
             MERGE (s:Account {{account_id: $sender_id}})
@@ -1014,75 +1010,42 @@ async def upsert_transaction_record(transaction: Dict) -> Dict:
                 narration=str(transaction.get("narration", "")),
             )
 
-    _load_csv_once()
-    global _CSV_TXN
-    if _CSV_TXN is not None:
-        record = transaction.copy()
-        record["txn_ts"] = pd.to_datetime(record["txn_ts"], errors="coerce")
-        _CSV_TXN = _CSV_TXN[_CSV_TXN["txn_id"] != record["txn_id"]].copy()
-        _CSV_TXN = pd.concat([_CSV_TXN, pd.DataFrame([record])], ignore_index=True)
-        _CSV_TXN.to_csv(DATA_DIR / "transactions.csv", index=False)
+    # Postgres Upsert for transaction table
+    try:
+        def pg_upsert():
+            with psycopg2.connect(DATABASE_URL) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO transactions (txn_id, sender_id, receiver_id, amount, channel, txn_ts, status, narration, is_fraud, pattern_type)
+                        VALUES (%(txn_id)s, %(sender_id)s, %(receiver_id)s, %(amount)s, %(channel)s, %(txn_ts)s, %(status)s, %(narration)s, %(is_fraud)s, %(pattern_type)s)
+                        ON CONFLICT (txn_id) DO NOTHING
+                    """, transaction)
+        await asyncio.to_thread(pg_upsert)
+    except Exception as e:
+        print(f"Postgres upsert transaction error: {e}")
 
     return transaction
 
 
 async def _recompute_account_metrics(account_id: str) -> Dict:
-    """Recompute live metrics from Neo4j relationships."""
-    if ASYNC_DRIVER is None:
-        return {}
+    """Recompute metrics in Postgres based on transactions."""
+    # Just do a fast update on the account_stats table in Postgres directly
+    try:
+        def pg_recompute():
+            with psycopg2.connect(DATABASE_URL) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE account_stats 
+                        SET 
+                            txn_count_30d = (SELECT count(*) FROM transactions WHERE sender_id = %s AND txn_ts >= NOW() - INTERVAL '30 days'),
+                            volume_30d = (SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE sender_id = %s AND txn_ts >= NOW() - INTERVAL '30 days'),
+                            txn_count_7d = (SELECT count(*) FROM transactions WHERE sender_id = %s AND txn_ts >= NOW() - INTERVAL '7 days'),
+                            volume_7d = (SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE sender_id = %s AND txn_ts >= NOW() - INTERVAL '7 days')
+                        WHERE account_id = %s
+                    """, (account_id, account_id, account_id, account_id, account_id))
+        await asyncio.to_thread(pg_recompute)
+    except Exception as e:
+        print(f"Error recomputing metrics for {account_id}: {e}")
 
-    now = datetime.utcnow()
-    query = f"""
-        MATCH (a:Account {{account_id: $acc_id}})
-        OPTIONAL MATCH (a)-[r:{REL_TYPE}]->()
-        WHERE toUpper(r.status) = 'SUCCESS'
-        WITH a,
-             collect({{amount: toFloat(r.amount), ts: r.txn_ts}}) AS txns
-        RETURN
-            a.declared_annual_income AS declared_annual_income,
-            a.opened_on AS opened_on,
-            txns
-    """
-    records = await _run_query(query, acc_id=account_id)
-    if not records:
-        return {}
-
-    rec  = records[0]
-    txns = rec["txns"] or []
-
-    def parse_ts(ts_val):
-        if ts_val is None:
-            return None
-        if hasattr(ts_val, "to_native"):
-            return ts_val.to_native().replace(tzinfo=None)
-        dt = pd.to_datetime(str(ts_val), errors="coerce")
-        return None if pd.isna(dt) else dt.to_pydatetime().replace(tzinfo=None)
-
-    amounts_7d, amounts_30d, amounts_6m = [], [], []
-    counterparties = set()
-    last_active = None
-
-    for txn in txns:
-        amt = float(txn.get("amount") or 0.0)
-        dt  = parse_ts(txn.get("ts"))
-        if dt is None:
-            continue
-        if last_active is None or dt > last_active:
-            last_active = dt
-        delta = (now - dt).days
-        if delta <= 7:   amounts_7d.append(amt)
-        if delta <= 30:  amounts_30d.append(amt)
-        if delta <= 180: amounts_6m.append(amt)
-
-    dormancy_days = int((now - last_active).days) if last_active else 0
-
-    return _coerce({
-        "txn_count_7d":  len(amounts_7d),
-        "txn_count_30d": len(amounts_30d),
-        "volume_7d":     round(sum(amounts_7d), 2),
-        "volume_30d":    round(sum(amounts_30d), 2),
-        "avg_monthly_count":  round(len(amounts_6m) / 6.0, 2),
-        "avg_monthly_volume": round(sum(amounts_6m) / 6.0, 2),
-        "dormancy_days":  dormancy_days,
-        "last_active_ts": last_active.isoformat() if last_active else None,
-    })
+    # Optionally return the fresh stats
+    return {}

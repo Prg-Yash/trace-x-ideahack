@@ -25,12 +25,13 @@ from fraud_detector import (  # type: ignore[import-not-found]
     detect_roundtrip,
     explain_dormant,
     explain_smurfing,
-    get_neo4j_stats,
+    get_system_stats,
     refresh_data,
     score_account,
     trace_account,
     upsert_account_record,
     upsert_transaction_record,
+    verify_coordinated_smurf_network,
 )
 from trace_x_schemas.models import Account, Transaction
 
@@ -45,10 +46,10 @@ def _driver():
 @router.get("/stats")
 async def get_stats():
     """
-    Fast aggregate stats for the dashboard header cards.
-    All data comes from Neo4j — no CSV reads.
+    Returns aggregate statistics for the dashboard.
+    All data comes from PostgreSQL and Neo4j.
     """
-    return _coerce(await get_neo4j_stats())
+    return _coerce(await get_system_stats())
 
 
 # ── Score ──────────────────────────────────────────────────────────────────────
@@ -62,6 +63,10 @@ async def get_score(account_id: str, background_tasks: BackgroundTasks):
         if result.get("is_flagged"):
             background_tasks.add_task(detect_layering, account_id)
             background_tasks.add_task(detect_roundtrip, account_id)
+            
+        # Escalate to Layer 2 for coordinated smurfing check out-of-line
+        if result.get("smurfing", {}).get("detected"):
+            background_tasks.add_task(verify_coordinated_smurf_network, account_id)
         
         return _coerce(result)
     except Exception as e:
@@ -350,3 +355,60 @@ async def create_transaction(transaction: Transaction):
         }
 
     return _coerce(response)
+
+
+# ── Case Management Endpoints ───────────────────────────────────────────────
+from app.routers.data import get_db_connection
+from psycopg2.extras import RealDictCursor
+from pydantic import BaseModel
+
+class AlertStatusUpdate(BaseModel):
+    status: str
+
+@router.get("/alerts/{alert_id}")
+async def get_alert_details(alert_id: str):
+    pg_query = """
+        SELECT a.*, e.shap_values, e.triggering_txns, e.snapshot_data
+        FROM alerts a
+        LEFT JOIN alert_evidence e ON a.alert_id = e.alert_id
+        WHERE a.alert_id = %s
+    """
+    
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(pg_query, (alert_id,))
+            pg_record = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not pg_record:
+        raise HTTPException(status_code=404, detail="Alert not found in PostgreSQL")
+        
+    return pg_record
+
+@router.patch("/alerts/{alert_id}/status")
+async def update_alert_status(alert_id: str, payload: AlertStatusUpdate):
+    if payload.status not in ["OPEN", "INVESTIGATING", "CLOSED"]:
+        raise HTTPException(status_code=400, detail="Invalid status. Must be OPEN, INVESTIGATING, or CLOSED.")
+        
+    pg_query = """
+        UPDATE alerts
+        SET status = %s
+        WHERE alert_id = %s
+        RETURNING *
+    """
+    
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(pg_query, (payload.status, alert_id))
+            pg_record = cur.fetchone()
+            conn.commit()
+    finally:
+        conn.close()
+
+    if not pg_record:
+        raise HTTPException(status_code=404, detail="Alert not found in PostgreSQL")
+        
+    return pg_record
