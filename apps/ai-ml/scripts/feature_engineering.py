@@ -71,12 +71,16 @@ def build_training_features(data_dir=DATA_DIR):
     X['immediate_outflow_pct'] = X['outflow_ratio_1h']
     
     # --- Pattern 5 New Features ---
+    X['age'] = X['account_age_days'] / 365.25
     X['age_band_encoded'] = pd.cut(X['age'].fillna(30), bins=[0, 22, 25, 30, 40, 100], labels=[0, 1, 2, 3, 4], right=False).astype(float)
     
     # Add missing geography one-hot encodings for peer groups
-    X['geography_tier_metro'] = (X.get('geography_tier') == 'metro').astype(float)
-    X['geography_tier_rural'] = (X.get('geography_tier') == 'rural').astype(float)
-    X['geography_tier_tier2'] = (X.get('geography_tier') == 'tier2').astype(float)
+    if 'geography_tier' not in X.columns:
+        X['geography_tier'] = 'metro'
+        
+    X['geography_tier_metro'] = (X['geography_tier'] == 'metro').astype(float)
+    X['geography_tier_rural'] = (X['geography_tier'] == 'rural').astype(float)
+    X['geography_tier_tier2'] = (X['geography_tier'] == 'tier2').astype(float)
     
     # Tight Peer Grouping fix: median volume by [age, geo, kyc]
     peer_medians = X.groupby(['age_band_encoded', 'geography_tier', 'kyc_tier'])['volume_30d'].transform('median')

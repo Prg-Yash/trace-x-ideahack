@@ -66,3 +66,7 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
+layering_detection_explanation.md
+model_selection_analysis(1).md
+apps/ai-ml/test_roundtrip.py
+apps/ai-ml/test_layering.py

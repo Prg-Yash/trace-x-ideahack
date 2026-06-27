@@ -69,6 +69,65 @@ if (MODELS_DIR / "profile_mismatch_model.json").exists():
 elif (MODELS_DIR / "xgb_model.json").exists():
     XGB_MODEL.load_model(MODELS_DIR / "xgb_model.json")
 
+# ── Layering XGBoost (Model D) ─────────────────────────────────────────────────
+# Loaded lazily so that a missing model file does NOT crash the server —
+# detect_layering() falls back to Cypher-only mode when LAYERING_XGB is None.
+import sys as _sys
+_scripts_dir = str(BASE_DIR / "scripts")
+if _scripts_dir not in _sys.path:
+    _sys.path.insert(0, str(BASE_DIR))  # Make "scripts" importable as a package
+
+LAYERING_XGB: Optional[xgb.XGBClassifier] = None
+LAYERING_FEATURES: List[str] = []
+_LAYERING_THRESHOLD: float = 0.50
+try:
+    from scripts.extract_chain_features import (  # type: ignore[import]
+        extract_chain_features as _extract_chain_features,
+        LAYERING_FEATURES as _LAYERING_FEATURES,
+    )
+    LAYERING_FEATURES = _LAYERING_FEATURES
+    extract_chain_features = _extract_chain_features  # re-export for module usage
+
+    _lxgb = xgb.XGBClassifier()
+    _lxgb.load_model(MODELS_DIR / "layering_xgb.json")
+    LAYERING_XGB = _lxgb
+
+    _lthresh_path = MODELS_DIR / "layering_threshold.json"
+    if _lthresh_path.exists():
+        import json as _json
+        with open(_lthresh_path, "r", encoding="utf-8") as _fh:
+            _LAYERING_THRESHOLD = float(_json.load(_fh).get("threshold", 0.50))
+except FileNotFoundError:
+    pass  # Model not yet trained — graceful fallback to Cypher detection
+except Exception as _layering_load_err:
+    print(f"[WARN] Could not load layering XGBoost: {_layering_load_err}")
+
+# ── Roundtrip XGBoost (Model E) ────────────────────────────────────────────────
+ROUNDTRIP_XGB: Optional[xgb.XGBClassifier] = None
+ROUNDTRIP_FEATURES: List[str] = []
+_ROUNDTRIP_THRESHOLD: float = 0.50
+try:
+    from scripts.extract_chain_features import (  # type: ignore[import]
+        extract_roundtrip_features as _extract_roundtrip_features,
+        ROUNDTRIP_FEATURES as _ROUNDTRIP_FEATURES,
+    )
+    ROUNDTRIP_FEATURES = _ROUNDTRIP_FEATURES
+    extract_roundtrip_features = _extract_roundtrip_features
+
+    _rxgb = xgb.XGBClassifier()
+    _rxgb.load_model(MODELS_DIR / "roundtrip_xgb.json")
+    ROUNDTRIP_XGB = _rxgb
+
+    _rthresh_path = MODELS_DIR / "roundtrip_threshold.json"
+    if _rthresh_path.exists():
+        import json as _json
+        with open(_rthresh_path, "r", encoding="utf-8") as _fh:
+            _ROUNDTRIP_THRESHOLD = float(_json.load(_fh).get("threshold", 0.50))
+except FileNotFoundError:
+    pass
+except Exception as _rt_load_err:
+    print(f"[WARN] Could not load roundtrip XGBoost: {_rt_load_err}")
+
 FEATURE_SEQUENCE = [
     "kyc_tier", "declared_annual_income", "account_age_days", "volume_30d", "txn_count_30d", 
     "income_utilization_ratio_30d", "age_band_encoded", "geography_tier_metro", "geography_tier_rural", "geography_tier_tier2",
@@ -409,18 +468,117 @@ async def detect_kyc_mismatch(account_id: str) -> Dict:
     })
 
 
-# ── Detector: Layering (Neo4j graph path) ─────────────────────────────────────
+# ── Detector: Layering (Neo4j graph path → XGBoost chain scorer) ───────────────
+async def _fetch_layering_candidates(account_id: str) -> List[Dict]:
+    """
+    Query Neo4j for candidate layering chains starting from the given account.
+
+    Filters applied to reduce false positives before XGBoost scoring:
+      - Only SUCCESS transactions
+      - Initial hop amount ≥ 50,000 (filters out trivial small transfers)
+      - Chain length 2–6 hops (covers 5–9 accounts including start)
+      - Returns up to 10 candidate chains ordered by length (longest first)
+
+    Each candidate includes:
+      - chain   : list of account_ids from start → end
+      - amounts : list of hop amounts
+      - ts_list : list of hop timestamps (for gap feature computation)
+      - channels: list of hop channels
+    """
+    query = f"""
+        MATCH path = (start:Account {{account_id: $acc_id}})-[:{REL_TYPE}*2..4]->(end:Account)
+        WHERE start <> end
+          AND ALL(r IN relationships(path) WHERE toUpper(r.status) = 'SUCCESS')
+        WITH [n IN nodes(path) | n.account_id]              AS chain,
+             [r IN relationships(path) | toFloat(r.amount)] AS amounts,
+             [r IN relationships(path) | r.txn_ts]          AS ts_list,
+             [r IN relationships(path) | toUpper(r.channel)] AS channels
+        WHERE size(chain) >= 3
+        RETURN chain, amounts, ts_list, channels
+        ORDER BY size(chain) DESC
+        LIMIT 5
+    """
+    try:
+        records = await _run_query(query, acc_id=account_id)
+        candidates = []
+        for rec in records:
+            amounts  = rec.get("amounts")  or []
+            ts_list  = rec.get("ts_list")  or []
+            channels = rec.get("channels") or []
+            txn_chain = [
+                {"amount": float(a), "ts": ts, "channel": str(ch)}
+                for a, ts, ch in zip(amounts, ts_list, channels)
+            ]
+            if txn_chain:
+                candidates.append({
+                    "chain":     list(rec.get("chain") or []),
+                    "txn_chain": txn_chain,
+                    "amounts":   [float(a) for a in amounts],
+                    "ts_list":   [str(ts) for ts in ts_list],
+                })
+        return candidates
+    except Exception:
+        return []
+
+
+def _score_layering_candidates(candidates: List[Dict]) -> Optional[Dict]:
+    """
+    Score all candidate chains with the XGBoost model.
+    Returns the highest-probability candidate, or None if no chains score
+    above threshold or if the model/features are unavailable.
+    """
+    if LAYERING_XGB is None or not LAYERING_FEATURES:
+        return None
+
+    best_prob   = 0.0
+    best_result = None
+
+    for candidate in candidates:
+        feats = extract_chain_features(candidate["txn_chain"])
+        if feats is None:
+            continue
+
+        feat_row = pd.DataFrame(
+            [{col: feats.get(col, 0.0) for col in LAYERING_FEATURES}],
+            columns=LAYERING_FEATURES,
+        )
+        try:
+            prob = float(LAYERING_XGB.predict_proba(feat_row)[0][1])
+        except Exception:
+            continue
+
+        if prob > best_prob:
+            best_prob   = prob
+            best_result = {
+                "chain":   candidate["chain"],
+                "amounts": candidate["amounts"],
+                "ts_list": candidate["ts_list"],
+                "prob":    prob,
+                "features": feats,
+            }
+
+    return best_result if best_result else None
+
+
 async def detect_layering(account_id: str) -> Dict:
     """
-    Three-tier strategy for maximum reliability:
-    1. Read pre-stored chain from Alert node (instant)
-    2. Direct path query starting from this account
-    3. Path query starting from any peer in the alert group
+    Three-tier layering detection strategy:
+
+    Tier 1 (instant):  Read pre-stored chain from an Alert node in Neo4j.
+                        Created during data load or by the alert seeder.
+    Tier 2 (ML):       Fetch 2–6 hop candidate chains from Neo4j via an
+                        improved Cypher query, extract 18 chain-level features,
+                        and score each with the XGBoost model. Returns the
+                        highest-scoring chain if its probability ≥ threshold.
+    Tier 3 (fallback): Legacy broad Cypher path + peer-group path queries.
+                        Used when the XGBoost model is not yet trained, or
+                        when no ML candidates score above threshold but the
+                        account is in a known Alert group.
     """
     if ASYNC_DRIVER is None:
         return {"detected": False, "fraud_type": "LAYERING", "error": "Neo4j not configured"}
 
-    # ── Tier 1: pre-stored chain on the Alert node (fastest) ──
+    # ── Tier 1: pre-stored chain on the Alert node (fastest) ─────────────────
     stored_q = """
         MATCH (a:Account {account_id: $acc_id})-[:FLAGGED_IN]->(al:Alert {pattern: 'LAYERING'})
         WHERE al.chain IS NOT NULL
@@ -438,23 +596,43 @@ async def detect_layering(account_id: str) -> Dict:
                     "detected": True, "fraud_type": "LAYERING", "confidence": 0.92,
                     "chain": chain, "amounts": amounts,
                     "timestamps": [], "hops": len(chain) - 1,
+                    "model": "alert_node",
                 })
     except Exception:
         pass
 
-    # ── Tier 2: direct outgoing path from this account ──
+    # ── Tier 2: XGBoost ML detection on candidate chains ─────────────────────
+    if LAYERING_XGB is not None:
+        try:
+            candidates = await _fetch_layering_candidates(account_id)
+            if candidates:
+                best = _score_layering_candidates(candidates)
+                if best is not None and best["prob"] >= _LAYERING_THRESHOLD:
+                    return _coerce({
+                        "detected":   True,
+                        "fraud_type": "LAYERING",
+                        "confidence": round(best["prob"], 4),
+                        "chain":      best["chain"],
+                        "amounts":    best["amounts"],
+                        "timestamps": best["ts_list"],
+                        "hops":       len(best["chain"]) - 1,
+                        "model":      "xgboost",
+                    })
+        except Exception:
+            pass  # Degrade to Tier 3
+
+    # ── Tier 3: legacy Cypher-only fallback ───────────────────────────────────
     direct_q = f"""
         MATCH (start:Account {{account_id: $acc_id}})
         MATCH path = (start)-[:{REL_TYPE}*2..4]->(end:Account)
         WHERE start <> end
-        WITH [n IN nodes(path) | n.account_id]           AS chain,
+        WITH [n IN nodes(path) | n.account_id]              AS chain,
              [r IN relationships(path) | toFloat(r.amount)] AS amounts,
-             [r IN relationships(path) | r.txn_ts]       AS ts_list
+             [r IN relationships(path) | r.txn_ts]          AS ts_list
         WHERE size(chain) >= 3
         RETURN chain, amounts, ts_list
         LIMIT 1
     """
-    # ── Tier 3: try peers from the alert group ──
     peer_q = f"""
         MATCH (a:Account {{account_id: $acc_id}})-[:FLAGGED_IN]->(al:Alert {{pattern: 'LAYERING'}})
         WITH al LIMIT 1
@@ -474,10 +652,10 @@ async def detect_layering(account_id: str) -> Dict:
     record = None
     try:
         async with _neo4j_session() as session:
-            res1 = await session.run(direct_q, acc_id=account_id)
+            res1   = await session.run(direct_q, acc_id=account_id)
             record = await res1.single()
             if not record:
-                res2 = await session.run(peer_q, acc_id=account_id)
+                res2   = await session.run(peer_q, acc_id=account_id)
                 record = await res2.single()
     except Exception as e:
         return {"detected": False, "fraud_type": "LAYERING", "error": str(e)}
@@ -487,22 +665,116 @@ async def detect_layering(account_id: str) -> Dict:
 
     chain = list(record["chain"])
     return _coerce({
-        "detected": True, "fraud_type": "LAYERING", "confidence": 0.92,
-        "chain": chain,
-        "amounts": [float(a) for a in record["amounts"]],
+        "detected":   True,
+        "fraud_type": "LAYERING",
+        "confidence": 0.92,
+        "chain":      chain,
+        "amounts":    [float(a) for a in record["amounts"]],
         "timestamps": [str(t) for t in record["ts_list"]],
-        "hops": len(chain) - 1,
+        "hops":       len(chain) - 1,
+        "model":      "cypher_fallback",
     })
 
 
+async def _fetch_roundtrip_candidates(account_id: str) -> List[Dict]:
+    """Fetch 3-to-5 hop cycle candidates for Round Trip scoring."""
+    query = f"""
+        MATCH path = (start:Account {{account_id: $acc_id}})-[:{REL_TYPE}*3..5]->(start)
+        WHERE ALL(r IN relationships(path) WHERE toUpper(r.status) = 'SUCCESS')
+          AND ALL(i IN range(0, size(relationships(path))-2) 
+                  WHERE (relationships(path)[i+1]).txn_ts >= (relationships(path)[i]).txn_ts)
+        WITH [n IN nodes(path) | n.account_id]              AS chain,
+             [r IN relationships(path) | toFloat(r.amount)] AS amounts,
+             [r IN relationships(path) | r.txn_ts]          AS ts_list,
+             [r IN relationships(path) | toUpper(r.channel)] AS channels
+        WHERE size(chain) >= 4
+        RETURN chain, amounts, ts_list, channels
+        LIMIT 5
+    """
+    try:
+        records = await _run_query(query, acc_id=account_id)
+        candidates = []
+        for rec in records:
+            amounts  = rec.get("amounts")  or []
+            ts_list  = rec.get("ts_list")  or []
+            channels = rec.get("channels") or []
+            
+            # Reconstruct hop dictionaries
+            txns = []
+            for i in range(len(amounts)):
+                txns.append({
+                    "amount":  amounts[i],
+                    "ts":      ts_list[i],
+                    "channel": channels[i] if i < len(channels) else "UNKNOWN"
+                })
+            candidates.append({
+                "chain": list(rec.get("chain", [])),
+                "txns": txns,
+                "amounts": amounts,
+            })
+        return candidates
+    except Exception as e:
+        print(f"[WARN] Roundtrip candidate fetch failed: {e}")
+        return []
 
-# ── Detector: Round-Trip (Neo4j cycle query) ───────────────────────────────────
+async def _score_roundtrip_candidates(candidates: List[Dict], account_id: str) -> Optional[Dict]:
+    if not candidates or ROUNDTRIP_XGB is None:
+        return None
+
+    # We get the Isolation Forest score for the account to handle unknown/edge cases
+    iso_penalty = 1.0
+    try:
+        feat_dict = await get_account_features(account_id)
+        # Using exact logic from Isolation Forest inference
+        row_scaled = SCALER.transform(pd.DataFrame([feat_dict])[FEATURE_SEQUENCE])
+        iso_score = ISO_MODEL.decision_function(row_scaled)[0]
+        # if iso_score is very negative (highly anomalous), we boost the roundtrip score
+        if iso_score < -0.1:
+            iso_penalty = 1.25
+        elif iso_score < 0:
+            iso_penalty = 1.10
+    except Exception:
+        pass
+
+    best_cand = None
+    best_score = -1.0
+    best_feats = {}
+
+    for cand in candidates:
+        feats = extract_roundtrip_features(cand["txns"])
+        if feats is None:
+            continue
+        
+        row_df = pd.DataFrame([feats], columns=ROUNDTRIP_FEATURES).fillna(0)
+        prob = float(ROUNDTRIP_XGB.predict_proba(row_df)[0][1])
+        
+        # Apply ensemble penalty for anomalous accounts
+        adjusted_prob = min(prob * iso_penalty, 0.99)
+        
+        if adjusted_prob > best_score:
+            best_score = adjusted_prob
+            best_cand = cand
+            best_feats = feats
+
+    if best_cand and best_score >= _ROUNDTRIP_THRESHOLD:
+        return _coerce({
+            "detected": True,
+            "fraud_type": "ROUND_TRIP",
+            "confidence": best_score,
+            "chain": best_cand["chain"],
+            "amounts": best_cand["amounts"],
+            "features": best_feats,
+            "model": "xgboost_ensemble"
+        })
+    return None
+
+# ── Detector: Round-Trip (ML Ensemble) ─────────────────────────────────────────
 async def detect_roundtrip(account_id: str) -> Dict:
     """
-    Three-tier strategy for maximum reliability:
+    Three-tier strategy:
     1. Read pre-stored loop from Alert node (instant)
-    2. Direct cycle query from this account
-    3. Cycle query from any peer in the alert group
+    2. ML Ensemble (XGBoost + Isolation Forest) on real-time candidates
+    3. Cypher Fallback (if ML model missing)
     """
     if ASYNC_DRIVER is None:
         return {"detected": False, "fraud_type": "ROUND_TRIP", "error": "Neo4j not configured"}
@@ -523,56 +795,49 @@ async def detect_roundtrip(account_id: str) -> Dict:
                 amounts = [float(a) for a in (rec["amounts"] or [])]
                 return _coerce({
                     "detected": True, "fraud_type": "ROUND_TRIP", "confidence": 0.89,
-                    "loop": loop, "chain": loop, "amounts": amounts, "hops": len(loop) - 1,
+                    "chain": loop, "amounts": amounts, "hops": len(loop) - 1,
+                    "model": "cached_alert"
                 })
     except Exception:
         pass
 
-    # ── Tier 2: direct cycle from this account ──
+    # ── Tier 2: ML Ensemble ──
+    if ROUNDTRIP_XGB is not None:
+        candidates = await _fetch_roundtrip_candidates(account_id)
+        if candidates:
+            ml_result = await _score_roundtrip_candidates(candidates, account_id)
+            if ml_result:
+                return ml_result
+
+    # ── Tier 3: Cypher Fallback ──
     direct_q = f"""
-        MATCH path = (a:Account {{account_id: $acc_id}})-[:{REL_TYPE}*2..4]->(a)
+        MATCH path = (a:Account {{account_id: $acc_id}})-[:{REL_TYPE}*3..5]->(a)
+        WHERE ALL(r IN relationships(path) WHERE toUpper(r.status) = 'SUCCESS')
+          AND ALL(i IN range(0, size(relationships(path))-2) 
+                  WHERE (relationships(path)[i+1]).txn_ts >= (relationships(path)[i]).txn_ts)
         WITH [r IN relationships(path) | toFloat(r.amount)] AS amounts,
              [n IN nodes(path)         | n.account_id]      AS loop
-        WHERE size(loop) >= 3
+        WHERE size(loop) >= 4
         RETURN loop, amounts
         LIMIT 1
     """
-    # ── Tier 3: cycle from any peer in the alert group ──
-    peer_q = f"""
-        MATCH (a:Account {{account_id: $acc_id}})-[:FLAGGED_IN]->(al:Alert {{pattern: 'ROUND_TRIP'}})
-        WITH al LIMIT 1
-        MATCH (peer:Account)-[:FLAGGED_IN]->(al)
-        WITH collect(DISTINCT peer.account_id) AS peer_ids LIMIT 1
-        UNWIND peer_ids AS pid
-        MATCH path = (p:Account {{account_id: pid}})-[:{REL_TYPE}*2..4]->(p)
-        WITH [r IN relationships(path) | toFloat(r.amount)] AS amounts,
-             [n IN nodes(path)         | n.account_id]      AS loop
-        WHERE size(loop) >= 3
-        RETURN loop, amounts
-        LIMIT 1
-    """
-    record = None
     try:
         async with _neo4j_session() as session:
             res1 = await session.run(direct_q, acc_id=account_id)
             record = await res1.single()
-            if not record:
-                res2 = await session.run(peer_q, acc_id=account_id)
-                record = await res2.single()
+            if record:
+                loop = list(record["loop"])
+                return _coerce({
+                    "detected": True, "fraud_type": "ROUND_TRIP", "confidence": 0.70,
+                    "chain": loop,
+                    "amounts": [float(a) for a in record["amounts"]],
+                    "hops": len(loop) - 1,
+                    "model": "cypher_fallback"
+                })
     except Exception as e:
         return {"detected": False, "fraud_type": "ROUND_TRIP", "error": str(e)}
 
-    if not record:
-        return {"detected": False, "fraud_type": "ROUND_TRIP"}
-
-    loop = list(record["loop"])
-    return _coerce({
-        "detected": True, "fraud_type": "ROUND_TRIP", "confidence": 0.89,
-        "loop": loop, "chain": loop,
-        "amounts": [float(a) for a in record["amounts"]],
-        "hops": len(loop) - 1,
-    })
-
+    return {"detected": False, "fraud_type": "ROUND_TRIP"}
 
 # ── Combined Scorer ─────────────────────────────────────────────────────────────
 async def _get_account_alerts(account_id: str) -> List[Dict]:

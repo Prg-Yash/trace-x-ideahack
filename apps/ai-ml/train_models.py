@@ -483,6 +483,184 @@ def train_smurf_lstm(df_acc: pd.DataFrame, df_txn: pd.DataFrame) -> None:
     print("  Saved: models/smurf_threshold.json")
 
 
+def train_layering_xgb(df_txn: pd.DataFrame) -> None:
+    """
+    Train Model D: XGBoost (Layering chain scorer).
+
+    Each training sample represents one candidate transaction chain (a sequence
+    of 2+ hops). Positive samples are reconstructed from LAYERING-labeled
+    transactions; negatives are random multi-hop paths from non-fraud txns.
+
+    Saves:
+        models/layering_xgb.json       — XGBoost model
+        models/layering_threshold.json — Optimal classification threshold
+    """
+    print("\nTraining Model D: XGBoost (Layering chain scorer)...")
+
+    try:
+        import xgboost as xgb
+    except ImportError:
+        print("XGBoost not installed. Skipping layering model.")
+        return
+
+    import json
+    from sklearn.model_selection import StratifiedKFold, cross_val_predict
+    from sklearn.metrics import (
+        average_precision_score,
+        classification_report,
+        confusion_matrix,
+    )
+
+    import sys
+    sys.path.append(str(Path(__file__).resolve().parent))
+    from scripts.extract_chain_features import (
+        LAYERING_FEATURES,
+        build_layering_training_dataset,
+    )
+
+    # ── 1. Build chain-level training dataset ─────────────────────────────────
+    X, y = build_layering_training_dataset(df_txn, neg_multiplier=10, rng_seed=RANDOM_SEED)
+
+    if int(y.sum()) < 5:
+        raise ValueError(
+            "Fewer than 5 positive layering chains found. "
+            "Regenerate data or check LAYERING labels in transactions.csv."
+        )
+
+    # ── 2. Class-imbalance weight ─────────────────────────────────────────────
+    pos_count = int(y.sum())
+    neg_count = int((y == 0).sum())
+    spw       = neg_count / max(pos_count, 1)   # scale_pos_weight
+    print(f"  scale_pos_weight = {spw:.2f}")
+
+    # ── 3. Train XGBoost ──────────────────────────────────────────────────────
+    model = xgb.XGBClassifier(
+        n_estimators=300,
+        max_depth=4,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        scale_pos_weight=spw,
+        min_child_weight=3,
+        gamma=0.1,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
+        random_state=RANDOM_SEED,
+        eval_metric="aucpr",
+        use_label_encoder=False,
+    )
+    model.fit(X, y)
+
+    # ── 4. Find optimal threshold via stratified cross-validation ─────────────
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_SEED)
+    oof_probs = cross_val_predict(
+        xgb.XGBClassifier(
+            n_estimators=300, max_depth=4, learning_rate=0.05,
+            subsample=0.8, colsample_bytree=0.8, scale_pos_weight=spw,
+            min_child_weight=3, gamma=0.1, reg_alpha=0.1, reg_lambda=1.0,
+            random_state=RANDOM_SEED, eval_metric="aucpr",
+            use_label_encoder=False,
+        ),
+        X, y, cv=cv, method="predict_proba",
+    )[:, 1]
+
+    # Beta=0.5 favours precision (fewer false positives for investigator queue)
+    best_threshold, best_score = pick_threshold(y, oof_probs, beta=0.5)
+    auc_pr = average_precision_score(y, oof_probs)
+
+    y_pred = (oof_probs >= best_threshold).astype(int)
+    print("\n  OOF Validation Report (thresholded):")
+    print(classification_report(y, y_pred, target_names=["normal", "layering"], zero_division=0))
+    print("  Confusion matrix:")
+    print(confusion_matrix(y, y_pred))
+    print(f"  AUC-PR: {auc_pr:.4f}")
+    print(f"  Best threshold (beta=0.5): {best_threshold:.2f} | F-score: {best_score:.4f}")
+
+    # ── 5. Feature importance (leakage check) ─────────────────────────────────
+    importances = pd.Series(
+        model.feature_importances_, index=LAYERING_FEATURES
+    ).sort_values(ascending=False)
+    print("\n  Top 5 Features by Weight:")
+    for feat, imp in importances.head(5).items():
+        print(f"    {feat}: {imp:.4f}")
+
+    # ── 6. Save artefacts ─────────────────────────────────────────────────────
+    model.save_model(MODELS_DIR / "layering_xgb.json")
+    threshold_path = MODELS_DIR / "layering_threshold.json"
+    with open(threshold_path, "w", encoding="utf-8") as fh:
+        json.dump({"threshold": best_threshold, "auc_pr": round(auc_pr, 4)}, fh)
+    print("  Saved: models/layering_xgb.json")
+    print("  Saved: models/layering_threshold.json")
+
+def train_roundtrip_xgb(df_txn: pd.DataFrame) -> None:
+    print("\nTraining Model E: XGBoost (Round-Trip chain scorer)...")
+    import sys
+    sys.path.append(str(Path(__file__).resolve().parent))
+    from scripts.extract_chain_features import (
+        ROUNDTRIP_FEATURES,
+        build_roundtrip_training_dataset
+    )
+    
+    X, y = build_roundtrip_training_dataset(df_txn, neg_multiplier=5)
+    
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import classification_report, average_precision_score, precision_recall_curve
+
+    if len(np.unique(y)) < 2:
+        print("  Not enough classes to train Round-Trip model. Check labels.")
+        return
+
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+
+    pos_weight = float((y_train == 0).sum()) / max(float((y_train == 1).sum()), 1.0)
+    print(f"  scale_pos_weight = {pos_weight:.2f}")
+
+    import xgboost as xgb
+    bst = xgb.XGBClassifier(
+        n_estimators=300,
+        max_depth=4,
+        learning_rate=0.05,
+        scale_pos_weight=pos_weight,
+        eval_metric="aucpr",
+        early_stopping_rounds=20,
+        random_state=42
+    )
+
+    bst.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+
+    y_pred_proba = bst.predict_proba(X_val)[:, 1]
+    
+    # Calculate F-beta score using robust pick_threshold
+    beta = 0.5
+    best_threshold, best_score = pick_threshold(y_val, y_pred_proba, beta=beta)
+    
+    y_pred = (y_pred_proba >= best_threshold).astype(int)
+    
+    auc_pr = float(average_precision_score(y_val, y_pred_proba))
+    
+    print("\n  OOF Validation Report (thresholded):")
+    print(classification_report(y_val, y_pred, target_names=["normal", "round_trip"]))
+    print(f"  AUC-PR: {auc_pr:.4f}")
+    print(f"  Best threshold (beta={beta}): {best_threshold:.2f} | F-score: {best_score:.4f}")
+
+    importance = bst.feature_importances_
+    sorted_idx = np.argsort(importance)[::-1]
+    print("\n  Top Features by Weight:")
+    for i in range(min(5, len(ROUNDTRIP_FEATURES))):
+        idx = sorted_idx[i]
+        print(f"    {ROUNDTRIP_FEATURES[idx]}: {importance[idx]:.4f}")
+
+    model_path = MODELS_DIR / "roundtrip_xgb.json"
+    bst.save_model(model_path)
+    
+    threshold_path = MODELS_DIR / "roundtrip_threshold.json"
+    with open(threshold_path, "w", encoding="utf-8") as fh:
+        json.dump({"threshold": best_threshold, "auc_pr": round(auc_pr, 4)}, fh)
+    print("  Saved: models/roundtrip_xgb.json")
+    print("  Saved: models/roundtrip_threshold.json")
+
 def main() -> None:
     df_acc = load_accounts()
     df_txn = load_transactions()
@@ -506,7 +684,21 @@ def main() -> None:
 
     train_isolation_forest(X_train)
     train_xgboost_kyc(X_train, patterns)
-    train_smurf_lstm(df_acc, df_txn)
+    
+    try:
+        train_layering_xgb(df_txn)
+    except Exception as e:
+        print(f"Layering training failed: {e}")
+        
+    try:
+        train_smurf_lstm(df_acc, df_txn)
+    except Exception as e:
+        print(f"Smurf LSTM training failed: {e}")
+
+    try:
+        train_roundtrip_xgb(df_txn)
+    except Exception as e:
+        print(f"Roundtrip training failed: {e}")
 
     print("\nAll models trained and saved.")
 
