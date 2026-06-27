@@ -74,10 +74,30 @@ def sync_ml_features_to_neo4j():
         a.kyc_update_recency_days = toInteger(row.kyc_update_recency_days),
         a.outflow_to_known_contacts = toFloat(row.outflow_to_known_contacts),
         a.outflow_to_new_accounts = toFloat(row.outflow_to_new_accounts),
-        a.cash_withdrawal_ratio = toFloat(row.cash_withdrawal_ratio)
+        a.cash_withdrawal_ratio = toFloat(row.cash_withdrawal_ratio),
+        a.amount = toFloat(row.amount),
+        a.tx_count_last_24h = toInteger(row.tx_count_last_24h),
+        a.total_volume_24h = toFloat(row.total_volume_24h),
+        a.channel_upi_ratio = toFloat(row.channel_upi_ratio),
+        a.tx_count_last_7d = toInteger(row.tx_count_last_7d),
+        a.tx_count_last_30d = toInteger(row.tx_count_last_30d),
+        a.total_volume_7d = toFloat(row.total_volume_7d),
+        a.total_volume_30d = toFloat(row.total_volume_30d),
+        a.near_threshold_count_30d = toInteger(row.near_threshold_count_30d),
+        a.amount_variance_24h = toFloat(row.amount_variance_24h),
+        a.amount_clustering_score = toFloat(row.amount_clustering_score),
+        a.threshold_avoidance_ratio = toFloat(row.threshold_avoidance_ratio),
+        a.time_gap_mean_min = toFloat(row.time_gap_mean_min),
+        a.time_gap_stddev = toFloat(row.time_gap_stddev),
+        a.is_weekend = toFloat(row.is_weekend),
+        a.unique_recipients_24h = toInteger(row.unique_recipients_24h),
+        a.orig_balance_after_ratio = toFloat(row.orig_balance_after_ratio)
     """
     
-    _run_query(query, rows=rows)
+    import asyncio
+    async def do_sync():
+        await _run_query(query, rows=rows)
+    asyncio.run(do_sync())
     print("Neo4j Graph Database successfully updated with all ML Features!")
 
 if __name__ == "__main__":

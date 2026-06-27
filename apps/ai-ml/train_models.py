@@ -327,16 +327,15 @@ def train_xgboost_kyc(X_train: pd.DataFrame, patterns: pd.Series) -> None:
         print("  [WARNING] income_utilization_ratio_30d is the top feature - potential leakage!")
 
 
-def train_smurf_lstm(df_acc: pd.DataFrame, df_txn: pd.DataFrame) -> None:
-    print("\nTraining Model B: BiLSTM (smurfing detector)...")
+def train_smurf_xgboost(X_train: pd.DataFrame, df_txn: pd.DataFrame) -> None:
+    print("\nTraining Model B: XGBoost (smurfing detector)...")
+    try:
+        import xgboost as xgb
+    except ImportError:
+        print("XGBoost not installed. Skipping.")
+        return
 
-    window = 30
-    min_seq_len = 10
-
-    df_txn = df_txn.copy()
-    df_txn["status"] = df_txn["status"].str.upper()
-    df_txn_success = df_txn[df_txn["status"] == "SUCCESS"].copy()
-
+    df_txn_success = df_txn[df_txn["status"].str.upper() == "SUCCESS"].copy()
     labels_path = DATA_DIR / "labels" / "smurf_accounts.csv"
     if labels_path.exists():
         labels_df = pd.read_csv(labels_path)
@@ -346,141 +345,76 @@ def train_smurf_lstm(df_acc: pd.DataFrame, df_txn: pd.DataFrame) -> None:
         smurfers = detect_smurf_accounts(df_txn_success)
         print(f"  Smurf labeler found {len(smurfers)} accounts")
 
-    sequences: List[np.ndarray] = []
-    labels: List[int] = []
 
-    for acc_id in df_acc["account_id"].tolist():
-        txns = df_txn_success[df_txn_success["sender_id"] == acc_id]
-        if len(txns) < min_seq_len:
-            continue
+    feature_cols = [
+        'amount', 'tx_count_last_24h', 'total_volume_24h', 'channel_upi_ratio',
+        'tx_count_last_7d', 'tx_count_last_30d', 'total_volume_7d', 'total_volume_30d',
+        'near_threshold_count_30d', 'amount_variance_24h', 'amount_clustering_score',
+        'threshold_avoidance_ratio', 'time_gap_mean_min', 'time_gap_stddev', 'is_weekend',
+        'unique_recipients_24h', 'account_age_days', 'orig_balance_after_ratio'
+    ]
 
-        sequences.append(build_sequence(txns, window))
-        labels.append(1 if acc_id in smurfers else 0)
+    missing = [col for col in feature_cols if col not in X_train.columns]
+    if missing:
+        for col in missing:
+            print(f"Warning: XGBoost missing {col}")
+            X_train[col] = 0
+            
+    # Make sure we sort properly by account id so labels match features
+    X_full = X_train.copy()
+    y_full = X_full['account_id'].apply(lambda x: 1 if x in smurfers else 0).values
+    
+    print(f"  Dataset: {len(X_full)} accounts, {int(y_full.sum())} smurfers")
+    if int(y_full.sum()) == 0:
+        raise ValueError("Smurf labeler produced 0 positives. Regenerate data.")
 
-    X = np.array(sequences, dtype=np.float32)
-    y = np.array(labels, dtype=np.int64)
+    X = X_full[feature_cols].copy().fillna(0)
 
-    print(f"  Dataset: {len(X)} accounts, {int(y.sum())} smurfers")
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import average_precision_score
+    from imblearn.over_sampling import SMOTENC
+    from sklearn.calibration import CalibratedClassifierCV
+    import joblib
 
-    if len(X) == 0:
-        raise ValueError("No sequences available for training.")
+    X_tr, X_val, y_tr, y_val = train_test_split(X, y_full, test_size=0.2, random_state=RANDOM_SEED, stratify=y_full)
 
-    if int(y.sum()) == 0:
-        raise ValueError("Smurf labeler produced 0 positives. Regenerate data or relax thresholds.")
+    # Apply SMOTENC to avoid fractional categorical/count artifacts
+    categorical_indices = [i for i, col in enumerate(feature_cols) if 'is_' in col or 'count' in col]
+    smote = SMOTENC(categorical_features=categorical_indices, random_state=RANDOM_SEED)
+    X_tr_resampled, y_tr_resampled = smote.fit_resample(X_tr, y_tr)
 
-    pos_idx = np.where(y == 1)[0]
-    neg_idx = np.where(y == 0)[0]
-    np.random.shuffle(pos_idx)
-    np.random.shuffle(neg_idx)
-    pos_split = int(len(pos_idx) * 0.8)
-    neg_split = int(len(neg_idx) * 0.8)
-    train_idx = np.concatenate([pos_idx[:pos_split], neg_idx[:neg_split]])
-    val_idx = np.concatenate([pos_idx[pos_split:], neg_idx[neg_split:]])
-    np.random.shuffle(train_idx)
-    np.random.shuffle(val_idx)
+    # Regularization guardrails
+    base_model = xgb.XGBClassifier(
+        n_estimators=100,
+        max_depth=4,
+        learning_rate=0.1,
+        scale_pos_weight=1.0,  # Balanced by SMOTE
+        reg_alpha=0.1,         # L1
+        reg_lambda=1.0,        # L2
+        min_child_weight=1,
+        random_state=RANDOM_SEED
+    )
+    
+    # Probability Calibration
+    calibrated_model = CalibratedClassifierCV(estimator=base_model, method='isotonic', cv=3)
+    calibrated_model.fit(X_tr_resampled, y_tr_resampled)
 
-    X_train = torch.tensor(X[train_idx], dtype=torch.float32)
-    y_train = torch.tensor(y[train_idx], dtype=torch.long)
-    X_val = torch.tensor(X[val_idx], dtype=torch.float32)
-    y_val = torch.tensor(y[val_idx], dtype=torch.long)
+    out_path = MODELS_DIR / "smurf_model.pkl"
+    joblib.dump(calibrated_model, out_path)
+    print(f"  Saved: {out_path}")
 
-    class SmurfLSTM(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.lstm = nn.LSTM(
-                input_size=5,
-                hidden_size=64,
-                num_layers=2,
-                batch_first=True,
-                bidirectional=True,
-                dropout=0.3,
-            )
-            self.fc = nn.Sequential(
-                nn.Linear(64 * 2, 32),
-                nn.ReLU(),
-                nn.Dropout(0.3),
-                nn.Linear(32, 2),
-            )
+    # Evaluate on held-out test set
+    preds = calibrated_model.predict(X_val)
+    probs = calibrated_model.predict_proba(X_val)[:, 1]
+    auc_pr = average_precision_score(y_val, probs)
+    print(f"  XGBoost Validation F1: {f1_score(y_val, preds):.4f}")
+    print(f"  XGBoost Validation AUC-PR: {auc_pr:.4f}")
 
-        def forward(self, x):
-            out, _ = self.lstm(x)
-            last = out[:, -1, :]
-            return self.fc(last)
-
-    model = SmurfLSTM()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-
-    smurf_count = int(y_train.sum())
-    normal_count = len(y_train) - smurf_count
-    weights = torch.tensor([1.0, normal_count / max(smurf_count, 1)], dtype=torch.float32)
-    criterion = nn.CrossEntropyLoss(weight=weights)
-
-    dataset = TensorDataset(X_train, y_train)
-    class_counts = np.bincount(y_train.cpu().numpy(), minlength=2)
-    class_weights = 1.0 / np.maximum(class_counts, 1)
-    sample_weights = class_weights[y_train.cpu().numpy()]
-    sampler = WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
-    loader = DataLoader(dataset, batch_size=64, sampler=sampler)
-
-    best_state = None
-    best_threshold = 0.5
-    best_score = -1.0
-
-    for epoch in range(50):
-        model.train()
-        total_loss = 0.0
-        for bx, by in loader:
-            optimizer.zero_grad()
-            out = model(bx)
-            loss = criterion(out, by)
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
-
-        if epoch % 10 == 0:
-            print(f"  Epoch {epoch:2d} | Loss: {total_loss / len(loader):.4f}")
-
-        if (epoch + 1) % 5 == 0:
-            model.eval()
-            with torch.no_grad():
-                logits = model(X_val)
-                probs = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
-                y_true = y_val.cpu().numpy()
-                if len(np.unique(y_true)) > 1:
-                    threshold, score = pick_threshold(y_true, probs, beta=0.5)
-                    if score > best_score:
-                        best_score = score
-                        best_threshold = threshold
-                        best_state = copy.deepcopy(model.state_dict())
-
-    if best_state is not None:
-        model.load_state_dict(best_state)
-
-    model.eval()
-    with torch.no_grad():
-        logits = model(X_val)
-        probs = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
-        y_true = y_val.cpu().numpy()
-        if len(np.unique(y_true)) < 2:
-            print("\nValidation report: only one class present in validation split.")
-        else:
-            y_pred = (probs >= best_threshold).astype(int)
-            report = classification_report(
-                y_true, y_pred, target_names=["normal", "smurf"], zero_division=0
-            )
-            matrix = confusion_matrix(y_true, y_pred)
-            precision = precision_score(y_true, y_pred, zero_division=0)
-            recall = recall_score(y_true, y_pred, zero_division=0)
-            f1 = f1_score(y_true, y_pred, zero_division=0)
-            print("\nValidation report (thresholded):\n" + report)
-            print("Confusion matrix:\n" + str(matrix))
-            print(f"Chosen threshold: {best_threshold:.2f} | Precision: {precision:.3f} | Recall: {recall:.3f} | F1: {f1:.3f}")
-
-    torch.save(model.state_dict(), MODELS_DIR / "lstm_model.pt")
-    with open(MODELS_DIR / "smurf_threshold.json", "w", encoding="utf-8") as handle:
-        handle.write(f"{{\"threshold\": {best_threshold:.4f}}}\n")
-    print("  Saved: models/lstm_model.pt")
-    print("  Saved: models/smurf_threshold.json")
+    # Print SHAP/Feature Importance check directly during training
+    importances = pd.Series(calibrated_model.calibrated_classifiers_[0].estimator.feature_importances_, index=feature_cols).sort_values(ascending=False)
+    print("\n  Top 5 Smurf Features by Weight:")
+    for feat, imp in importances.head(5).items():
+        print(f"    {feat}: {imp:.4f}")
 
 
 def train_layering_xgb(df_txn: pd.DataFrame) -> None:
@@ -684,16 +618,15 @@ def main() -> None:
 
     train_isolation_forest(X_train)
     train_xgboost_kyc(X_train, patterns)
-    
     try:
         train_layering_xgb(df_txn)
     except Exception as e:
         print(f"Layering training failed: {e}")
         
     try:
-        train_smurf_lstm(df_acc, df_txn)
+        train_smurf_xgboost(X_train, df_txn)
     except Exception as e:
-        print(f"Smurf LSTM training failed: {e}")
+        print(f"Smurf XGBoost training failed: {e}")
 
     try:
         train_roundtrip_xgb(df_txn)
