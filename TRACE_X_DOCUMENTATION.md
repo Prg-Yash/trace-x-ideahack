@@ -42,3 +42,12 @@ All APIs have been refactored to query PostgreSQL for rich data and Neo4j for st
 ## 4. Testing & Seeding
 *   **Database Seeder (`seed_dbs.py`)**: Automates the teardown and reconstruction of the Polyglot environment. It loads CSVs into PostgreSQL, computes baseline ML features, builds the case management schemas, and initializes the sparse Neo4j graph.
 *   **API Tester UI (`test_endpoints.html`)**: A lightweight, standalone HTML application placed in the project root that provides a point-and-click interface to test all API routes against `localhost:8000` via the Fetch API.
+
+## 5. MLOps & Model Evaluation Framework
+To ensure rigorous validation of our models against severe class imbalances (e.g., extremely rare fraud topologies), a robust MLOps evaluation suite has been established:
+
+*   **Master Evaluation Suite (`master_eval.py`)**: Computes comprehensive metrics across all models, generating a Markdown report (`EVALUATION_REPORT.md`) containing AUC-PR (Area Under the Precision-Recall Curve), ROC-AUC, F1-Scores, and Top Feature contributions.
+*   **K-Fold Cross-Validation (`kfold_eval.py`)**: Uses Stratified 5-Fold Cross-Validation to validate the stability of our XGBoost models (Smurfing, Layering, Round-Trip) against data jitter and data drift.
+*   **Pytest Integration (`tests/`)**: 
+    *   `test_shap.py`: Explains models natively via TreeSHAP, explicitly validating that tree splits align with business logic (e.g., verifying `total_volume_7d` and `tx_count_last_24h` dominate the structuring model).
+    *   `test_e2e_api.py`: Automatically tests the API inference paths, ensuring that database queries and graph traversals meet strict latency SLAs (e.g., `< 500ms` in production).

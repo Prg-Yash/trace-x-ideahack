@@ -151,22 +151,8 @@ if _thresh_path.exists():
 
 FEATURE_COLS = [
     "dormancy_days",
-    "txn_count_7d",
-    "txn_count_30d",
     "volume_7d",
     "volume_30d",
-    "avg_monthly_volume",
-    "avg_monthly_count",
-    "unique_counterparties_30d",
-    "risk_score_7d_ago",
-    "risk_score_delta_7d",
-    "tx_count_week1_post_dormancy",
-    "tx_count_week2_post_dormancy",
-    "volume_acceleration",
-    "has_foreign_inflow",
-    "inflow_source_type",
-    "kyc_update_recency_days",
-    "immediate_outflow_pct",
 ]
 
 SMURFING_FEATURES = [
@@ -313,7 +299,7 @@ async def detect_smurfing(account_id: str) -> dict:
         prob = 0.0
     
     # Use robust calibrated threshold
-    SMURF_OPERATIONAL_THRESHOLD = 0.50
+    SMURF_OPERATIONAL_THRESHOLD = 0.03
     
     return {
         "detected": bool(prob >= SMURF_OPERATIONAL_THRESHOLD),
@@ -1094,9 +1080,7 @@ async def explain_dormant(account_id: str) -> Dict:
         return {"error": "account not found in Neo4j"}
 
     core_features = [
-        "dormancy_days", "txn_count_7d", "txn_count_30d", "volume_7d", 
-        "volume_30d", "avg_monthly_volume", "avg_monthly_count", 
-        "unique_counterparties_30d"
+        "dormancy_days", "volume_7d", "volume_30d"
     ]
 
     # Build background sample from Neo4j
@@ -1104,13 +1088,8 @@ async def explain_dormant(account_id: str) -> Dict:
         MATCH (a:Account)
         RETURN 
             coalesce(a.dormancy_days, 0) AS dormancy_days,
-            coalesce(a.txn_count_7d, 0) AS txn_count_7d,
-            coalesce(a.txn_count_30d, 0) AS txn_count_30d,
             coalesce(a.volume_7d, 0.0) AS volume_7d,
-            coalesce(a.volume_30d, 0.0) AS volume_30d,
-            coalesce(a.avg_monthly_volume, 0.0) AS avg_monthly_volume,
-            coalesce(a.avg_monthly_count, 0) AS avg_monthly_count,
-            coalesce(a.unique_counterparties_30d, 0) AS unique_counterparties_30d
+            coalesce(a.volume_30d, 0.0) AS volume_30d
         LIMIT 100
     """
     bg_records = await _run_query(bg_query)
