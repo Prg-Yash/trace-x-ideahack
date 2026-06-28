@@ -1,0 +1,88 @@
+{
+  "graphs": [
+    {
+      "graphId": "graph-layering-001",
+      "nodes": [
+        { "id": "1", "label": "Meridian Trade Corp", "accountNumber": "ACC-00234", "riskLevel": "CRITICAL", "accountType": "Business", "balance": 2840000, "flagged": true, "pattern": "Layering", "x": null, "y": null },
+        { "id": "7", "label": "Dormant Shell Entity", "accountNumber": "ACC-00923", "riskLevel": "CRITICAL", "accountType": "Dormant Account", "balance": 0, "flagged": true, "pattern": "Layering", "x": null, "y": null },
+        { "id": "8", "label": "Nexus Capital Partners", "accountNumber": "ACC-00188", "riskLevel": "HIGH", "accountType": "Business", "balance": 5120000, "flagged": true, "pattern": "Layering", "x": null, "y": null },
+        { "id": "9", "label": "Cayman Offshore 1", "accountNumber": "ACC-EXT-KY-001", "riskLevel": "CRITICAL", "accountType": "Corporate", "balance": 0, "flagged": true, "pattern": "Layering", "x": null, "y": null },
+        { "id": "2", "label": "Phantom Holdings LLC", "accountNumber": "ACC-00891", "riskLevel": "CRITICAL", "accountType": "Corporate", "balance": 1590000, "flagged": true, "pattern": "Layering", "x": null, "y": null }
+      ],
+      "edges": [
+        { "id": "e-1", "source": "1", "target": "9", "amount": 950000, "flagged": true, "pattern": "Layering", "txnId": "TXN-20250620-001", "txnType": "Wire Transfer", "timestamp": "2025-06-20T07:30:00Z" },
+        { "id": "e-2", "source": "9", "target": "2", "amount": 870000, "flagged": true, "pattern": "Layering", "txnId": "TXN-20250620-002", "txnType": "Wire Transfer", "timestamp": "2025-06-20T09:15:00Z" },
+        { "id": "e-9", "source": "8", "target": "9", "amount": 600000, "flagged": true, "pattern": "Layering", "txnId": "TXN-20250620-003", "txnType": "Wire Transfer", "timestamp": "2025-06-20T08:00:00Z" },
+        { "id": "e-12", "source": "7", "target": "1", "amount": 750000, "flagged": true, "pattern": "Layering", "txnId": "TXN-20250615-001", "txnType": "Wire Transfer", "timestamp": "2025-06-15T00:01:00Z" }
+      ],
+      "suspiciousNodes": ["1", "7", "8", "9", "2"],
+      "suspiciousEdges": ["e-1", "e-2", "e-9", "e-12"]
+    },
+    {
+      "graphId": "graph-mule-002",
+      "nodes": [
+        { "id": "2", "label": "Phantom Holdings LLC", "accountNumber": "ACC-00891", "riskLevel": "CRITICAL", "accountType": "Corporate", "balance": 1590000, "flagged": true, "pattern": "Money Mule Network", "x": null, "y": null },
+        { "id": "10", "label": "UAE Intermediary", "accountNumber": "ACC-EXT-UAE-002", "riskLevel": "HIGH", "accountType": "Business", "balance": 0, "flagged": true, "pattern": "Money Mule Network", "x": null, "y": null },
+        { "id": "3", "label": "James Okafor", "accountNumber": "ACC-01102", "riskLevel": "HIGH", "accountType": "Personal", "balance": 487000, "flagged": true, "pattern": "Money Mule Network", "x": null, "y": null }
+      ],
+      "edges": [
+        { "id": "e-3", "source": "10", "target": "2", "amount": 1590000, "flagged": true, "pattern": "Money Mule Network", "txnId": "TXN-20250619-001", "txnType": "Wire Transfer", "timestamp": "2025-06-19T06:00:00Z" },
+        { "id": "e-4", "source": "2", "target": "3", "amount": 245000, "flagged": true, "pattern": "Money Mule Network", "txnId": "TXN-20250619-002", "txnType": "Transfer", "timestamp": "2025-06-19T10:30:00Z" }
+      ],
+      "suspiciousNodes": ["2", "10", "3"],
+      "suspiciousEdges": ["e-3", "e-4"]
+    },
+    {
+      "graphId": "graph-roundtrip-003",
+      "nodes": [
+        { "id": "6", "label": "Golden Gate Ventures", "accountNumber": "ACC-00445", "riskLevel": "HIGH", "accountType": "Business", "balance": 3400000, "flagged": true, "pattern": "Round-Tripping", "x": null, "y": null },
+        { "id": "11", "label": "Panama Entity", "accountNumber": "ACC-EXT-PA-001", "riskLevel": "HIGH", "accountType": "Corporate", "balance": 0, "flagged": true, "pattern": "Round-Tripping", "x": null, "y": null }
+      ],
+      "edges": [
+        { "id": "e-5", "source": "6", "target": "11", "amount": 490000, "flagged": true, "pattern": "Round-Tripping", "txnId": "TXN-20250618-001", "txnType": "Wire Transfer", "timestamp": "2025-06-18T12:00:00Z" },
+        { "id": "e-6", "source": "11", "target": "6", "amount": 485000, "flagged": true, "pattern": "Round-Tripping", "txnId": "TXN-20250621-001", "txnType": "Wire Transfer", "timestamp": "2025-06-21T10:00:00Z" }
+      ],
+      "suspiciousNodes": ["6", "11"],
+      "suspiciousEdges": ["e-5", "e-6"]
+    },
+    {
+      "graphId": "graph-structuring-004",
+      "nodes": [
+        { "id": "3", "label": "James Okafor", "accountNumber": "ACC-01102", "riskLevel": "HIGH", "accountType": "Personal", "balance": 487000, "flagged": true, "pattern": "Structuring", "x": null, "y": null },
+        { "id": "10", "label": "UAE Intermediary", "accountNumber": "ACC-EXT-UAE-002", "riskLevel": "HIGH", "accountType": "Business", "balance": 0, "flagged": true, "pattern": "Structuring", "x": null, "y": null }
+      ],
+      "edges": [
+        { "id": "e-7", "source": "3", "target": "10", "amount": 29800, "flagged": true, "pattern": "Structuring", "txnId": "TXN-20250617-001", "txnType": "Cash Deposit", "timestamp": "2025-06-17T08:00:00Z" },
+        { "id": "e-8", "source": "3", "target": "10", "amount": 29500, "flagged": true, "pattern": "Structuring", "txnId": "TXN-20250617-002", "txnType": "Cash Deposit", "timestamp": "2025-06-17T14:20:00Z" }
+      ],
+      "suspiciousNodes": ["3", "10"],
+      "suspiciousEdges": ["e-7", "e-8"]
+    },
+    {
+      "graphId": "graph-dormant-005",
+      "nodes": [
+        { "id": "7", "label": "Dormant Shell Entity", "accountNumber": "ACC-00923", "riskLevel": "CRITICAL", "accountType": "Dormant Account", "balance": 0, "flagged": true, "pattern": "Layering", "x": null, "y": null },
+        { "id": "1", "label": "Meridian Trade Corp", "accountNumber": "ACC-00234", "riskLevel": "CRITICAL", "accountType": "Business", "balance": 2840000, "flagged": true, "pattern": "Layering", "x": null, "y": null }
+      ],
+      "edges": [
+        { "id": "e-12", "source": "7", "target": "1", "amount": 750000, "flagged": true, "pattern": "Layering", "txnId": "TXN-20250615-001", "txnType": "Wire Transfer", "timestamp": "2025-06-15T00:01:00Z" }
+      ],
+      "suspiciousNodes": ["7", "1"],
+      "suspiciousEdges": ["e-12"]
+    },
+    {
+      "graphId": "graph-layering-007",
+      "nodes": [
+        { "id": "8", "label": "Nexus Capital Partners", "accountNumber": "ACC-00188", "riskLevel": "HIGH", "accountType": "Business", "balance": 5120000, "flagged": true, "pattern": "Layering", "x": null, "y": null },
+        { "id": "9", "label": "Cayman Offshore 1", "accountNumber": "ACC-EXT-KY-001", "riskLevel": "CRITICAL", "accountType": "Corporate", "balance": 0, "flagged": true, "pattern": "Layering", "x": null, "y": null },
+        { "id": "1", "label": "Meridian Trade Corp", "accountNumber": "ACC-00234", "riskLevel": "CRITICAL", "accountType": "Business", "balance": 2840000, "flagged": true, "pattern": "Layering", "x": null, "y": null }
+      ],
+      "edges": [
+        { "id": "e-9", "source": "8", "target": "9", "amount": 600000, "flagged": true, "pattern": "Layering", "txnId": "TXN-20250620-003", "txnType": "Wire Transfer", "timestamp": "2025-06-20T08:00:00Z" },
+        { "id": "e-1", "source": "1", "target": "9", "amount": 950000, "flagged": true, "pattern": "Layering", "txnId": "TXN-20250620-001", "txnType": "Wire Transfer", "timestamp": "2025-06-20T07:30:00Z" }
+      ],
+      "suspiciousNodes": ["8", "9", "1"],
+      "suspiciousEdges": ["e-9", "e-1"]
+    }
+  ]
+}
