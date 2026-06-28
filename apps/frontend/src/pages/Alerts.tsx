@@ -20,6 +20,7 @@ import {
 } from "@/data/staticData";
 import { getInvestigationAlertById } from "@/data/investigationData";
 import { useInvestigation } from "@/context/InvestigationContext";
+import { useAlertsQuick } from "@/hooks/useApi";
 
 /* ── STYLES ── */
 const SEV: Record<string, { badge: string; dot: string; leftBar: string; drawerBg: string }> = {
@@ -108,12 +109,34 @@ export default function Alerts() {
   const [showTimeline, setShowTimeline] = useState(false);
   const [statusOverrides, setStatusOverrides] = useState<Record<number, string>>({});
 
+  // Live API data
+  const { data: liveAlertsData, loading: alertsLoading } = useAlertsQuick(200);
+
+  // Merge live alerts with static format for UI components
+  const mergedAlerts: Alert[] = liveAlertsData?.alerts?.length
+    ? liveAlertsData.alerts.map((a, i) => ({
+        id: i + 1,
+        alertId: `ALT-${a.account_id}-${(a.flagged_for[0] || "fraud").toLowerCase()}`,
+        accountId: i + 1,
+        severity: a.risk_level as string,
+        status: "OPEN",
+        pattern: a.flagged_for[0] ?? "UNKNOWN",
+        amount: a.total_amount ?? Math.round(a.score * 5_000_000),
+        assignee: null,
+        description: `Fraud pattern detected: ${a.flagged_for.join(", ")}`,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        accountName: a.account_id,
+        accountNumber: a.account_id,
+      }))
+    : staticAlerts;
+
   const handleStartInvestigation = (alertId: number) => {
-    const investigationAlert = getInvestigationAlertById(alertId);
-    if (!investigationAlert) return;
-    setInvestigation(investigationAlert);
-    setDrawerOpen(false);
-    navigate("/graph-analytics");
+    const alert = mergedAlerts.find(a => a.id === alertId);
+    if (alert) {
+      setDrawerOpen(false);
+      navigate(`/graph/${alert.alertId}`);
+    }
   };
 
   const handleOpen = (id: number) => {
@@ -122,7 +145,7 @@ export default function Alerts() {
     setShowTimeline(false);
   };
 
-  const filteredAlerts = staticAlerts.filter(a => {
+  const filteredAlerts = mergedAlerts.filter(a => {
     const effectiveStatus = statusOverrides[a.id] ?? a.status;
     const matchSeverity = !severity || severity === "ALL" || a.severity === severity;
     const matchStatus = !status || status === "ALL" || effectiveStatus === status;
@@ -133,7 +156,7 @@ export default function Alerts() {
   });
 
   const alerts = filteredAlerts;
-  const alertDetail = selectedId ? staticAlerts.find(a => a.id === selectedId) : null;
+  const alertDetail = selectedId ? mergedAlerts.find(a => a.id === selectedId) : null;
   const timeline = selectedId ? getTimelineByAlertId(selectedId) : [];
   const relatedTransactions = alertDetail ? getTransactionsByAccountId(alertDetail.accountId) : [];
 
@@ -429,21 +452,19 @@ export default function Alerts() {
 
                     {/* ── Actions ── */}
                     <section className="py-6 space-y-5">
-                      {getInvestigationAlertById(alertDetail.id) && (
-                        <Button
-                          onClick={() => handleStartInvestigation(alertDetail.id)}
-                          className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
-                          style={{
-                            backgroundColor: DRAWER.accent,
-                            color: DRAWER.accentDark,
-                            border: `1px solid ${DRAWER.accentDark}`,
-                            boxShadow: `3px 3px 0px ${DRAWER.accentDark}`,
-                          }}
-                        >
-                          <Network className="h-3.5 w-3.5 mr-2" />
-                          Start Investigation
-                        </Button>
-                      )}
+                      <Button
+                        onClick={() => handleStartInvestigation(alertDetail.id)}
+                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
+                        style={{
+                          backgroundColor: DRAWER.accent,
+                          color: DRAWER.accentDark,
+                          border: `1px solid ${DRAWER.accentDark}`,
+                          boxShadow: `3px 3px 0px ${DRAWER.accentDark}`,
+                        }}
+                      >
+                        <Network className="h-3.5 w-3.5 mr-2" />
+                        Start Investigation
+                      </Button>
 
                       <div>
                         <DrawerSectionLabel>{`// Update Status`}</DrawerSectionLabel>

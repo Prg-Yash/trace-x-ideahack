@@ -19,6 +19,7 @@ function Router() {
         <Route path="/" component={Home} />
         <Route path="/dashboard" component={Dashboard} />
         <Route path="/alerts" component={Alerts} />
+        <Route path="/graph/:alertId" component={GraphAnalytics} />
         <Route path="/graph" component={GraphAnalytics} />
         <Route path="/graph-analytics" component={GraphAnalytics} />
         <Route path="/accounts" component={Accounts} />

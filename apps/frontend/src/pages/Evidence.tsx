@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
-  FileText, Plus, Download, Shield, ChevronRight,
-  AlertTriangle, Check, Loader2, Lock,
+  FileText, Plus, Shield, ChevronRight,
+  AlertTriangle, Download, Check, Loader2, Lock
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -12,10 +12,9 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
-  staticEvidenceCases,
-  getCaseDetail,
-  type EvidenceCase,
+  staticEvidenceCases, getCaseDetail, type EvidenceCase,
 } from "@/data/staticData";
+import { useReport, useAlertsQuick } from "@/hooks/useApi";
 import * as XLSX from "xlsx";
 
 function downloadBlob(filename: string, blob: Blob) {
@@ -223,31 +222,88 @@ export default function Evidence() {
   const [isGenerating, setIsGenerating] = useState(false);
   const { toast } = useToast();
 
+  const { data: liveAlertsData } = useAlertsQuick(100);
+
+  const liveCases = useMemo(() => {
+    if (!liveAlertsData?.alerts?.length) return staticEvidenceCases;
+    return liveAlertsData.alerts.slice(0, 8).map((a, i) => ({
+      id: i + 1,
+      caseId: `CASE-2026-${String(i + 1).padStart(3, "0")}`,
+      title: `FIU Investigation: ${a.flagged_for[0] || "Suspicious Activity"} (${a.account_id})`,
+      investigator: "Agent Investigator",
+      alertId: `ALT-${a.account_id}`,
+      status: (a.risk_level === "CRITICAL" ? "IN_PROGRESS" : "OPEN") as "OPEN" | "IN_PROGRESS" | "UNDER_REVIEW" | "CLOSED",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      suspiciousAccounts: [a.account_id],
+      totalAmount: a.total_amount ?? Math.round(a.score * 5_000_000),
+      packageGenerated: i < 3,
+    }));
+  }, [liveAlertsData]);
+
   const [cases, setCases] = useState<EvidenceCase[]>(staticEvidenceCases);
   const [packageGenerated, setPackageGenerated] = useState<Set<number>>(
-    new Set(staticEvidenceCases.filter(c => c.packageGenerated).map(c => c.id))
+    new Set(staticEvidenceCases.filter((c: EvidenceCase) => c.packageGenerated).map((c: EvidenceCase) => c.id))
   );
 
-  const activeCaseDetail = (() => {
-    if (!selectedId) return null;
+  useEffect(() => {
+    if (liveAlertsData?.alerts?.length) {
+      setCases(liveCases);
+      setPackageGenerated(new Set(liveCases.filter(c => c.packageGenerated).map(c => c.id)));
+    }
+  }, [liveCases, liveAlertsData]);
+
+  // Use the first suspicious account for live report lookup
+  const selectedCase = cases.find((x: EvidenceCase) => x.id === selectedId);
+  const liveAccountId = selectedCase?.suspiciousAccounts?.[0] ?? null;
+  const { data: liveReport, loading: reportLoading } = useReport(liveAccountId);
+
+  const activeCaseDetail = useMemo(() => {
+    if (!selectedId || !selectedCase) return null;
+
+    if (liveReport && !reportLoading) {
+      // Map the backend's build_evidence_package to the expected frontend format
+      const isFlagged = liveReport.score?.is_flagged;
+      const findings = [];
+      if (liveReport.score?.detections?.smurfing?.detected) findings.push({ category: "Structring", finding: "Multiple deposits below threshold", severity: "CRITICAL" });
+      if (liveReport.score?.detections?.kyc_mismatch?.detected) findings.push({ category: "KYC Mismatch", finding: "Account metadata does not align with flow", severity: "HIGH" });
+      if (liveReport.score?.detections?.dormant?.detected) findings.push({ category: "Dormant Activation", finding: "Sudden activity after dormancy", severity: "MEDIUM" });
+      if (liveReport.score?.detections?.layering?.detected) findings.push({ category: "Layering", finding: "Rapid transfers across nodes", severity: "CRITICAL" });
+      if (liveReport.score?.detections?.round_trip?.detected) findings.push({ category: "Round Tripping", finding: "Funds return to origin", severity: "CRITICAL" });
+
+      return {
+        case: selectedCase,
+        findings: findings.length ? findings : [{ category: "Audit", finding: "Routine screening triggered", severity: "LOW" }],
+        fundFlowSummary: liveReport.trace?.chain ? liveReport.trace.chain.map((c: string, i: number) => ({ step: i+1, fromAccount: c, toAccount: liveReport.trace.chain[i+1] ?? "End", amount: liveReport.trace.amounts[i] ?? 0, timestamp: new Date().toISOString() })).slice(0, -1) : [],
+        fiuReportData: {
+          reportId: `FIU-RPT-${selectedCase.caseId}`,
+          reportingEntity: "Trace-X AI Intelligence Platform",
+          reportDate: new Date().toLocaleDateString(),
+          suspiciousActivityType: isFlagged ? liveReport.score.flagged_for.join(", ") : "Manual Review",
+          narrativeSummary: `Machine Learning models analyzed account ${liveReport.account_id}. Overall risk is ${liveReport.score?.risk_level}. ${isFlagged ? "Fraudulent behavior detected." : "No significant anomalies found."}`,
+          actionRequired: isFlagged ? "Submit to FIU" : "Close Case",
+        },
+      };
+    }
+
+    // Fallback to static detail
     const detail = getCaseDetail(selectedId);
     if (detail) return detail;
-    const c = cases.find(x => x.id === selectedId);
-    if (!c) return null;
+    
     return {
-      case: c,
+      case: selectedCase,
       findings: [],
       fundFlowSummary: [],
       fiuReportData: {
-        reportId: `FIU-RPT-${c.caseId}`,
-        reportingEntity: "G-TEN Financial Intelligence Platform",
+        reportId: `FIU-RPT-${selectedCase.caseId}`,
+        reportingEntity: "Trace-X Intelligence Platform",
         reportDate: new Date().toLocaleDateString(),
         suspiciousActivityType: "Under Investigation",
         narrativeSummary: "This case is newly opened. Findings and fund flow data will be populated as the investigation progresses.",
         actionRequired: "Begin evidence collection and assign investigator resources.",
       },
     };
-  })();
+  }, [selectedId, selectedCase, liveReport, reportLoading]);
 
   const handleCreate = () => {
     if (!form.title || !form.investigator || !form.alertId) return;

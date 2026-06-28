@@ -29,6 +29,8 @@ import {
 } from "@/data/staticData";
 import { buildNetworkFromGraph, getGraphById } from "@/data/investigationData";
 import { useInvestigation } from "@/context/InvestigationContext";
+import { useTrace, useExplain, useScore } from "@/hooks/useApi";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /* ─────────────────────────────────────────────────────────────
    PALETTE
@@ -442,28 +444,86 @@ function GraphInner() {
   const [location, navigate] = useLocation();
   const { investigation, clearInvestigation } = useInvestigation();
 
+  const routeMatch = location.match(/^\/graph\/([^/]+)/);
+  const routeAlertId = routeMatch ? decodeURIComponent(routeMatch[1]) : null;
+  const routeAccountId = routeAlertId
+    ? (routeAlertId.startsWith("ALT-") ? routeAlertId.split("-")[1] : routeAlertId)
+    : null;
+
+  const { data: liveTrace, loading: traceLoading } = useTrace(routeAccountId);
+  const { data: liveExplain, loading: explainLoading } = useExplain(routeAccountId);
+  const { data: liveScore } = useScore(routeAccountId);
+
   const isInvestigationRoute = location === "/graph-analytics";
   const isInvestigationMode = isInvestigationRoute && investigation !== null;
 
-  /* ── Static data ── */
+  /* ── Static / Live data ── */
   const network = useMemo(() => {
+    if (routeAccountId) {
+      const chain = liveTrace?.chain?.length ? liveTrace.chain : [routeAccountId];
+      const amounts = liveTrace?.amounts || [];
+      const nodes = chain.map((acc, i) => {
+        const isMain = acc === routeAccountId;
+        const score = isMain ? (liveScore ? Math.round(liveScore.combined_score * 100) : 88) : Math.max(30, 75 - i * 15);
+        const risk = score >= 80 ? "CRITICAL" : score >= 60 ? "HIGH" : score >= 40 ? "MEDIUM" : "LOW";
+        return {
+          id: acc,
+          label: isMain ? `Target (${acc})` : `Hop ${i} (${acc})`,
+          accountNumber: acc,
+          riskLevel: risk,
+          accountType: i === 0 ? "Corporate" : "Personal",
+          balance: 150000 - i * 20000,
+          flagged: isMain || i > 0,
+          pattern: isMain ? (liveScore?.flagged_for[0] || routeAlertId?.split("-")[2]?.toUpperCase() || "LAYERING") : null,
+          x: null,
+          y: null,
+        };
+      });
+      const edges = [];
+      for (let i = 0; i < chain.length - 1; i++) {
+        edges.push({
+          id: `e-${chain[i]}-${chain[i + 1]}`,
+          source: chain[i],
+          target: chain[i + 1],
+          label: `$${(amounts[i] || 50000).toLocaleString()}`,
+          amount: amounts[i] || 50000,
+          timestamp: new Date().toISOString(),
+          riskLevel: "HIGH",
+          isLoop: false,
+        });
+      }
+      return { nodes, edges };
+    }
     if (!isInvestigationMode || !investigation) return staticGraphNetwork;
     const graph = getGraphById(investigation.graphId);
     return graph ? buildNetworkFromGraph(graph) : staticGraphNetwork;
-  }, [isInvestigationMode, investigation]);
+  }, [routeAccountId, liveTrace, liveScore, isInvestigationMode, investigation, routeAlertId]);
 
   const graphEdges = useMemo(
     () => (network.edges as typeof staticGraphEdges),
     [network],
   );
 
-  const isLoading = false;
+  const isLoading = Boolean(routeAccountId && (traceLoading || explainLoading) && !liveTrace && !liveExplain);
+
   const patterns = useMemo(() => {
+    if (routeAccountId) {
+      const pName = liveScore?.flagged_for[0] || routeAlertId?.split("-")[2] || liveTrace?.fraud_type || "Fraud Alert";
+      const desc = liveExplain?.explanation_summary || `ML XAI engine detected suspicious transaction anomalies for ${routeAccountId}. Combined Risk Score: ${liveScore ? Math.round(liveScore.combined_score * 100) : 88}/100.`;
+      return [{
+        id: `pat-${routeAccountId}`,
+        patternType: pName.toUpperCase(),
+        affectedAccounts: liveTrace?.chain || [routeAccountId],
+        totalAmount: (liveTrace?.amounts || []).reduce((a: number, b: number) => a + b, 0) || 150000,
+        confidence: liveScore ? Math.round(liveScore.combined_score * 100) : 92,
+        description: desc,
+      }];
+    }
     if (!isInvestigationMode || !investigation) return staticGraphPatterns;
     return staticGraphPatterns.filter(
       p => p.patternType === investigation.fraudPattern || p.patternType === investigation.pattern,
     );
-  }, [isInvestigationMode, investigation]);
+  }, [routeAccountId, liveScore, liveTrace, liveExplain, isInvestigationMode, investigation, routeAlertId]);
 
   /* ── UI state ── */
   const [mode, setMode] = useState<Mode>("select");
@@ -473,6 +533,13 @@ function GraphInner() {
   const [selectedEdge, setSelectedEdge] = useState<any>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [activePattern, setActivePattern] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (patterns.length > 0 && !activePattern) {
+      setActivePattern(patterns[0].patternType);
+    }
+  }, [patterns, activePattern]);
+
   const [flaggedOnly, setFlaggedOnly] = useState(false);
   const [riskFilter, setRiskFilter] = useState<string | null>(null);
 

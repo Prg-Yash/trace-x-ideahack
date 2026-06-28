@@ -230,12 +230,21 @@ def _coerce(obj):
         pass
     return obj
 
+from contextlib import asynccontextmanager
+@asynccontextmanager
+async def _neo4j_session():
+    global ASYNC_DRIVER
+    if ASYNC_DRIVER is None:
+        try:
+            from neo4j import AsyncGraphDatabase
+            ASYNC_DRIVER = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+        except Exception as e:
+            print(f"Failed to initialize Neo4j Driver inside _neo4j_session: {e}")
+            raise
 
-def _neo4j_session():
-    drv = _get_driver()
-    if drv is None:
-        raise RuntimeError("Neo4j connection not configured.")
-    return drv.session()
+    async with ASYNC_DRIVER.session() as session:
+        yield session
+
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import asyncio

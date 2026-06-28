@@ -20,9 +20,6 @@ def get_db_connection():
 
 @router.get("/accounts")
 async def get_all_accounts(skip: int = 0, limit: int = 100):
-    if ASYNC_DRIVER is None:
-        raise HTTPException(status_code=503, detail="Neo4j is not connected")
-    
     # 1. Fetch from Neo4j
     neo4j_query = """
         MATCH (a:Account)
@@ -96,9 +93,6 @@ async def get_all_accounts(skip: int = 0, limit: int = 100):
 
 @router.get("/transactions")
 async def get_all_transactions(skip: int = 0, limit: int = 100):
-    if ASYNC_DRIVER is None:
-        raise HTTPException(status_code=503, detail="Neo4j is not connected")
-    
     neo4j_query = f"""
         MATCH (s:Account)-[t:{REL_TYPE}]->(r:Account)
         RETURN 

@@ -1,9 +1,11 @@
+import { useMemo } from "react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle, Shield,
   Activity, Users, Zap, ArrowUpRight, ArrowDownRight,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, PieChart, Pie, Cell,
@@ -17,6 +19,7 @@ import {
   staticAlerts,
   staticTopSuspiciousAccounts,
 } from "@/data/staticData";
+import { useStats, useAlertsQuick } from "@/hooks/useApi";
 
 /* ── DESIGN TOKENS ── */
 const TOOLTIP_STYLE = {
@@ -55,12 +58,81 @@ const RISK_PIE: Record<string, string> = {
 const PATTERN_BAR_COLORS = ["#a3e635", "#06B6D4", "#F59E0B", "#EF4444", "#8B5CF6"];
 
 export default function Dashboard() {
-  const kpis = staticDashboardKpis;
+  const { data: statsData, loading: statsLoading } = useStats();
+  const { data: alertsData, loading: alertsLoading } = useAlertsQuick(500);
+
+  // Merge live API data with static fallback
+  const kpis = {
+    ...staticDashboardKpis,
+    totalTransactions: statsData?.total_transactions ?? staticDashboardKpis.totalTransactions,
+    activeAlerts: statsData?.total_flagged ?? alertsData?.total ?? staticDashboardKpis.activeAlerts,
+    highRiskAccounts: statsData?.critical_count ?? staticDashboardKpis.highRiskAccounts,
+    dormantActivated: statsData?.dormant_count ?? 30,
+  };
   const trend = staticTransactionTrend;
-  const riskDist = staticRiskDistribution;
-  const fraudPatterns = staticFraudPatterns;
-  const recentAlerts = staticAlerts;
-  const topAccounts = staticTopSuspiciousAccounts;
+
+  const riskDist = useMemo(() => {
+    if (!alertsData?.alerts?.length) return staticRiskDistribution;
+    const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+    alertsData.alerts.forEach(a => {
+      const lvl = a.risk_level as keyof typeof counts;
+      if (counts[lvl] !== undefined) counts[lvl]++;
+      else counts.HIGH++;
+    });
+    const total = alertsData.alerts.length || 1;
+    return [
+      { level: "CRITICAL", count: counts.CRITICAL, percentage: Math.round((counts.CRITICAL / total) * 100) },
+      { level: "HIGH", count: counts.HIGH, percentage: Math.round((counts.HIGH / total) * 100) },
+      { level: "MEDIUM", count: counts.MEDIUM, percentage: Math.round((counts.MEDIUM / total) * 100) },
+      { level: "LOW", count: counts.LOW, percentage: Math.round((counts.LOW / total) * 100) },
+    ];
+  }, [alertsData]);
+
+  const fraudPatterns = useMemo(() => {
+    if (!alertsData?.alerts?.length) return staticFraudPatterns;
+    const pCounts: Record<string, number> = {};
+    alertsData.alerts.forEach(a => {
+      const p = (a.flagged_for[0] || "other").toLowerCase();
+      if (p.includes("layer")) pCounts["Layering"] = (pCounts["Layering"] || 0) + 1;
+      else if (p.includes("round")) pCounts["Round-Trip"] = (pCounts["Round-Trip"] || 0) + 1;
+      else if (p.includes("smurf") || p.includes("struct")) pCounts["Structuring"] = (pCounts["Structuring"] || 0) + 1;
+      else if (p.includes("kyc")) pCounts["KYC Mismatch"] = (pCounts["KYC Mismatch"] || 0) + 1;
+      else if (p.includes("dorm")) pCounts["Dormant Act."] = (pCounts["Dormant Act."] || 0) + 1;
+      else pCounts["Other"] = (pCounts["Other"] || 0) + 1;
+    });
+    return Object.entries(pCounts).map(([pattern, count]) => ({ pattern, count }));
+  }, [alertsData]);
+
+  // Build recent alerts from live data if available, else static
+  const recentAlerts = alertsData?.alerts?.length
+    ? alertsData.alerts.slice(0, 8).map((a, i) => ({
+        id: i + 1,
+        alertId: `ALT-${a.account_id}`,
+        accountId: i + 1,
+        severity: a.risk_level,
+        status: "OPEN",
+        pattern: a.flagged_for[0] ?? "UNKNOWN",
+        amount: a.total_amount ?? a.score * 1_000_000,
+        assignee: null,
+        description: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        accountName: a.account_id,
+        accountNumber: a.account_id,
+      }))
+    : staticAlerts;
+
+  const topAccounts = alertsData?.alerts?.length
+    ? alertsData.alerts.slice(0, 5).map((a, i) => ({
+        id: i + 1,
+        accountName: a.account_id,
+        accountNumber: a.account_id,
+        riskScore: Math.round(a.score * 100),
+        riskLevel: a.risk_level,
+        alertCount: 1,
+        totalSuspiciousAmount: a.total_amount ?? Math.round(a.score * 5_000_000),
+      }))
+    : staticTopSuspiciousAccounts;
 
   const kpiCards = [
     {
@@ -96,6 +168,24 @@ export default function Dashboard() {
       iconColor: "#a3e635",
     },
   ];
+
+  if ((statsLoading || alertsLoading) && !statsData && !alertsData) {
+    return (
+      <div className="p-6 space-y-6 min-h-screen" style={{ backgroundColor: "var(--background)" }}>
+        <Skeleton className="h-20 w-full" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          <Skeleton className="h-32 w-full" />
+          <Skeleton className="h-32 w-full" />
+          <Skeleton className="h-32 w-full" />
+          <Skeleton className="h-32 w-full" />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <Skeleton className="h-80 lg:col-span-2 w-full" />
+          <Skeleton className="h-80 w-full" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6 min-h-screen" style={{ backgroundColor: "var(--background)" }}>
