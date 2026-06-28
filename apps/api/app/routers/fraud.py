@@ -25,6 +25,8 @@ from fraud_detector import (  # type: ignore[import-not-found]
     detect_roundtrip,
     explain_dormant,
     explain_smurfing,
+    explain_kyc_mismatch,
+    explain_account,
     get_system_stats,
     refresh_data,
     score_account,
@@ -88,9 +90,74 @@ async def get_score(account_id: str, background_tasks: BackgroundTasks):
         })
 
 
-# ── Alerts (full ML scoring - slow) ────────────────────────────────────────────
+# ── XAI / SHAP Explanation Endpoints ──────────────────────────────────────────
 import asyncio
 
+@router.get("/explain/{account_id}")
+async def get_explanation(account_id: str):
+    """
+    XAI / SHAP Master Explanation Endpoint.
+
+    Runs SHAP TreeExplainer concurrently across ALL three ML models
+    (Smurfing XGBoost, KYC Mismatch XGBoost, and Isolation Forest Dormancy Detector)
+    and returns a unified, ranked evidence package.
+
+    Response includes:
+    - top_risk_factors: top 10 features across ALL models ranked by SHAP impact
+    - by_fraud_type: per-model SHAP breakdown with explanation summary text
+    - models_used: which models were queried
+
+    This is the primary endpoint for:
+    - The investigator's "Why was this flagged?" evidence panel
+    - The STR Report auto-generation narrative
+    """
+    try:
+        result = await explain_account(account_id)
+        return _coerce(result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SHAP explanation failed: {str(e)}")
+
+
+@router.get("/explain/{account_id}/smurfing")
+async def get_smurfing_explanation(account_id: str):
+    """
+    SHAP explanation for the Smurfing / Structuring XGBoost model only.
+    Returns top features contributing to the smurfing risk score.
+    """
+    try:
+        result = await explain_smurfing(account_id)
+        return _coerce(result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SHAP smurfing explanation failed: {str(e)}")
+
+
+@router.get("/explain/{account_id}/kyc")
+async def get_kyc_explanation(account_id: str):
+    """
+    SHAP explanation for the KYC/Profile Mismatch XGBoost model only.
+    Returns top features contributing to income-vs-activity mismatch detection.
+    """
+    try:
+        result = await explain_kyc_mismatch(account_id)
+        return _coerce(result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SHAP KYC explanation failed: {str(e)}")
+
+
+@router.get("/explain/{account_id}/dormant")
+async def get_dormant_explanation(account_id: str):
+    """
+    SHAP explanation for the Isolation Forest Dormancy Anomaly model only.
+    Returns top features that pushed the account into the anomaly region.
+    """
+    try:
+        result = await explain_dormant(account_id)
+        return _coerce(result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SHAP dormant explanation failed: {str(e)}")
+
+
+# ── Alerts (full ML scoring - slow) ────────────────────────────────────────────
 @router.get("/alerts")
 async def get_alerts(limit: int = 50):
     candidates = await build_alert_candidates()
