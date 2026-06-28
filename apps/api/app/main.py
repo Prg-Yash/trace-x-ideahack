@@ -1,10 +1,16 @@
 import sys
+import warnings
 from pathlib import Path
+
+# Silence the parallel thread propagation warnings from scikit-learn/joblib
+warnings.filterwarnings("ignore", category=UserWarning, module="sklearn.utils.parallel")
+warnings.filterwarnings("ignore", message=".*propagate the scikit-learn configuration.*")
+warnings.filterwarnings("ignore", message=".*feature names.*")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import health, schema, fraud
+from app.routers import health, schema, fraud, data
 from app.core.config import settings
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -36,6 +42,7 @@ app.add_middleware(
 app.include_router(health.router, prefix=settings.API_V1_STR)
 app.include_router(schema.router, prefix=settings.API_V1_STR)
 app.include_router(fraud.router, prefix=settings.API_V1_STR)
+app.include_router(data.router, prefix=settings.API_V1_STR)
 
 
 @app.get("/")

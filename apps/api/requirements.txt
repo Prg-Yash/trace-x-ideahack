@@ -10,11 +10,7 @@ joblib
 scikit-learn
 torch
 shap
+xgboost
+networkx
 -e ../../packages/py-schemas
-pandas
-numpy
-torch
-scikit-learn
-joblib
-shap
--e ../../packages/py-schemas
+psycopg2-binary

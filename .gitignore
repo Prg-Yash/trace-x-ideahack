@@ -31,6 +31,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+**/*.egg-info/
 
 # Build Outputs
 .next/
@@ -44,11 +45,11 @@ apps/ai-ml/data/transactions.csv
 apps/ai-ml/data/neo4j/
 apps/ai-ml/data/labels/
 apps/ai-ml/models/
-apps/ai-ml/*.pt
-apps/ai-ml/*.pkl
-apps/ai-ml/*.npy
-apps/ai-ml/*.json
-apps/ai-ml/*.csv
+apps/ai-ml/**/*.pt
+apps/ai-ml/**/*.pkl
+apps/ai-ml/**/*.npy
+apps/ai-ml/**/*.json
+apps/ai-ml/**/*.csv
 
 # Frontend local build artifacts
 apps/frontend/.next/
@@ -65,3 +66,7 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
+layering_detection_explanation.md
+model_selection_analysis(1).md
+apps/ai-ml/test_roundtrip.py
+apps/ai-ml/test_layering.py

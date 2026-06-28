@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle, Search, X, Clock, User,
-  ChevronRight, ChevronDown, CheckCircle2,
+  ChevronRight, ChevronDown, CheckCircle2, Network,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,13 +11,15 @@ import { Input } from "@/components/ui/input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import {
   staticAlerts,
   getTimelineByAlertId,
   getTransactionsByAccountId,
   type Alert,
 } from "@/data/staticData";
+import { getInvestigationAlertById } from "@/data/investigationData";
+import { useInvestigation } from "@/context/InvestigationContext";
 
 /* ── STYLES ── */
 const SEV: Record<string, { badge: string; dot: string; leftBar: string; drawerBg: string }> = {
@@ -60,21 +63,58 @@ const TL_ICONS: Record<string, typeof Clock> = {
   DOCUMENT_ADDED: ChevronRight,
 };
 
-const cardStyle: React.CSSProperties = {
+const cardStyle: CSSProperties = {
   backgroundColor: "#ffffff",
   border: "2px solid #130537",
   borderRadius: 0,
   boxShadow: "6px 6px 0px #130537",
 };
 
+/* ── Alert Detail Drawer Theme ── */
+const DRAWER = {
+  bg: "#141820",
+  surface: "#1A1F27",
+  border: "#2A2F35",
+  text: "#E8E8E2",
+  textMuted: "rgba(232,232,226,0.45)",
+  label: "rgba(163,230,53,0.55)",
+  accent: "#a3e635",
+  accentDark: "#130537",
+} as const;
+
+function DrawerDivider() {
+  return <div style={{ height: 1, backgroundColor: DRAWER.border }} />;
+}
+
+function DrawerSectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <p
+      className="text-[8px] font-bold uppercase tracking-[0.22em] mb-3"
+      style={{ color: DRAWER.label }}
+    >
+      {children}
+    </p>
+  );
+}
+
 export default function Alerts() {
+  const [, navigate] = useLocation();
+  const { setInvestigation } = useInvestigation();
   const [search, setSearch] = useState("");
   const [severity, setSeverity] = useState("");
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState("OPEN");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showTimeline, setShowTimeline] = useState(false);
   const [statusOverrides, setStatusOverrides] = useState<Record<number, string>>({});
+
+  const handleStartInvestigation = (alertId: number) => {
+    const investigationAlert = getInvestigationAlertById(alertId);
+    if (!investigationAlert) return;
+    setInvestigation(investigationAlert);
+    setDrawerOpen(false);
+    navigate("/graph-analytics");
+  };
 
   const handleOpen = (id: number) => {
     setSelectedId(id);
@@ -235,8 +275,8 @@ export default function Alerts() {
                         className="cursor-pointer group transition-colors"
                         style={{ borderLeft: `3px solid ${s?.leftBar ?? "transparent"}`, borderBottom: "1px solid var(--border)" }}
                         onClick={() => handleOpen(alert.id)}
-                        onMouseEnter={(e) => (e.currentTarget as HTMLTableRowElement).style.backgroundColor = "rgba(19, 5, 55, 0.03)"}
-                        onMouseLeave={(e) => (e.currentTarget as HTMLTableRowElement).style.backgroundColor = "transparent"}
+                        onMouseEnter={(e: MouseEvent<HTMLTableRowElement>) => (e.currentTarget as HTMLTableRowElement).style.backgroundColor = "rgba(19, 5, 55, 0.03)"}
+                        onMouseLeave={(e: MouseEvent<HTMLTableRowElement>) => (e.currentTarget as HTMLTableRowElement).style.backgroundColor = "transparent"}
                       >
                         <td className="px-4 py-3 font-mono text-[11px]" style={{ color: "#a3e635" }}>{alert.alertId}</td>
                         <td className="px-4 py-3">
@@ -282,179 +322,313 @@ export default function Alerts() {
       {/* ── DETAIL DRAWER ── */}
       <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
         <SheetContent
-          className="w-full sm:max-w-[500px] overflow-y-auto p-0"
-          style={{ backgroundColor: "var(--card)", borderLeft: "2px solid var(--border)" }}
+          className="w-full sm:max-w-[480px] overflow-y-auto p-0 gap-0 [&>button]:text-[rgba(232,232,226,0.45)] [&>button]:hover:text-[#a3e635] [&>button]:right-5 [&>button]:top-5"
+          style={{
+            backgroundColor: DRAWER.bg,
+            borderLeft: `2px solid ${DRAWER.border}`,
+            zIndex: 70,
+          }}
         >
           {!alertDetail ? (
-            <div className="p-6 text-[13px]" style={{ color: "var(--muted-foreground)" }}>Loading…</div>
+            <div className="p-6 text-[13px]" style={{ color: DRAWER.textMuted }}>Loading…</div>
           ) : (
-            <>
-              {/* Severity header */}
-              {(() => {
-                const s = SEV[alertDetail.severity];
-                const effectiveStatus = statusOverrides[alertDetail.id] ?? alertDetail.status;
-                return (
-                  <div
-                    className="p-5"
+            (() => {
+              const s = SEV[alertDetail.severity];
+              const effectiveStatus = statusOverrides[alertDetail.id] ?? alertDetail.status;
+              const statusOptions = ["OPEN", "UNDER_INVESTIGATION", "CLOSED"] as const;
+
+              return (
+                <div className="flex flex-col min-h-full">
+                  {/* ── Header ── */}
+                  <header
+                    className="px-6 pt-6 pb-5"
                     style={{
-                      borderLeft: `4px solid ${s?.leftBar}`,
-                      borderBottom: "2px solid var(--border)",
-                      backgroundColor: "var(--card)",
+                      borderLeft: `3px solid ${s?.leftBar ?? DRAWER.border}`,
+                      borderBottom: `1px solid ${DRAWER.border}`,
                     }}
                   >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="font-mono text-[11px] mb-1" style={{ color: "var(--color-primary)" }}>{alertDetail.alertId}</p>
-                        <p className="font-black text-[18px] uppercase leading-tight" style={{ color: "var(--foreground)" }}>{alertDetail.accountName}</p>
-                        <p className="text-[13px] font-mono mt-1" style={{ color: "var(--muted-foreground)" }}>{alertDetail.accountNumber}</p>
+                    <div className="flex items-start justify-between gap-4 pr-8">
+                      <div className="min-w-0 space-y-0.5">
+                        <p
+                          className="font-mono text-[10px] font-semibold tracking-wide"
+                          style={{ color: DRAWER.accent }}
+                        >
+                          {alertDetail.alertId}
+                        </p>
+                        <h2
+                          className="font-black text-[17px] uppercase leading-tight tracking-tight truncate"
+                          style={{ color: DRAWER.text }}
+                        >
+                          {alertDetail.accountName}
+                        </h2>
+                        <p
+                          className="font-mono text-[11px] tracking-wide"
+                          style={{ color: DRAWER.textMuted }}
+                        >
+                          {alertDetail.accountNumber}
+                        </p>
                       </div>
-                      <div className="flex flex-col gap-1.5 items-end mt-1">
-                        <Badge variant="outline" className={`${s?.badge} border text-[11px] rounded-none`}>
+
+                      <div className="flex flex-col items-end gap-1.5 shrink-0 pt-0.5">
+                        <Badge
+                          variant="outline"
+                          className={`${s?.badge} border text-[10px] font-bold px-2 py-0.5 rounded-none`}
+                        >
                           {alertDetail.severity}
                         </Badge>
-                        <Badge variant="outline" className={`${STATUS[effectiveStatus] ?? ""} border text-[10px] rounded-none`}>
+                        <Badge
+                          variant="outline"
+                          className={`${STATUS[effectiveStatus] ?? ""} border text-[10px] font-bold px-2 py-0.5 rounded-none`}
+                        >
                           {effectiveStatus.replace("_", " ")}
                         </Badge>
                       </div>
                     </div>
-                  </div>
-                );
-              })()}
+                  </header>
 
-              <div className="p-5 space-y-5">
-                {/* Details grid */}
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    ["Pattern", alertDetail.pattern],
-                    ["Amount", `$${alertDetail.amount.toLocaleString()}`],
-                    ["Assignee", alertDetail.assignee ?? "Unassigned"],
-                    ["Created", new Date(alertDetail.createdAt).toLocaleString()],
-                  ].map(([label, value]) => (
-                    <div
-                      key={label}
-                      className="p-3"
-                      style={{ border: "2px solid var(--border)", backgroundColor: "var(--card)" }}
-                    >
-                      <p className="text-[9px] font-bold uppercase tracking-[0.25em] mb-1" style={{ color: "var(--muted-foreground)" }}>
-                        // {label}
-                      </p>
-                      <p className="text-[13px] font-semibold" style={{ color: "var(--foreground)" }}>{value}</p>
-                    </div>
-                  ))}
-                </div>
+                  <div className="px-6 flex flex-col">
+                    {/* ── Metadata Grid ── */}
+                    <section className="py-6">
+                      <div className="grid grid-cols-2 gap-x-8 gap-y-5">
+                        {[
+                          ["Pattern", alertDetail.pattern],
+                          ["Amount", `$${alertDetail.amount.toLocaleString()}`],
+                          ["Assignee", alertDetail.assignee ?? "Unassigned"],
+                          ["Created", new Date(alertDetail.createdAt).toLocaleString()],
+                        ].map(([label, value]) => (
+                          <div key={label} className="min-w-0">
+                            <DrawerSectionLabel>{`// ${label}`}</DrawerSectionLabel>
+                            <p
+                              className={`text-[13px] leading-snug truncate ${label === "Amount" ? "font-black tabular-nums font-mono" : "font-semibold"}`}
+                              style={{ color: DRAWER.text }}
+                            >
+                              {value}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
 
-                {alertDetail.description && (
-                  <div className="p-3" style={{ border: "2px solid var(--border)", backgroundColor: "var(--card)" }}>
-                    <p className="text-[9px] font-bold uppercase tracking-[0.25em] mb-1.5" style={{ color: "var(--muted-foreground)" }}>
-                      // Description
-                    </p>
-                    <p className="text-[13px] leading-relaxed" style={{ color: "var(--foreground)" }}>{alertDetail.description}</p>
-                  </div>
-                )}
+                    <DrawerDivider />
 
-                {/* Status actions */}
-                <div>
-                  <p className="text-[9px] font-bold uppercase tracking-[0.25em] mb-2" style={{ color: "var(--muted-foreground)" }}>
-                    // Update Status
-                  </p>
-                  <div className="flex gap-2 flex-wrap">
-                    {["OPEN", "UNDER_INVESTIGATION", "CLOSED"].map(s => {
-                      const current = statusOverrides[alertDetail.id] ?? alertDetail.status;
-                      const isActive = current === s;
-                      return (
-                        <button
-                          key={s}
-                          onClick={() => setStatusOverrides(prev => ({ ...prev, [alertDetail.id]: s }))}
-                          className="text-[11px] font-bold uppercase tracking-widest px-3 py-1.5 transition-colors"
+                    {/* ── Description ── */}
+                    {alertDetail.description && (
+                      <>
+                        <section className="py-6">
+                          <DrawerSectionLabel>{`// Description`}</DrawerSectionLabel>
+                          <p
+                            className="text-[13px] leading-relaxed"
+                            style={{ color: "rgba(232,232,226,0.82)" }}
+                          >
+                            {alertDetail.description}
+                          </p>
+                        </section>
+                        <DrawerDivider />
+                      </>
+                    )}
+
+                    {/* ── Actions ── */}
+                    <section className="py-6 space-y-5">
+                      {getInvestigationAlertById(alertDetail.id) && (
+                        <Button
+                          onClick={() => handleStartInvestigation(alertDetail.id)}
+                          className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
                           style={{
-                            border: `2px solid ${isActive ? "var(--color-primary)" : "var(--border)"}`,
-                            backgroundColor: isActive ? "rgba(163,230,53,0.1)" : "transparent",
-                            color: isActive ? "var(--color-primary)" : "var(--muted-foreground)",
+                            backgroundColor: DRAWER.accent,
+                            color: DRAWER.accentDark,
+                            border: `1px solid ${DRAWER.accentDark}`,
+                            boxShadow: `3px 3px 0px ${DRAWER.accentDark}`,
                           }}
                         >
-                          {s.replace("_", " ")}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+                          <Network className="h-3.5 w-3.5 mr-2" />
+                          Start Investigation
+                        </Button>
+                      )}
 
-                {/* Related transactions */}
-                {relatedTransactions.length > 0 && (
-                  <div>
-                    <p className="text-[9px] font-bold uppercase tracking-[0.25em] mb-2.5" style={{ color: "var(--muted-foreground)" }}>
-                      // Related Transactions
-                    </p>
-                    <div className="space-y-2">
-                      {relatedTransactions.slice(0, 5).map((txn) => (
+                      <div>
+                        <DrawerSectionLabel>{`// Update Status`}</DrawerSectionLabel>
                         <div
-                          key={txn.id}
-                          className="p-3 flex justify-between items-start"
-                          style={{ border: "2px solid var(--border)", backgroundColor: "var(--card)" }}
+                          className="flex w-full overflow-hidden"
+                          style={{ border: `1px solid ${DRAWER.border}` }}
                         >
-                          <div>
-                            <p className="font-mono text-[11px] mb-1" style={{ color: "var(--color-primary)" }}>{txn.txnId}</p>
-                            <p className="text-[11px]" style={{ color: "var(--muted-foreground)" }}>{txn.fromAccount} → {txn.toAccount}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-black text-[13px] tabular-nums" style={{ color: "var(--foreground)" }}>${txn.amount.toLocaleString()}</p>
-                            <p className="text-[11px]" style={{ color: "var(--muted-foreground)" }}>{txn.txnType}</p>
-                          </div>
+                          {statusOptions.map((statusKey, index) => {
+                            const isActive = effectiveStatus === statusKey;
+                            return (
+                              <button
+                                key={statusKey}
+                                type="button"
+                                onClick={() =>
+                                  setStatusOverrides(prev => ({ ...prev, [alertDetail.id]: statusKey }))
+                                }
+                                className="flex-1 px-2 py-2.5 text-[9px] font-bold uppercase tracking-[0.12em] transition-colors"
+                                style={{
+                                  borderRight: index < statusOptions.length - 1 ? `1px solid ${DRAWER.border}` : undefined,
+                                  backgroundColor: isActive ? "rgba(163,230,53,0.12)" : DRAWER.surface,
+                                  color: isActive ? DRAWER.accent : DRAWER.textMuted,
+                                  boxShadow: isActive ? "inset 0 -2px 0 #a3e635" : undefined,
+                                }}
+                              >
+                                {statusKey.replace("_", " ")}
+                              </button>
+                            );
+                          })}
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                      </div>
+                    </section>
 
-                {/* Timeline */}
-                <div>
-                  <button
-                    onClick={() => setShowTimeline(!showTimeline)}
-                    className="flex items-center justify-between w-full text-[9px] font-bold uppercase tracking-[0.25em] pb-2"
-                    style={{ color: "var(--muted-foreground)", borderBottom: "2px solid var(--border)" }}
-                  >
-                    // Investigation Timeline
-                    {showTimeline ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                  </button>
-                  <AnimatePresence>
-                    {showTimeline && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="mt-3"
-                      >
-                        {timeline.length === 0 ? (
-                          <p className="text-[12px] italic" style={{ color: "var(--muted-foreground)" }}>No timeline events yet.</p>
-                        ) : (
-                          <div className="relative pl-5">
-                            <div className="absolute left-2 top-0 bottom-0 w-px" style={{ backgroundColor: "rgba(232,232,226,0.15)" }} />
-                            {timeline.map((event) => {
-                              const Icon = TL_ICONS[event.eventType] ?? Clock;
-                              return (
-                                <div key={event.id} className="relative pb-4">
-                                  <div
-                                    className="absolute -left-3.5 top-1 h-3.5 w-3.5 flex items-center justify-center"
-                                    style={{ backgroundColor: "rgba(163,230,53,0.1)", border: "1px solid rgba(163,230,53,0.3)" }}
+                    {/* ── Related Transactions ── */}
+                    {relatedTransactions.length > 0 && (
+                      <>
+                        <DrawerDivider />
+                        <section className="py-6">
+                          <DrawerSectionLabel>{`// Related Transactions`}</DrawerSectionLabel>
+                          <div className="space-y-2">
+                            {relatedTransactions.slice(0, 5).map((txn) => (
+                              <div
+                                key={txn.id}
+                                className="px-3.5 py-3 flex justify-between items-start gap-3"
+                                style={{
+                                  backgroundColor: DRAWER.surface,
+                                  border: `1px solid ${DRAWER.border}`,
+                                }}
+                              >
+                                <div className="min-w-0">
+                                  <p
+                                    className="font-mono text-[10px] font-semibold mb-1 tracking-wide"
+                                    style={{ color: DRAWER.accent }}
                                   >
-                                    <Icon className="h-2 w-2" style={{ color: "#a3e635" }} />
-                                  </div>
-                                  <div className="ml-2">
-                                    <p className="text-[11px]" style={{ color: "var(--muted-foreground)" }}>{new Date(event.timestamp).toLocaleString()}</p>
-                                    <p className="text-[13px] font-semibold mt-0.5" style={{ color: "var(--foreground)" }}>{event.description}</p>
-                                    <p className="text-[11px] mt-0.5" style={{ color: "var(--muted-foreground)" }}>{event.actor}</p>
-                                  </div>
+                                    {txn.txnId}
+                                  </p>
+                                  <p
+                                    className="text-[11px] truncate"
+                                    style={{ color: DRAWER.textMuted }}
+                                  >
+                                    {txn.fromAccount} → {txn.toAccount}
+                                  </p>
                                 </div>
-                              );
-                            })}
+                                <div className="text-right shrink-0">
+                                  <p
+                                    className="font-black text-[13px] tabular-nums font-mono"
+                                    style={{ color: DRAWER.text }}
+                                  >
+                                    ${txn.amount.toLocaleString()}
+                                  </p>
+                                  <p className="text-[10px] mt-0.5" style={{ color: DRAWER.textMuted }}>
+                                    {txn.txnType}
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
                           </div>
-                        )}
-                      </motion.div>
+                        </section>
+                      </>
                     )}
-                  </AnimatePresence>
+
+                    {/* ── Investigation Timeline ── */}
+                    <DrawerDivider />
+                    <section className="py-6 pb-8">
+                      <button
+                        type="button"
+                        onClick={() => setShowTimeline(!showTimeline)}
+                        className="flex items-center justify-between w-full group mb-3"
+                      >
+                        <span
+                          className="text-[8px] font-bold uppercase tracking-[0.22em]"
+                          style={{ color: DRAWER.label }}
+                        >
+                          // Investigation Timeline
+                        </span>
+                        <span
+                          className="transition-colors"
+                          style={{ color: showTimeline ? DRAWER.accent : DRAWER.textMuted }}
+                        >
+                          {showTimeline ? (
+                            <ChevronDown className="h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronRight className="h-3.5 w-3.5" />
+                          )}
+                        </span>
+                      </button>
+
+                      <AnimatePresence initial={false}>
+                        {showTimeline && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            exit={{ opacity: 0, height: 0 }}
+                            transition={{ duration: 0.2 }}
+                            className="overflow-hidden"
+                          >
+                            {timeline.length === 0 ? (
+                              <p
+                                className="text-[12px] italic py-2"
+                                style={{ color: DRAWER.textMuted }}
+                              >
+                                No timeline events yet.
+                              </p>
+                            ) : (
+                              <div
+                                className="relative pl-5 pt-1"
+                                style={{ borderLeft: `1px solid ${DRAWER.border}` }}
+                              >
+                                {timeline.map((event, index) => {
+                                  const Icon = TL_ICONS[event.eventType] ?? Clock;
+                                  const isLast = index === timeline.length - 1;
+                                  return (
+                                    <div
+                                      key={event.id}
+                                      className="relative"
+                                      style={{
+                                        paddingBottom: isLast ? 0 : 16,
+                                        marginBottom: isLast ? 0 : 16,
+                                        borderBottom: isLast ? undefined : `1px solid ${DRAWER.border}`,
+                                      }}
+                                    >
+                                      <div
+                                        className="absolute -left-[21px] top-1 h-3 w-3 flex items-center justify-center"
+                                        style={{
+                                          backgroundColor: DRAWER.bg,
+                                          border: `1px solid rgba(163,230,53,0.35)`,
+                                        }}
+                                      >
+                                        <Icon className="h-2 w-2" style={{ color: DRAWER.accent }} />
+                                      </div>
+                                      <div className="pl-1">
+                                        <p
+                                          className="text-[10px] font-mono tabular-nums"
+                                          style={{ color: DRAWER.textMuted }}
+                                        >
+                                          {new Date(event.timestamp).toLocaleString()}
+                                        </p>
+                                        <p
+                                          className="text-[13px] font-semibold mt-1 leading-snug"
+                                          style={{ color: DRAWER.text }}
+                                        >
+                                          {event.description}
+                                        </p>
+                                        <p className="text-[11px] mt-1" style={{ color: DRAWER.textMuted }}>
+                                          {event.actor}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      {!showTimeline && timeline.length > 0 && (
+                        <p className="text-[11px] mt-1" style={{ color: DRAWER.textMuted }}>
+                          {timeline.length} event{timeline.length !== 1 ? "s" : ""} — click to expand
+                        </p>
+                      )}
+                    </section>
+                  </div>
                 </div>
-              </div>
-            </>
+              );
+            })()
           )}
         </SheetContent>
       </Sheet>

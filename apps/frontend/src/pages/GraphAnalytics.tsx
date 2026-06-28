@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { useLocation } from "wouter";
 import ReactFlow, {
   Background, Controls, MiniMap,
   type Node, type Edge, type NodeProps, type EdgeProps,
@@ -26,6 +27,8 @@ import {
   staticGraphEdges,
   type GraphNode,
 } from "@/data/staticData";
+import { buildNetworkFromGraph, getGraphById } from "@/data/investigationData";
+import { useInvestigation } from "@/context/InvestigationContext";
 
 /* ─────────────────────────────────────────────────────────────
    PALETTE
@@ -436,11 +439,31 @@ function fmtAmount(n: number) {
 function GraphInner() {
   const { fitView, setCenter } = useReactFlow();
   const { zoom } = useViewport();
+  const [location, navigate] = useLocation();
+  const { investigation, clearInvestigation } = useInvestigation();
+
+  const isInvestigationRoute = location === "/graph-analytics";
+  const isInvestigationMode = isInvestigationRoute && investigation !== null;
 
   /* ── Static data ── */
-  const network = staticGraphNetwork;
+  const network = useMemo(() => {
+    if (!isInvestigationMode || !investigation) return staticGraphNetwork;
+    const graph = getGraphById(investigation.graphId);
+    return graph ? buildNetworkFromGraph(graph) : staticGraphNetwork;
+  }, [isInvestigationMode, investigation]);
+
+  const graphEdges = useMemo(
+    () => (network.edges as typeof staticGraphEdges),
+    [network],
+  );
+
   const isLoading = false;
-  const patterns = staticGraphPatterns;
+  const patterns = useMemo(() => {
+    if (!isInvestigationMode || !investigation) return staticGraphPatterns;
+    return staticGraphPatterns.filter(
+      p => p.patternType === investigation.fraudPattern || p.patternType === investigation.pattern,
+    );
+  }, [isInvestigationMode, investigation]);
 
   /* ── UI state ── */
   const [mode, setMode] = useState<Mode>("select");
@@ -463,9 +486,8 @@ function GraphInner() {
   // Build a simple path by BFS through the static edge list
   const tracePath = useMemo(() => {
     if (!traceFrom || !traceTo) return null;
-    // BFS from traceFrom.id → traceTo.id
     const adj: Record<string, string[]> = {};
-    staticGraphEdges.forEach(e => {
+    graphEdges.forEach(e => {
       if (!adj[e.source]) adj[e.source] = [];
       adj[e.source].push(e.target);
     });
@@ -478,7 +500,7 @@ function GraphInner() {
         return {
           path: path.map(nodeId => {
             const n = (network.nodes as GraphNode[]).find(x => x.id === nodeId);
-            const edge = staticGraphEdges.find(e => e.source === nodeId || e.target === nodeId);
+            const edge = graphEdges.find(e => e.source === nodeId || e.target === nodeId);
             return { accountNumber: n?.accountNumber ?? nodeId, accountName: n?.label ?? nodeId, amount: edge?.amount ?? 0, txnType: edge?.txnType ?? "Transfer" };
           }),
         };
@@ -488,7 +510,7 @@ function GraphInner() {
       }
     }
     return { path: [] };
-  }, [traceFrom?.id, traceTo?.id]);
+  }, [traceFrom?.id, traceTo?.id, graphEdges, network.nodes]);
 
   /* ── Trace result → highlight ── */
   useEffect(() => {
@@ -598,7 +620,7 @@ function GraphInner() {
   const layoutedNodes = useMemo((): Node[] => {
     if (rawRfNodes.length === 0) return [];
     return applyDagreLayout(rawRfNodes, rawRfEdges);
-  }, [network?.nodes?.length, rawRfEdges.length]); // only re-layout when topology changes
+  }, [network?.nodes?.length, rawRfEdges.length, isInvestigationMode, investigation?.graphId]);
 
   /* ── Merge layout positions with display state updates ── */
   const rfNodes: Node[] = useMemo(() => {
@@ -616,12 +638,12 @@ function GraphInner() {
   useEffect(() => { setNodes(rfNodes); }, [rfNodes, setNodes]);
   useEffect(() => { setEdges(rawRfEdges); }, [rawRfEdges, setEdges]);
 
-  /* ── Fit view on first load ── */
+  /* ── Fit view on first load / investigation switch ── */
   useEffect(() => {
     if (nodes.length > 0) {
       setTimeout(() => fitView({ padding: 0.14, duration: 700 }), 300);
     }
-  }, [nodes.length > 0]);
+  }, [nodes.length > 0, isInvestigationMode, investigation?.graphId, fitView]);
 
   /* ── Node click handler ── */
   const handleNodeClick = useCallback((_: any, node: Node) => {
@@ -680,6 +702,18 @@ function GraphInner() {
     setSelectedNode(null);
     setSelectedEdge(null);
   };
+
+  const handleBackToGlobalGraph = useCallback(() => {
+    clearInvestigation();
+    clearAll();
+    navigate("/graph");
+  }, [clearInvestigation, navigate]);
+
+  useEffect(() => {
+    if (isInvestigationMode) {
+      clearAll();
+    }
+  }, [isInvestigationMode, investigation?.graphId]);
 
   /* ── Selected node computed values ── */
   const selRisk = selectedNode ? RISK[selectedNode.riskLevel as RiskKey] ?? RISK.LOW : null;
@@ -847,6 +881,57 @@ function GraphInner() {
           <RotateCcw size={11} /> Reset
         </button>
       </div>
+
+      {/* ═══ INVESTIGATION MODE BANNER ═══ */}
+      {isInvestigationMode && investigation && (
+        <div style={{
+          flexShrink: 0, zIndex: 10,
+          background: SURF_1, borderBottom: `1px solid ${BORDER}`,
+          display: "flex", alignItems: "center", padding: "8px 12px", gap: 16,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, paddingRight: 12, borderRight: `1px solid ${BORDER}` }}>
+            <AlertTriangle size={13} color={ACCENT} />
+            <span style={{ fontSize: 10, fontWeight: 700, color: ACCENT, letterSpacing: "0.07em", textTransform: "uppercase" }}>
+              Investigation Mode
+            </span>
+          </div>
+          {[
+            ["Alert ID", investigation.alertId],
+            ["Customer Name", investigation.customerName],
+            ["Risk Level", investigation.riskLevel],
+            ["Fraud Pattern", investigation.fraudPattern],
+            ["Investigation Status", investigation.investigationStatus.replace("_", " ")],
+          ].map(([label, value]) => (
+            <div key={label} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+              <span style={{ fontSize: 8, color: TEXT_DIM, letterSpacing: "0.07em", textTransform: "uppercase" }}>{label}</span>
+              <span style={{
+                fontSize: 10.5,
+                fontWeight: 600,
+                color: label === "Risk Level"
+                  ? (RISK[value as RiskKey]?.color ?? TEXT_PRI)
+                  : TEXT_PRI,
+                fontFamily: label === "Alert ID" ? "monospace" : "inherit",
+              }}>
+                {value}
+              </span>
+            </div>
+          ))}
+          <div style={{ flex: 1 }} />
+          <button
+            onClick={handleBackToGlobalGraph}
+            style={{
+              display: "flex", alignItems: "center", gap: 5,
+              padding: "4px 10px", borderRadius: 3, fontSize: 10, cursor: "pointer",
+              border: `1px solid ${ACCENT}60`,
+              background: ACCENT + "12",
+              color: "#7ab8e8",
+              letterSpacing: "0.04em",
+            }}
+          >
+            <RotateCcw size={11} /> Back to Global Graph
+          </button>
+        </div>
+      )}
 
       {/* ═══ MAIN AREA ═══ */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>

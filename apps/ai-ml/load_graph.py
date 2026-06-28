@@ -29,8 +29,10 @@ def load_accounts(path: Path) -> List[Dict]:
 
     df = pd.read_csv(path)
     df["opened_on"] = pd.to_datetime(df["opened_on"], errors="coerce").dt.date
-    df["last_active_ts"] = pd.to_datetime(df["last_active_ts"], errors="coerce")
-    df["last_scored_ts"] = pd.to_datetime(df["last_scored_ts"], errors="coerce")
+    if "last_active_ts" in df.columns:
+        df["last_active_ts"] = pd.to_datetime(df["last_active_ts"], errors="coerce")
+    if "last_scored_ts" in df.columns:
+        df["last_scored_ts"] = pd.to_datetime(df["last_scored_ts"], errors="coerce")
     if "declared_annual_income" in df.columns:
         df["declared_annual_income"] = pd.to_numeric(df["declared_annual_income"], errors="coerce")
     df["is_fraud"] = df["is_fraud"].fillna(False).astype(bool)

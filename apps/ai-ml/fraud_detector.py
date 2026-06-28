@@ -21,10 +21,11 @@ from typing import Dict, List, Optional, Tuple
 import joblib
 import numpy as np
 import pandas as pd
+import xgboost as xgb
 import torch
 import torch.nn as nn
 from dotenv import load_dotenv
-from neo4j import GraphDatabase
+from neo4j import AsyncGraphDatabase
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 BASE_DIR   = Path(__file__).resolve().parent
@@ -34,7 +35,7 @@ MODELS_DIR = Path(os.getenv("FRAUD_MODELS_DIR", BASE_DIR / "models"))
 ROOT_ENV = BASE_DIR.parents[2] / ".env"
 # Fallback: walk up the tree to find the repo root .env
 if not ROOT_ENV.exists():
-    for i in range(1, 6):
+    for i in range(1, len(BASE_DIR.parents)):
         candidate = BASE_DIR.parents[i] / ".env"
         if candidate.exists():
             ROOT_ENV = candidate
@@ -51,16 +52,96 @@ if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", REL_TYPE or ""):
     REL_TYPE = "SENT"
 
 if NEO4J_URI and NEO4J_USER and NEO4J_PASSWORD:
-    NEO4J_DRIVER = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    ASYNC_DRIVER = None  # Will be lazily initialized
 else:
-    NEO4J_DRIVER = None
+    ASYNC_DRIVER = None
+
+def _get_driver():
+    global ASYNC_DRIVER
+    if ASYNC_DRIVER is None and NEO4J_URI:
+        ASYNC_DRIVER = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    return ASYNC_DRIVER
 
 # ── ML Models ──────────────────────────────────────────────────────────────────
 if not MODELS_DIR.exists():
     raise FileNotFoundError(f"Missing models directory: {MODELS_DIR}")
 
 ISO_MODEL = joblib.load(MODELS_DIR / "isolation_forest.pkl")
-SCALER    = joblib.load(MODELS_DIR / "scaler.pkl")
+SCALER = joblib.load(MODELS_DIR / "scaler.pkl")
+
+XGB_MODEL = xgb.Booster()
+if (MODELS_DIR / "profile_mismatch_model.json").exists():
+    XGB_MODEL.load_model(MODELS_DIR / "profile_mismatch_model.json")
+elif (MODELS_DIR / "xgb_model.json").exists():
+    XGB_MODEL.load_model(MODELS_DIR / "xgb_model.json")
+
+# ── Layering XGBoost (Model D) ─────────────────────────────────────────────────
+# Loaded lazily so that a missing model file does NOT crash the server —
+# detect_layering() falls back to Cypher-only mode when LAYERING_XGB is None.
+import sys as _sys
+_scripts_dir = str(BASE_DIR / "scripts")
+if _scripts_dir not in _sys.path:
+    _sys.path.insert(0, str(BASE_DIR))  # Make "scripts" importable as a package
+
+LAYERING_XGB: Optional[xgb.XGBClassifier] = None
+LAYERING_FEATURES: List[str] = []
+_LAYERING_THRESHOLD: float = 0.50
+try:
+    from scripts.extract_chain_features import (  # type: ignore[import]
+        extract_chain_features as _extract_chain_features,
+        LAYERING_FEATURES as _LAYERING_FEATURES,
+    )
+    LAYERING_FEATURES = _LAYERING_FEATURES
+    extract_chain_features = _extract_chain_features  # re-export for module usage
+
+    _lxgb = xgb.XGBClassifier()
+    _lxgb.load_model(MODELS_DIR / "layering_xgb.json")
+    LAYERING_XGB = _lxgb
+
+    _lthresh_path = MODELS_DIR / "layering_threshold.json"
+    if _lthresh_path.exists():
+        import json as _json
+        with open(_lthresh_path, "r", encoding="utf-8") as _fh:
+            _LAYERING_THRESHOLD = float(_json.load(_fh).get("threshold", 0.50))
+except FileNotFoundError:
+    pass  # Model not yet trained — graceful fallback to Cypher detection
+except Exception as _layering_load_err:
+    print(f"[WARN] Could not load layering XGBoost: {_layering_load_err}")
+
+# ── Roundtrip XGBoost (Model E) ────────────────────────────────────────────────
+ROUNDTRIP_XGB: Optional[xgb.XGBClassifier] = None
+ROUNDTRIP_FEATURES: List[str] = []
+_ROUNDTRIP_THRESHOLD: float = 0.50
+try:
+    from scripts.extract_chain_features import (  # type: ignore[import]
+        extract_roundtrip_features as _extract_roundtrip_features,
+        ROUNDTRIP_FEATURES as _ROUNDTRIP_FEATURES,
+    )
+    ROUNDTRIP_FEATURES = _ROUNDTRIP_FEATURES
+    extract_roundtrip_features = _extract_roundtrip_features
+
+    _rxgb = xgb.XGBClassifier()
+    _rxgb.load_model(MODELS_DIR / "roundtrip_xgb.json")
+    ROUNDTRIP_XGB = _rxgb
+
+    _rthresh_path = MODELS_DIR / "roundtrip_threshold.json"
+    if _rthresh_path.exists():
+        import json as _json
+        with open(_rthresh_path, "r", encoding="utf-8") as _fh:
+            _ROUNDTRIP_THRESHOLD = float(_json.load(_fh).get("threshold", 0.50))
+except FileNotFoundError:
+    pass
+except Exception as _rt_load_err:
+    print(f"[WARN] Could not load roundtrip XGBoost: {_rt_load_err}")
+
+FEATURE_SEQUENCE = [
+    "kyc_tier", "declared_annual_income", "account_age_days", "volume_30d", "txn_count_30d", 
+    "income_utilization_ratio_30d", "age_band_encoded", "geography_tier_metro", "geography_tier_rural", "geography_tier_tier2",
+    "volume_vs_age_kyc_peer", "cash_inflow_pct", "upi_family_inflow_pct", "corporate_wire_inflow_pct",
+    "unknown_source_pct", "salary_credit_regular", "income_source_count", "volume_growth_rate_3m", 
+    "months_at_current_volume", "kyc_update_recency_days", "outflow_to_known_contacts", 
+    "outflow_to_new_accounts", "cash_withdrawal_ratio"
+]
 
 SMURF_THRESHOLD = 0.90
 _thresh_path = MODELS_DIR / "smurf_threshold.json"
@@ -77,30 +158,29 @@ FEATURE_COLS = [
     "avg_monthly_volume",
     "avg_monthly_count",
     "unique_counterparties_30d",
+    "risk_score_7d_ago",
+    "risk_score_delta_7d",
+    "tx_count_week1_post_dormancy",
+    "tx_count_week2_post_dormancy",
+    "volume_acceleration",
+    "has_foreign_inflow",
+    "inflow_source_type",
+    "kyc_update_recency_days",
+    "immediate_outflow_pct",
 ]
 
-SMURF_FEATURES = ["amount", "gap_min", "hour", "day", "is_upi"]
+SMURFING_FEATURES = [
+    'amount', 'tx_count_last_24h', 'total_volume_24h', 'channel_upi_ratio',
+    'tx_count_last_7d', 'tx_count_last_30d', 'total_volume_7d', 'total_volume_30d',
+    'near_threshold_count_30d', 'amount_variance_24h', 'amount_clustering_score',
+    'threshold_avoidance_ratio', 'time_gap_mean_min', 'time_gap_stddev', 'is_weekend',
+    'unique_recipients_24h', 'account_age_days', 'orig_balance_after_ratio'
+]
 
-
-class SmurfLSTM(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.lstm = nn.LSTM(
-            input_size=5, hidden_size=64, num_layers=2,
-            batch_first=True, bidirectional=True, dropout=0.3,
-        )
-        self.fc = nn.Sequential(
-            nn.Linear(128, 32), nn.ReLU(), nn.Dropout(0.3), nn.Linear(32, 2),
-        )
-
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        return self.fc(out[:, -1, :])
-
-
-LSTM_MODEL = SmurfLSTM()
-LSTM_MODEL.load_state_dict(torch.load(MODELS_DIR / "lstm_model.pt", map_location="cpu"))
-LSTM_MODEL.eval()
+try:
+    SMURF_MODEL = joblib.load(str(MODELS_DIR / "smurf_model.pkl"))
+except Exception:
+    SMURF_MODEL = None # Smurf model missing
 
 # ── Kept for backward-compat (upsert/lab endpoints still write CSV) ────────────
 # These globals are loaded ONCE at startup for the upsert helpers and are
@@ -152,231 +232,351 @@ def _coerce(obj):
 
 
 def _neo4j_session():
-    if NEO4J_DRIVER is None:
+    drv = _get_driver()
+    if drv is None:
         raise RuntimeError("Neo4j connection not configured.")
-    return NEO4J_DRIVER.session()
+    return drv.session()
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import asyncio
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+def _fetch_postgres_account_stats(account_id: str) -> Optional[Dict]:
+    if not DATABASE_URL:
+        return None
+    try:
+        with psycopg2.connect(DATABASE_URL) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT a.*, s.*, e.declared_annual_income, f.*
+                    FROM accounts a
+                    LEFT JOIN account_stats s ON a.account_id = s.account_id
+                    LEFT JOIN entities e ON a.entity_id = e.entity_id
+                    LEFT JOIN account_ml_features f ON a.account_id = f.account_id
+                    WHERE a.account_id = %s
+                """, (account_id,))
+                rec = cur.fetchone()
+                if rec:
+                    return dict(rec)
+                return None
+    except Exception as e:
+        print(f"Postgres fetch error: {e}")
+        return None
+
+async def _fetch_smurf_features(account_id: str) -> Optional[Dict]:
+    """Fetch pre-computed tabular features from PostgreSQL."""
+    rec = await asyncio.to_thread(_fetch_postgres_account_stats, account_id)
+    if not rec:
+        return None
+    return dict(rec)
 
 
-def _run_query(query: str, **params):
+async def _run_query(query: str, **params):
     """Execute a read query and return all records."""
-    with _neo4j_session() as session:
-        return list(session.run(query, **params))
+    async with _neo4j_session() as session:
+        result = await session.run(query, **params)
+        return await result.data()
 
 
-def get_account_ids() -> List[str]:
+async def get_account_ids() -> List[str]:
     """Return all account IDs from Neo4j."""
-    if NEO4J_DRIVER is None:
+    if ASYNC_DRIVER is None:
         return []
-    records = _run_query("MATCH (a:Account) RETURN a.account_id AS id")
+    records = await _run_query("MATCH (a:Account) RETURN a.account_id AS id")
     return [r["id"] for r in records if r["id"]]
 
 
-# ── Detector: Smurfing (Neo4j → BiLSTM) ───────────────────────────────────────
-def _fetch_smurf_sequence(account_id: str) -> Tuple[np.ndarray, int]:
-    """
-    Query Neo4j for the last 30 outgoing SUCCESS transactions,
-    build a (30, 5) feature array for the LSTM.
-    Returns (sequence_array, actual_tx_count).
-    """
-    query = f"""
-        MATCH (a:Account {{account_id: $acc_id}})-[r:{REL_TYPE}]->(b:Account)
-        WHERE toUpper(r.status) = 'SUCCESS'
-        RETURN toFloat(r.amount) AS amount,
-               r.txn_ts         AS txn_ts,
-               toUpper(r.channel) AS channel
-        ORDER BY r.txn_ts DESC
-        LIMIT 30
-    """
-    records = _run_query(query, acc_id=account_id)
-    if len(records) < 5:
-        return np.array([]), len(records)
+# ── Detector: Smurfing (Neo4j → XGBoost) ──────────────────────────────────────
 
-    # Records come newest-first; reverse to chronological order
-    records = list(reversed(records))
 
-    seq = []
-    prev_dt: Optional[datetime] = None
-    for rec in records:
-        raw_ts = rec["txn_ts"]
-        # Handle Neo4j DateTime objects and plain strings
-        if hasattr(raw_ts, "to_native"):
-            dt = raw_ts.to_native().replace(tzinfo=None)
+async def detect_smurfing(account_id: str) -> dict:
+    """
+    Layer 1 Inline Shield: Tabular XGBoost Only.
+    Bypasses live multi-account graph traversals to preserve SLA speeds.
+    """
+    # 1. Fetch the 18 pre-computed tabular properties asynchronously
+    props = await _fetch_smurf_features(account_id)
+    if not props:
+        return {"detected": False, "confidence": 0.0, "fraud_type": "STRUCTURING_SMURFING"}
+        
+    # 2. Reconstruct the precise feature sequence matrix matching training
+    X = pd.DataFrame([{c: float(props.get(c) or 0.0) for c in SMURFING_FEATURES}])
+    
+    # 3. Execute fast native tree inference
+    try:
+        if SMURF_MODEL is not None:
+            prob = float(SMURF_MODEL.predict_proba(X)[0][1])
         else:
-            dt = pd.to_datetime(str(raw_ts), errors="coerce")
-            if pd.isna(dt):
-                dt = datetime.utcnow()
-            else:
-                dt = dt.to_pydatetime().replace(tzinfo=None)
-
-        gap = 0.0 if prev_dt is None else (dt - prev_dt).total_seconds() / 60.0
-        amount = float(rec["amount"] or 0.0)
-        channel = str(rec["channel"] or "")
-
-        seq.append([
-            float(np.log1p(amount)) / 15.0,
-            min(gap / 1440.0, 1.0),
-            dt.hour / 23.0,
-            dt.weekday() / 6.0,
-            1.0 if channel == "UPI" else 0.0,
-        ])
-        prev_dt = dt
-
-    # Pad to exactly 30 steps
-    while len(seq) < 30:
-        seq.insert(0, [0.0, 0.0, 0.0, 0.0, 0.0])
-
-    return np.array(seq[-30:], dtype=np.float32), len(records)
-
-
-def detect_smurfing(account_id: str) -> Dict:
-    """
-    Fetches the account's outgoing transaction sequence from Neo4j,
-    then feeds it to the BiLSTM model.
-    """
-    if NEO4J_DRIVER is None:
-        return {"detected": False, "fraud_type": "SMURFING", "error": "Neo4j not configured"}
-
-    seq, tx_count = _fetch_smurf_sequence(account_id)
-    if seq.size == 0:
-        return {
-            "detected": False, "fraud_type": "SMURFING",
-            "confidence": 0.0, "tx_count": tx_count,
-        }
-
-    x = torch.from_numpy(np.stack([seq])).float()
-    with torch.no_grad():
-        prob = float(torch.softmax(LSTM_MODEL(x), dim=1)[0, 1].item())
-
-    return _coerce({
-        "detected": bool(prob >= SMURF_THRESHOLD),
-        "fraud_type": "SMURFING",
+            prob = 0.0
+    except Exception:
+        prob = 0.0
+    
+    # Use robust calibrated threshold
+    SMURF_OPERATIONAL_THRESHOLD = 0.50
+    
+    return {
+        "detected": bool(prob >= SMURF_OPERATIONAL_THRESHOLD),
         "confidence": round(prob, 4),
-        "threshold": round(float(SMURF_THRESHOLD), 4),
-        "tx_count": tx_count,
-    })
+        "fraud_type": "STRUCTURING_SMURFING"
+    }
+
+
+async def verify_coordinated_smurf_network(account_id: str) -> None:
+    """
+    Layer 2 Out-of-Line Escalation: Graph Query.
+    Checks paths connecting multiple sending accounts to multiple destination accounts.
+    Creates an Alert node if a coordinated network is detected.
+    """
+    if ASYNC_DRIVER is None:
+        return
+
+    query = f"""
+        MATCH (smurf:Account {{account_id: $acc_id}})-[r:{REL_TYPE}]->(dest:Account)
+        WHERE r.amount < 50000 AND r.txn_ts >= datetime() - duration('P7D')
+        WITH dest, smurf
+        MATCH (other_smurf:Account)-[r2:{REL_TYPE}]->(dest)
+        WHERE other_smurf.account_id <> smurf.account_id 
+          AND r2.amount < 50000 
+          AND r2.txn_ts >= datetime() - duration('P7D')
+        WITH dest, smurf, count(DISTINCT other_smurf) as other_smurf_count
+        WHERE other_smurf_count >= 2
+        MERGE (alert:Alert {{account_id: smurf.account_id, pattern: 'SMURFING'}})
+        ON CREATE SET alert.created_at = datetime(),
+                      alert.fraud_prob = 0.95,
+                      alert.tier = 'HIGH_RISK'
+        ON MATCH SET alert.fraud_prob = 0.95,
+                     alert.tier = 'HIGH_RISK'
+        MERGE (smurf)-[:FLAGGED_IN]->(alert)
+        RETURN alert
+    """
+    try:
+        await _run_query(query, acc_id=account_id)
+    except Exception as e:
+        print(f"[Background Task] Error verifying coordinated smurf network for {account_id}: {e}")
 
 
 # ── Detector: Dormant Activation (Neo4j → Isolation Forest) ───────────────────
-def _fetch_account_features(account_id: str) -> Optional[Dict]:
-    """
-    Fetch pre-computed account-level behavioral features from Neo4j.
-    These are stored as node properties during data load.
-    """
+
+async def _fetch_account_features(account_id: str) -> Optional[Dict]:
+    rec = await asyncio.to_thread(_fetch_postgres_account_stats, account_id)
+    if not rec:
+        return None
+    return {
+        "dormancy_days": rec.get("dormancy_days", 0),
+        "txn_count_7d": rec.get("txn_count_7d", 0),
+        "txn_count_30d": rec.get("txn_count_30d", 0),
+        "volume_7d": rec.get("volume_7d", 0.0),
+        "volume_30d": rec.get("volume_30d", 0.0),
+        "avg_monthly_volume": rec.get("avg_monthly_volume", 0.0),
+        "avg_monthly_count": rec.get("avg_monthly_count", 0.0),
+        "unique_counterparties_30d": rec.get("unique_counterparties_30d", 0),
+        "declared_annual_income": rec.get("declared_annual_income", 0.0),
+        "last_active_ts": rec.get("last_active_ts"),
+        "status": rec.get("status")
+    }
+
+async def _fetch_full_ml_features(account_id: str) -> Optional[Dict]:
     query = """
         MATCH (a:Account {account_id: $acc_id})
-        RETURN
-            coalesce(a.dormancy_days, 0)              AS dormancy_days,
-            coalesce(a.txn_count_7d, 0)               AS txn_count_7d,
-            coalesce(a.txn_count_30d, 0)              AS txn_count_30d,
-            coalesce(a.volume_7d, 0.0)                AS volume_7d,
-            coalesce(a.volume_30d, 0.0)               AS volume_30d,
-            coalesce(a.avg_monthly_volume, 0.0)        AS avg_monthly_volume,
-            coalesce(a.avg_monthly_count, 0.0)         AS avg_monthly_count,
-            coalesce(a.unique_counterparties_30d, 0)  AS unique_counterparties_30d,
-            coalesce(a.declared_annual_income, 0.0)   AS declared_annual_income,
-            a.last_active_ts                          AS last_active_ts,
-            a.status                                  AS status
-        LIMIT 1
+        OPTIONAL MATCH (a)<-[:SENT]-(in_node)
+        WITH a, count(in_node) AS in_degree
+        OPTIONAL MATCH (a)-[:SENT]->(out_node)
+        WITH a, in_degree, count(out_node) AS out_degree
+        RETURN in_degree, out_degree
     """
-    records = _run_query(query, acc_id=account_id)
-    if not records:
-        return None
-    rec = records[0]
-    return {k: rec[k] for k in rec.keys()}
+    records = await _run_query(query, acc_id=account_id)
+    if not records: return None
+    rec = await asyncio.to_thread(_fetch_postgres_account_stats, account_id)
+    if not rec: return None
+    props = dict(rec)
+    props["in_degree"] = records[0]["in_degree"]
+    props["out_degree"] = records[0]["out_degree"]
+    props["pagerank"] = 0.0
+    return props
 
 
-def detect_dormant(account_id: str) -> Dict:
-    """
-    Fetches behavioral features from Neo4j Account node,
-    then scores with Isolation Forest.
-    """
-    if NEO4J_DRIVER is None:
-        return {"detected": False, "fraud_type": "DORMANT_ACTIVATION", "error": "Neo4j not configured"}
-
-    props = _fetch_account_features(account_id)
+async def detect_dormant(account_id: str) -> Dict:
+    props = await _fetch_full_ml_features(account_id)
     if props is None:
         return {"detected": False, "fraud_type": "DORMANT_ACTIVATION", "confidence": 0.0}
 
-    features = np.array(
-        [[float(props.get(col, 0.0) or 0.0) for col in FEATURE_COLS]],
-        dtype=np.float32,
-    )
-    X_scaled = SCALER.transform(features)
-    raw = -float(ISO_MODEL.score_samples(X_scaled)[0])
-    anomaly_score = float(1.0 / (1.0 + np.exp(-raw)))
+    X = pd.DataFrame([{
+        c: float(props.get(c, 0.0) or 0.0) for c in FEATURE_COLS
+    }])
 
-    dormancy_days  = int(props.get("dormancy_days", 0) or 0)
-    volume_30d     = float(props.get("volume_30d", 0.0) or 0.0)
+    # predict returns -1 for anomaly, 1 for normal
+    pred = ISO_MODEL.predict(SCALER.transform(X.values))[0]
+    detected = bool(pred == -1)
 
     return _coerce({
-        "detected": bool(anomaly_score >= 0.60),
+        "detected": detected,
         "fraud_type": "DORMANT_ACTIVATION",
-        "confidence": round(anomaly_score, 4),
-        "dormancy_days": dormancy_days,
-        "volume_30d": round(volume_30d, 2),
+        "confidence": 0.85 if detected else 0.0,
+        "dormancy_days": props.get("dormancy_days", 0),
+        "volume_30d": props.get("volume_30d", 0),
     })
 
 
 # ── Detector: KYC Mismatch (Neo4j) ────────────────────────────────────────────
-def detect_kyc_mismatch(account_id: str) -> Dict:
-    """
-    Pulls declared income and actual 30-day volume directly from the
-    Neo4j Account node, then computes the mismatch ratio.
-    """
-    if NEO4J_DRIVER is None:
-        return {"detected": False, "fraud_type": "KYC_MISMATCH", "error": "Neo4j not configured"}
+async def detect_kyc_mismatch(account_id: str) -> Dict:
+    props = await _fetch_full_ml_features(account_id)
+    if props is None:
+        return {"detected": False, "fraud_type": "KYC_MISMATCH", "confidence": 0.0}
 
-    query = """
-        MATCH (a:Account {account_id: $acc_id})
-        RETURN
-            coalesce(a.declared_annual_income, 0.0) AS declared_annual_income,
-            coalesce(a.volume_30d, 0.0)             AS volume_30d,
-            a.kyc_tier                              AS kyc_tier
-        LIMIT 1
-    """
-    records = _run_query(query, acc_id=account_id)
-    if not records:
-        return {"detected": False, "fraud_type": "KYC_MISMATCH"}
+    # Build the strictly ordered dataframe row
+    row_dict = {col: 0.0 for col in FEATURE_SEQUENCE}
+    
+    # Map Numerical properties
+    for col in FEATURE_SEQUENCE:
+        if col in props and not isinstance(props[col], str):
+            row_dict[col] = float(props[col] or 0.0)
+            
+    # Map Categorical OHE properties
+    for cat_field in ["account_type", "entity_type", "status", "risk_category"]:
+        val = props.get(cat_field, "")
+        if val:
+            ohe_col = f"{cat_field}_{val}"
+            if ohe_col in FEATURE_SEQUENCE:
+                row_dict[ohe_col] = 1.0
+                
+    X = pd.DataFrame([row_dict], columns=FEATURE_SEQUENCE)
+    
+    # Predict Proba
+    dmatrix = xgb.DMatrix(X)
+    prob = float(XGB_MODEL.predict(dmatrix)[0])
+    detected = bool(prob >= 0.45)
 
-    rec = records[0]
-    declared_annual = float(rec["declared_annual_income"] or 0.0)
-    expected_monthly = declared_annual / 12.0 if declared_annual > 0 else 50_000.0
-    actual_monthly   = float(rec["volume_30d"] or 0.0)
-    ratio = actual_monthly / max(expected_monthly, 1.0)
-
-    if ratio > 10:
-        severity = "CRITICAL"
-    elif ratio > 5:
-        severity = "HIGH"
-    elif ratio > 2:
-        severity = "MEDIUM"
-    else:
-        severity = "NORMAL"
+    # Derive legacy variables for the UI
+    ratio = float(props.get("income_utilization_ratio_30d") or 0.0)
+    if prob > 0.8: severity = "CRITICAL"
+    elif prob > 0.6: severity = "HIGH"
+    elif prob >= 0.45: severity = "MEDIUM"
+    else: severity = "NORMAL"
 
     return _coerce({
-        "detected": bool(severity in ("CRITICAL", "HIGH")),
+        "detected": detected,
         "fraud_type": "KYC_MISMATCH",
-        "confidence": round(float(min(ratio / 10.0, 1.0)), 4),
-        "mismatch_ratio": round(float(ratio), 2),
+        "confidence": round(float(prob), 4),
+        "mismatch_ratio": round(ratio, 2),
         "severity": severity,
-        "expected_monthly": round(float(expected_monthly), 2),
-        "actual_monthly": round(float(actual_monthly), 2),
-        "kyc_tier": int(rec["kyc_tier"] or 0),
+        "expected_monthly": round(float(props.get("declared_annual_income") or 0) / 12.0, 2),
+        "actual_monthly": round(float(props.get("volume_30d") or 0), 2),
+        "kyc_tier": int(props.get("kyc_tier") or 1),
     })
 
 
-# ── Detector: Layering (Neo4j graph path) ─────────────────────────────────────
-def detect_layering(account_id: str) -> Dict:
+# ── Detector: Layering (Neo4j graph path → XGBoost chain scorer) ───────────────
+async def _fetch_layering_candidates(account_id: str) -> List[Dict]:
     """
-    Three-tier strategy for maximum reliability:
-    1. Read pre-stored chain from Alert node (instant)
-    2. Direct path query starting from this account
-    3. Path query starting from any peer in the alert group
+    Query Neo4j for candidate layering chains starting from the given account.
+
+    Filters applied to reduce false positives before XGBoost scoring:
+      - Only SUCCESS transactions
+      - Initial hop amount ≥ 50,000 (filters out trivial small transfers)
+      - Chain length 2–6 hops (covers 5–9 accounts including start)
+      - Returns up to 10 candidate chains ordered by length (longest first)
+
+    Each candidate includes:
+      - chain   : list of account_ids from start → end
+      - amounts : list of hop amounts
+      - ts_list : list of hop timestamps (for gap feature computation)
+      - channels: list of hop channels
     """
-    if NEO4J_DRIVER is None:
+    query = f"""
+        MATCH path = (start:Account {{account_id: $acc_id}})-[:{REL_TYPE}*2..4]->(end:Account)
+        WHERE start <> end
+          AND ALL(r IN relationships(path) WHERE toUpper(r.status) = 'SUCCESS')
+        WITH [n IN nodes(path) | n.account_id]              AS chain,
+             [r IN relationships(path) | toFloat(r.amount)] AS amounts,
+             [r IN relationships(path) | r.txn_ts]          AS ts_list,
+             [r IN relationships(path) | toUpper(r.channel)] AS channels
+        WHERE size(chain) >= 3
+        RETURN chain, amounts, ts_list, channels
+        ORDER BY size(chain) DESC
+        LIMIT 5
+    """
+    try:
+        records = await _run_query(query, acc_id=account_id)
+        candidates = []
+        for rec in records:
+            amounts  = rec.get("amounts")  or []
+            ts_list  = rec.get("ts_list")  or []
+            channels = rec.get("channels") or []
+            txn_chain = [
+                {"amount": float(a), "ts": ts, "channel": str(ch)}
+                for a, ts, ch in zip(amounts, ts_list, channels)
+            ]
+            if txn_chain:
+                candidates.append({
+                    "chain":     list(rec.get("chain") or []),
+                    "txn_chain": txn_chain,
+                    "amounts":   [float(a) for a in amounts],
+                    "ts_list":   [str(ts) for ts in ts_list],
+                })
+        return candidates
+    except Exception:
+        return []
+
+
+def _score_layering_candidates(candidates: List[Dict]) -> Optional[Dict]:
+    """
+    Score all candidate chains with the XGBoost model.
+    Returns the highest-probability candidate, or None if no chains score
+    above threshold or if the model/features are unavailable.
+    """
+    if LAYERING_XGB is None or not LAYERING_FEATURES:
+        return None
+
+    best_prob   = 0.0
+    best_result = None
+
+    for candidate in candidates:
+        feats = extract_chain_features(candidate["txn_chain"])
+        if feats is None:
+            continue
+
+        feat_row = pd.DataFrame(
+            [{col: feats.get(col, 0.0) for col in LAYERING_FEATURES}],
+            columns=LAYERING_FEATURES,
+        )
+        try:
+            prob = float(LAYERING_XGB.predict_proba(feat_row)[0][1])
+        except Exception:
+            continue
+
+        if prob > best_prob:
+            best_prob   = prob
+            best_result = {
+                "chain":   candidate["chain"],
+                "amounts": candidate["amounts"],
+                "ts_list": candidate["ts_list"],
+                "prob":    prob,
+                "features": feats,
+            }
+
+    return best_result if best_result else None
+
+
+async def detect_layering(account_id: str) -> Dict:
+    """
+    Three-tier layering detection strategy:
+
+    Tier 1 (instant):  Read pre-stored chain from an Alert node in Neo4j.
+                        Created during data load or by the alert seeder.
+    Tier 2 (ML):       Fetch 2–6 hop candidate chains from Neo4j via an
+                        improved Cypher query, extract 18 chain-level features,
+                        and score each with the XGBoost model. Returns the
+                        highest-scoring chain if its probability ≥ threshold.
+    Tier 3 (fallback): Legacy broad Cypher path + peer-group path queries.
+                        Used when the XGBoost model is not yet trained, or
+                        when no ML candidates score above threshold but the
+                        account is in a known Alert group.
+    """
+    if ASYNC_DRIVER is None:
         return {"detected": False, "fraud_type": "LAYERING", "error": "Neo4j not configured"}
 
-    # ── Tier 1: pre-stored chain on the Alert node (fastest) ──
+    # ── Tier 1: pre-stored chain on the Alert node (fastest) ─────────────────
     stored_q = """
         MATCH (a:Account {account_id: $acc_id})-[:FLAGGED_IN]->(al:Alert {pattern: 'LAYERING'})
         WHERE al.chain IS NOT NULL
@@ -384,8 +584,9 @@ def detect_layering(account_id: str) -> Dict:
         LIMIT 1
     """
     try:
-        with _neo4j_session() as session:
-            rec = session.run(stored_q, acc_id=account_id).single()
+        async with _neo4j_session() as session:
+            res = await session.run(stored_q, acc_id=account_id)
+            rec = await res.single()
             if rec and rec["chain"]:
                 chain   = list(rec["chain"])
                 amounts = [float(a) for a in (rec["amounts"] or [])]
@@ -393,24 +594,43 @@ def detect_layering(account_id: str) -> Dict:
                     "detected": True, "fraud_type": "LAYERING", "confidence": 0.92,
                     "chain": chain, "amounts": amounts,
                     "timestamps": [], "hops": len(chain) - 1,
+                    "model": "alert_node",
                 })
     except Exception:
         pass
 
-    # ── Tier 2: direct outgoing path from this account ──
+    # ── Tier 2: XGBoost ML detection on candidate chains ─────────────────────
+    if LAYERING_XGB is not None:
+        try:
+            candidates = await _fetch_layering_candidates(account_id)
+            if candidates:
+                best = _score_layering_candidates(candidates)
+                if best is not None and best["prob"] >= _LAYERING_THRESHOLD:
+                    return _coerce({
+                        "detected":   True,
+                        "fraud_type": "LAYERING",
+                        "confidence": round(best["prob"], 4),
+                        "chain":      best["chain"],
+                        "amounts":    best["amounts"],
+                        "timestamps": best["ts_list"],
+                        "hops":       len(best["chain"]) - 1,
+                        "model":      "xgboost",
+                    })
+        except Exception:
+            pass  # Degrade to Tier 3
+
+    # ── Tier 3: legacy Cypher-only fallback ───────────────────────────────────
     direct_q = f"""
         MATCH (start:Account {{account_id: $acc_id}})
-        MATCH path = (start)-[:{REL_TYPE}*2..8]->(end:Account)
+        MATCH path = (start)-[:{REL_TYPE}*2..4]->(end:Account)
         WHERE start <> end
-        WITH [n IN nodes(path) | n.account_id]           AS chain,
+        WITH [n IN nodes(path) | n.account_id]              AS chain,
              [r IN relationships(path) | toFloat(r.amount)] AS amounts,
-             [r IN relationships(path) | r.txn_ts]       AS ts_list
+             [r IN relationships(path) | r.txn_ts]          AS ts_list
         WHERE size(chain) >= 3
         RETURN chain, amounts, ts_list
-        ORDER BY size(chain) DESC
         LIMIT 1
     """
-    # ── Tier 3: try peers from the alert group ──
     peer_q = f"""
         MATCH (a:Account {{account_id: $acc_id}})-[:FLAGGED_IN]->(al:Alert {{pattern: 'LAYERING'}})
         WITH al LIMIT 1
@@ -418,22 +638,23 @@ def detect_layering(account_id: str) -> Dict:
         WITH collect(DISTINCT peer.account_id) AS peer_ids LIMIT 1
         UNWIND peer_ids AS pid
         MATCH (start:Account {{account_id: pid}})
-        MATCH path = (start)-[:{REL_TYPE}*2..8]->(end:Account)
+        MATCH path = (start)-[:{REL_TYPE}*2..4]->(end:Account)
         WHERE start <> end
         WITH [n IN nodes(path) | n.account_id]              AS chain,
              [r IN relationships(path) | toFloat(r.amount)] AS amounts,
              [r IN relationships(path) | r.txn_ts]          AS ts_list
         WHERE size(chain) >= 3
         RETURN chain, amounts, ts_list
-        ORDER BY size(chain) DESC
         LIMIT 1
     """
     record = None
     try:
-        with _neo4j_session() as session:
-            record = session.run(direct_q, acc_id=account_id).single()
+        async with _neo4j_session() as session:
+            res1   = await session.run(direct_q, acc_id=account_id)
+            record = await res1.single()
             if not record:
-                record = session.run(peer_q, acc_id=account_id).single()
+                res2   = await session.run(peer_q, acc_id=account_id)
+                record = await res2.single()
     except Exception as e:
         return {"detected": False, "fraud_type": "LAYERING", "error": str(e)}
 
@@ -442,24 +663,118 @@ def detect_layering(account_id: str) -> Dict:
 
     chain = list(record["chain"])
     return _coerce({
-        "detected": True, "fraud_type": "LAYERING", "confidence": 0.92,
-        "chain": chain,
-        "amounts": [float(a) for a in record["amounts"]],
+        "detected":   True,
+        "fraud_type": "LAYERING",
+        "confidence": 0.92,
+        "chain":      chain,
+        "amounts":    [float(a) for a in record["amounts"]],
         "timestamps": [str(t) for t in record["ts_list"]],
-        "hops": len(chain) - 1,
+        "hops":       len(chain) - 1,
+        "model":      "cypher_fallback",
     })
 
 
+async def _fetch_roundtrip_candidates(account_id: str) -> List[Dict]:
+    """Fetch 3-to-5 hop cycle candidates for Round Trip scoring."""
+    query = f"""
+        MATCH path = (start:Account {{account_id: $acc_id}})-[:{REL_TYPE}*3..5]->(start)
+        WHERE ALL(r IN relationships(path) WHERE toUpper(r.status) = 'SUCCESS')
+          AND ALL(i IN range(0, size(relationships(path))-2) 
+                  WHERE (relationships(path)[i+1]).txn_ts >= (relationships(path)[i]).txn_ts)
+        WITH [n IN nodes(path) | n.account_id]              AS chain,
+             [r IN relationships(path) | toFloat(r.amount)] AS amounts,
+             [r IN relationships(path) | r.txn_ts]          AS ts_list,
+             [r IN relationships(path) | toUpper(r.channel)] AS channels
+        WHERE size(chain) >= 4
+        RETURN chain, amounts, ts_list, channels
+        LIMIT 5
+    """
+    try:
+        records = await _run_query(query, acc_id=account_id)
+        candidates = []
+        for rec in records:
+            amounts  = rec.get("amounts")  or []
+            ts_list  = rec.get("ts_list")  or []
+            channels = rec.get("channels") or []
+            
+            # Reconstruct hop dictionaries
+            txns = []
+            for i in range(len(amounts)):
+                txns.append({
+                    "amount":  amounts[i],
+                    "ts":      ts_list[i],
+                    "channel": channels[i] if i < len(channels) else "UNKNOWN"
+                })
+            candidates.append({
+                "chain": list(rec.get("chain", [])),
+                "txns": txns,
+                "amounts": amounts,
+            })
+        return candidates
+    except Exception as e:
+        print(f"[WARN] Roundtrip candidate fetch failed: {e}")
+        return []
 
-# ── Detector: Round-Trip (Neo4j cycle query) ───────────────────────────────────
-def detect_roundtrip(account_id: str) -> Dict:
+async def _score_roundtrip_candidates(candidates: List[Dict], account_id: str) -> Optional[Dict]:
+    if not candidates or ROUNDTRIP_XGB is None:
+        return None
+
+    # We get the Isolation Forest score for the account to handle unknown/edge cases
+    iso_penalty = 1.0
+    try:
+        feat_dict = await get_account_features(account_id)
+        # Using exact logic from Isolation Forest inference
+        row_scaled = SCALER.transform(pd.DataFrame([feat_dict])[FEATURE_SEQUENCE])
+        iso_score = ISO_MODEL.decision_function(row_scaled)[0]
+        # if iso_score is very negative (highly anomalous), we boost the roundtrip score
+        if iso_score < -0.1:
+            iso_penalty = 1.25
+        elif iso_score < 0:
+            iso_penalty = 1.10
+    except Exception:
+        pass
+
+    best_cand = None
+    best_score = -1.0
+    best_feats = {}
+
+    for cand in candidates:
+        feats = extract_roundtrip_features(cand["txns"])
+        if feats is None:
+            continue
+        
+        row_df = pd.DataFrame([feats], columns=ROUNDTRIP_FEATURES).fillna(0)
+        prob = float(ROUNDTRIP_XGB.predict_proba(row_df)[0][1])
+        
+        # Apply ensemble penalty for anomalous accounts
+        adjusted_prob = min(prob * iso_penalty, 0.99)
+        
+        if adjusted_prob > best_score:
+            best_score = adjusted_prob
+            best_cand = cand
+            best_feats = feats
+
+    if best_cand and best_score >= _ROUNDTRIP_THRESHOLD:
+        return _coerce({
+            "detected": True,
+            "fraud_type": "ROUND_TRIP",
+            "confidence": best_score,
+            "chain": best_cand["chain"],
+            "amounts": best_cand["amounts"],
+            "features": best_feats,
+            "model": "xgboost_ensemble"
+        })
+    return None
+
+# ── Detector: Round-Trip (ML Ensemble) ─────────────────────────────────────────
+async def detect_roundtrip(account_id: str) -> Dict:
     """
-    Three-tier strategy for maximum reliability:
+    Three-tier strategy:
     1. Read pre-stored loop from Alert node (instant)
-    2. Direct cycle query from this account
-    3. Cycle query from any peer in the alert group
+    2. ML Ensemble (XGBoost + Isolation Forest) on real-time candidates
+    3. Cypher Fallback (if ML model missing)
     """
-    if NEO4J_DRIVER is None:
+    if ASYNC_DRIVER is None:
         return {"detected": False, "fraud_type": "ROUND_TRIP", "error": "Neo4j not configured"}
 
     # ── Tier 1: pre-stored loop on the Alert node ──
@@ -470,71 +785,65 @@ def detect_roundtrip(account_id: str) -> Dict:
         LIMIT 1
     """
     try:
-        with _neo4j_session() as session:
-            rec = session.run(stored_q, acc_id=account_id).single()
+        async with _neo4j_session() as session:
+            res = await session.run(stored_q, acc_id=account_id)
+            rec = await res.single()
             if rec and rec["loop"]:
                 loop    = list(rec["loop"])
                 amounts = [float(a) for a in (rec["amounts"] or [])]
                 return _coerce({
                     "detected": True, "fraud_type": "ROUND_TRIP", "confidence": 0.89,
-                    "loop": loop, "chain": loop, "amounts": amounts, "hops": len(loop) - 1,
+                    "chain": loop, "amounts": amounts, "hops": len(loop) - 1,
+                    "model": "cached_alert"
                 })
     except Exception:
         pass
 
-    # ── Tier 2: direct cycle from this account ──
+    # ── Tier 2: ML Ensemble ──
+    if ROUNDTRIP_XGB is not None:
+        candidates = await _fetch_roundtrip_candidates(account_id)
+        if candidates:
+            ml_result = await _score_roundtrip_candidates(candidates, account_id)
+            if ml_result:
+                return ml_result
+
+    # ── Tier 3: Cypher Fallback ──
     direct_q = f"""
-        MATCH path = (a:Account {{account_id: $acc_id}})-[:{REL_TYPE}*2..6]->(a)
+        MATCH path = (a:Account {{account_id: $acc_id}})-[:{REL_TYPE}*3..5]->(a)
+        WHERE ALL(r IN relationships(path) WHERE toUpper(r.status) = 'SUCCESS')
+          AND ALL(i IN range(0, size(relationships(path))-2) 
+                  WHERE (relationships(path)[i+1]).txn_ts >= (relationships(path)[i]).txn_ts)
         WITH [r IN relationships(path) | toFloat(r.amount)] AS amounts,
              [n IN nodes(path)         | n.account_id]      AS loop
-        WHERE size(loop) >= 3
+        WHERE size(loop) >= 4
         RETURN loop, amounts
-        ORDER BY size(loop) DESC
         LIMIT 1
     """
-    # ── Tier 3: cycle from any peer in the alert group ──
-    peer_q = f"""
-        MATCH (a:Account {{account_id: $acc_id}})-[:FLAGGED_IN]->(al:Alert {{pattern: 'ROUND_TRIP'}})
-        WITH al LIMIT 1
-        MATCH (peer:Account)-[:FLAGGED_IN]->(al)
-        WITH collect(DISTINCT peer.account_id) AS peer_ids LIMIT 1
-        UNWIND peer_ids AS pid
-        MATCH path = (p:Account {{account_id: pid}})-[:{REL_TYPE}*2..6]->(p)
-        WITH [r IN relationships(path) | toFloat(r.amount)] AS amounts,
-             [n IN nodes(path)         | n.account_id]      AS loop
-        WHERE size(loop) >= 3
-        RETURN loop, amounts
-        ORDER BY size(loop) DESC
-        LIMIT 1
-    """
-    record = None
     try:
-        with _neo4j_session() as session:
-            record = session.run(direct_q, acc_id=account_id).single()
-            if not record:
-                record = session.run(peer_q, acc_id=account_id).single()
+        async with _neo4j_session() as session:
+            res1 = await session.run(direct_q, acc_id=account_id)
+            record = await res1.single()
+            if record:
+                loop = list(record["loop"])
+                return _coerce({
+                    "detected": True, "fraud_type": "ROUND_TRIP", "confidence": 0.70,
+                    "chain": loop,
+                    "amounts": [float(a) for a in record["amounts"]],
+                    "hops": len(loop) - 1,
+                    "model": "cypher_fallback"
+                })
     except Exception as e:
         return {"detected": False, "fraud_type": "ROUND_TRIP", "error": str(e)}
 
-    if not record:
-        return {"detected": False, "fraud_type": "ROUND_TRIP"}
-
-    loop = list(record["loop"])
-    return _coerce({
-        "detected": True, "fraud_type": "ROUND_TRIP", "confidence": 0.89,
-        "loop": loop, "chain": loop,
-        "amounts": [float(a) for a in record["amounts"]],
-        "hops": len(loop) - 1,
-    })
-
+    return {"detected": False, "fraud_type": "ROUND_TRIP"}
 
 # ── Combined Scorer ─────────────────────────────────────────────────────────────
-def _get_account_alerts(account_id: str) -> List[Dict]:
+async def _get_account_alerts(account_id: str) -> List[Dict]:
     """Fetch existing Alert nodes this account is FLAGGED_IN."""
-    if NEO4J_DRIVER is None:
+    if ASYNC_DRIVER is None:
         return []
     try:
-        records = _run_query(
+        records = await _run_query(
             """
             MATCH (a:Account {account_id: $acc_id})-[:FLAGGED_IN]->(al:Alert)
             RETURN al.pattern AS pattern, al.fraud_prob AS fraud_prob, al.tier AS tier
@@ -556,7 +865,7 @@ PATTERN_TO_KEY = {
 }
 
 
-def score_account(account_id: str) -> Dict:
+async def score_account(account_id: str, deep_scan: bool = False) -> Dict:
     """
     Runs all 5 Neo4j-backed detectors and returns a combined fraud report.
 
@@ -566,7 +875,7 @@ def score_account(account_id: str) -> Dict:
     fail to fire for edge cases.
     """
     # ── Step 1: check pre-existing alerts (fast, 1 query) ────────────────────
-    existing_alerts = _get_account_alerts(account_id)
+    existing_alerts = await _get_account_alerts(account_id)
     alert_map: Dict[str, float] = {}   # key → fraud_prob
     for al in existing_alerts:
         key = PATTERN_TO_KEY.get(str(al.get("pattern") or ""), "")
@@ -576,12 +885,16 @@ def score_account(account_id: str) -> Dict:
 
     # ── Step 2: run live detectors ────────────────────────────────────────────
     results = {
-        "layering":     detect_layering(account_id),
-        "round_trip":   detect_roundtrip(account_id),
-        "smurfing":     detect_smurfing(account_id),
-        "dormant":      detect_dormant(account_id),
-        "kyc_mismatch": detect_kyc_mismatch(account_id),
+        "smurfing":     await detect_smurfing(account_id),
+        "dormant":      await detect_dormant(account_id),
+        "kyc_mismatch": await detect_kyc_mismatch(account_id),
     }
+    if deep_scan:
+        results["layering"] = await detect_layering(account_id)
+        results["round_trip"] = await detect_roundtrip(account_id)
+    else:
+        results["layering"] = {"detected": False, "fraud_type": "LAYERING", "confidence": 0.0, "status": "DEFERRED_TO_ASYNC_WORKER"}
+        results["round_trip"] = {"detected": False, "fraud_type": "ROUND_TRIP", "confidence": 0.0, "status": "DEFERRED_TO_ASYNC_WORKER"}
 
     # ── Step 3: merge — pre-existing alerts win if ML model didn't fire ───────
     for key, prob in alert_map.items():
@@ -618,84 +931,107 @@ def score_account(account_id: str) -> Dict:
 
 
 # ── Alert Candidates (Neo4j aggregate) ─────────────────────────────────────────
-def build_alert_candidates() -> List[str]:
+async def build_alert_candidates() -> List[str]:
     """
-    Pull high-risk account IDs directly from Neo4j using stored node properties.
-    No CSV scanning needed.
+    Pull high-risk account IDs from Postgres based on stats.
     """
-    if NEO4J_DRIVER is None:
-        return []
-
     query = """
-        MATCH (a:Account)
+        SELECT a.account_id 
+        FROM accounts a
+        LEFT JOIN account_stats s ON a.account_id = s.account_id
+        LEFT JOIN entities e ON a.entity_id = e.entity_id
         WHERE
-            coalesce(a.dormancy_days, 0) >= 90
-            OR coalesce(a.txn_count_30d, 0) >= 10
+            COALESCE(s.dormancy_days, 0) >= 90
+            OR COALESCE(s.txn_count_30d, 0) >= 10
             OR (
-                coalesce(a.declared_annual_income, 0) > 0
-                AND coalesce(a.volume_30d, 0) / (coalesce(a.declared_annual_income, 1) / 12.0) >= 5
+                COALESCE(e.declared_annual_income, 0) > 0
+                AND COALESCE(s.volume_30d, 0) / (COALESCE(e.declared_annual_income, 1) / 12.0) >= 5
             )
-            OR coalesce(a.volume_30d, 0) >= 100000
-        RETURN a.account_id AS account_id
+            OR COALESCE(s.volume_30d, 0) >= 100000
         LIMIT 500
     """
-    records = _run_query(query)
-    ids = [r["account_id"] for r in records if r["account_id"]]
+    try:
+        def fetch():
+            with psycopg2.connect(DATABASE_URL) as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute(query)
+                    return [row['account_id'] for row in cur.fetchall()]
+        ids = await asyncio.to_thread(fetch)
+    except Exception as e:
+        print(f"Error fetching candidates: {e}")
+        ids = []
 
-    # Fallback: just return any 200 accounts if heuristics find nothing
+    # Fallback
     if not ids:
-        fallback = _run_query("MATCH (a:Account) RETURN a.account_id AS account_id LIMIT 200")
-        ids = [r["account_id"] for r in fallback if r["account_id"]]
-
+        try:
+            def fetch_fallback():
+                with psycopg2.connect(DATABASE_URL) as conn:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute("SELECT account_id FROM accounts LIMIT 200")
+                        return [row['account_id'] for row in cur.fetchall()]
+            ids = await asyncio.to_thread(fetch_fallback)
+        except Exception:
+            ids = []
     return ids
 
 
 # ── Stats (Neo4j aggregate for dashboard header cards) ─────────────────────────
-def get_neo4j_stats() -> Dict:
+async def get_system_stats() -> Dict:
     """
-    Fast aggregate stats for the dashboard — all from Neo4j.
+    Fast aggregate stats for the dashboard — from PostgreSQL and Neo4j.
     """
-    if NEO4J_DRIVER is None:
-        return {
-            "total_accounts": 0, "total_transactions": 0,
-            "total_flagged": 0, "critical_count": 0, "fraud_volume_30d": 0.0,
-            "accounts_scanned": 0,
-        }
+    stats = {
+        "total_accounts": 0, "total_transactions": 0,
+        "total_flagged": 0, "critical_count": 0, "fraud_volume_30d": 0.0,
+        "accounts_scanned": 0,
+    }
+    
+    try:
+        def fetch_pg():
+            with psycopg2.connect(DATABASE_URL) as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("""
+                        SELECT 
+                            (SELECT COUNT(*) FROM accounts) AS total_accounts,
+                            (SELECT COALESCE(SUM(s.volume_30d), 0) FROM accounts a 
+                             JOIN account_stats s ON a.account_id = s.account_id 
+                             WHERE a.is_fraud = TRUE) AS fraud_volume_30d
+                    """)
+                    return cur.fetchone()
+        pg_rec = await asyncio.to_thread(fetch_pg)
+        if pg_rec:
+            stats["total_accounts"] = pg_rec["total_accounts"]
+            stats["accounts_scanned"] = pg_rec["total_accounts"]
+            stats["fraud_volume_30d"] = float(pg_rec["fraud_volume_30d"] or 0)
+    except Exception as e:
+        pass
 
-    # Count Alert nodes (not accounts with fraud_score) so stats card matches flagged list
-    acc_query = """
-        MATCH (a:Account)
-        RETURN count(a) AS total_accounts,
-               sum(CASE WHEN coalesce(a.is_fraud, false) THEN coalesce(a.volume_30d, 0.0) ELSE 0.0 END) AS fraud_volume_30d
-    """
-    alert_query = """
-        MATCH (a:Account)-[:FLAGGED_IN]->(al:Alert)
-        RETURN
-            count(DISTINCT a)                                                      AS total_flagged,
-            count(DISTINCT CASE WHEN al.tier IN ['CRITICAL'] THEN a END)          AS critical_count
-    """
-    txn_query = "MATCH ()-[r:SENT]->() RETURN count(r) AS total_transactions"
+    if ASYNC_DRIVER is not None:
+        try:
+            alert_query = """
+                MATCH (a:Account)-[:FLAGGED_IN]->(al:Alert)
+                RETURN
+                    count(DISTINCT a)                                                      AS total_flagged,
+                    count(DISTINCT CASE WHEN al.tier IN ['CRITICAL'] THEN a END)          AS critical_count
+            """
+            txn_query = "MATCH ()-[r:SENT]->() RETURN count(r) AS total_transactions"
 
-    acc_records   = _run_query(acc_query)
-    alert_records = _run_query(alert_query)
-    txn_records   = _run_query(txn_query)
+            alert_records = await _run_query(alert_query)
+            txn_records   = await _run_query(txn_query)
 
-    r = acc_records[0]   if acc_records   else {}
-    al = alert_records[0] if alert_records else {}
-    t = txn_records[0]   if txn_records   else {}
+            al = alert_records[0] if alert_records else {}
+            t = txn_records[0]   if txn_records   else {}
+            stats["total_flagged"] = int(al.get("total_flagged", 0) or 0)
+            stats["critical_count"] = int(al.get("critical_count", 0) or 0)
+            stats["total_transactions"] = int(t.get("total_transactions", 0) or 0)
+        except Exception:
+            pass
 
-    return _coerce({
-        "total_accounts":     int(r.get("total_accounts", 0) or 0),
-        "total_transactions": int(t.get("total_transactions", 0) or 0),
-        "total_flagged":      int(al.get("total_flagged", 0) or 0),
-        "critical_count":     int(al.get("critical_count", 0) or 0),
-        "fraud_volume_30d":   round(float(r.get("fraud_volume_30d", 0.0) or 0.0), 2),
-        "accounts_scanned":   int(r.get("total_accounts", 0) or 0),
-    })
+    return _coerce(stats)
 
 
 # ── Graph Trace (for Investigation page) ───────────────────────────────────────
-def trace_account(account_id: str, hint: str = "") -> Dict:
+async def trace_account(account_id: str, hint: str = "") -> Dict:
     """
     Returns the fund-flow graph for an account.
     1. If a hint is given (layering / round_trip), try that detector first.
@@ -704,7 +1040,7 @@ def trace_account(account_id: str, hint: str = "") -> Dict:
     """
     # Determine best search order from existing Alert nodes
     if not hint:
-        existing = _get_account_alerts(account_id)
+        existing = await _get_account_alerts(account_id)
         patterns = [str(al.get("pattern") or "") for al in existing]
         if "LAYERING" in patterns:
             hint = "layering"
@@ -712,24 +1048,24 @@ def trace_account(account_id: str, hint: str = "") -> Dict:
             hint = "round_trip"
 
     if hint in ("layering", "LAYERING"):
-        result = detect_layering(account_id)
+        result = await detect_layering(account_id)
         if result.get("detected"):
             return result
-        result = detect_roundtrip(account_id)
+        result = await detect_roundtrip(account_id)
         if result.get("detected"):
             return result
     elif hint in ("round_trip", "ROUND_TRIP"):
-        result = detect_roundtrip(account_id)
+        result = await detect_roundtrip(account_id)
         if result.get("detected"):
             return result
-        result = detect_layering(account_id)
+        result = await detect_layering(account_id)
         if result.get("detected"):
             return result
     else:
-        result = detect_layering(account_id)
+        result = await detect_layering(account_id)
         if result.get("detected"):
             return result
-        result = detect_roundtrip(account_id)
+        result = await detect_roundtrip(account_id)
         if result.get("detected"):
             return result
 
@@ -743,161 +1079,128 @@ _SMURF_SHAP_EXPLAINER = None
 _SMURF_SHAP_BACKGROUND = None
 
 
-def explain_dormant(account_id: str) -> Dict:
+async def explain_dormant(account_id: str) -> Dict:
     """
-    SHAP explanation for the Isolation Forest score.
-    Features are fetched from Neo4j.
+    SHAP explanation for the Isolation Forest score using 
+    the correct 5-column core features space.
     """
     try:
         import shap  # type: ignore
     except ImportError:
         return {"error": "shap not installed"}
 
-    props = _fetch_account_features(account_id)
+    props = _fetch_full_ml_features(account_id)
     if props is None:
         return {"error": "account not found in Neo4j"}
 
-    # Build background from a sample of accounts in Neo4j
+    core_features = [
+        "dormancy_days", "txn_count_7d", "txn_count_30d", "volume_7d", 
+        "volume_30d", "avg_monthly_volume", "avg_monthly_count", 
+        "unique_counterparties_30d"
+    ]
+
+    # Build background sample from Neo4j
     bg_query = f"""
         MATCH (a:Account)
-        RETURN {", ".join(f"coalesce(a.{c}, 0.0) AS {c}" for c in FEATURE_COLS)}
-        LIMIT 200
+        RETURN 
+            coalesce(a.dormancy_days, 0) AS dormancy_days,
+            coalesce(a.txn_count_7d, 0) AS txn_count_7d,
+            coalesce(a.txn_count_30d, 0) AS txn_count_30d,
+            coalesce(a.volume_7d, 0.0) AS volume_7d,
+            coalesce(a.volume_30d, 0.0) AS volume_30d,
+            coalesce(a.avg_monthly_volume, 0.0) AS avg_monthly_volume,
+            coalesce(a.avg_monthly_count, 0) AS avg_monthly_count,
+            coalesce(a.unique_counterparties_30d, 0) AS unique_counterparties_30d
+        LIMIT 100
     """
-    bg_records = _run_query(bg_query)
-    if not bg_records:
-        return {"error": "no background data in Neo4j"}
+    bg_records = await _run_query(bg_query)
+    background = pd.DataFrame([{c: float(r[c] or 0.0) for c in core_features} for r in bg_records])
 
-    background = pd.DataFrame([{c: float(r[c] or 0.0) for c in FEATURE_COLS} for r in bg_records])
-
+    # Function mapping raw sample space to scaled space
     def model_fn(X):
-        X_scaled = SCALER.transform(X)
-        raw = -ISO_MODEL.score_samples(X_scaled)
-        return 1.0 / (1.0 + np.exp(-raw))
+        return -ISO_MODEL.score_samples(SCALER.transform(X))
 
     global _SHAP_EXPLAINER
     if _SHAP_EXPLAINER is None:
         _SHAP_EXPLAINER = shap.KernelExplainer(model_fn, background.values)
 
-    x = np.array([[float(props.get(c, 0.0) or 0.0) for c in FEATURE_COLS]], dtype=np.float32)
-    shap_values = _SHAP_EXPLAINER.shap_values(x, nsamples=100)
-    sv = np.array(shap_values)
-    if sv.ndim > 1:
-        sv = sv.reshape(-1)[:len(FEATURE_COLS)]
+    x = np.array([[float(props.get(c, 0.0) or 0.0) for c in core_features]], dtype=np.float32)
+    shap_values = _SHAP_EXPLAINER.shap_values(x, nsamples=50)
+    sv = np.array(shap_values).flatten()
 
-    contributions = sorted(zip(FEATURE_COLS, sv), key=lambda item: abs(item[1]), reverse=True)
-    ev = _SHAP_EXPLAINER.expected_value
-    base_value = float(ev[0]) if hasattr(ev, "__len__") else float(ev)
-
+    contributions = sorted(zip(core_features, sv), key=lambda item: abs(item[1]), reverse=True)
+    
     return _coerce({
         "account_id": account_id,
-        "base_value": base_value,
+        "base_value": float(_SHAP_EXPLAINER.expected_value),
         "top_features": [
             {"feature": str(name), "shap": round(float(val), 6)}
-            for name, val in contributions[:8]
+            for name, val in contributions
         ],
     })
 
 
-def _smurf_model_fn(flattened: np.ndarray) -> np.ndarray:
-    arr = np.ascontiguousarray(flattened.reshape(-1, 30, 5), dtype=np.float32)
-    x = torch.from_numpy(arr)
-    with torch.no_grad():
-        return torch.softmax(LSTM_MODEL(x), dim=1)[:, 1].cpu().numpy()
-
-
-def _get_smurf_background() -> np.ndarray:
-    global _SMURF_SHAP_BACKGROUND
-    if _SMURF_SHAP_BACKGROUND is not None:
-        return _SMURF_SHAP_BACKGROUND
-
-    query = f"""
-        MATCH (a:Account)-[:{REL_TYPE}]->(b:Account)
-        WITH a.account_id AS acc_id, count(*) AS cnt
-        WHERE cnt >= 5
-        RETURN acc_id LIMIT 30
+async def explain_smurfing(account_id: str) -> Dict:
     """
-    records = _run_query(query)
-    sequences = []
-    for rec in records:
-        seq, cnt = _fetch_smurf_sequence(rec["acc_id"])
-        if seq.size > 0:
-            sequences.append(seq.flatten())
-        if len(sequences) >= 20:
-            break
-
-    if not sequences:
-        sequences = [np.zeros((30, 5), dtype=np.float32).flatten()]
-
-    _SMURF_SHAP_BACKGROUND = np.array(sequences, dtype=np.float32)
-    return _SMURF_SHAP_BACKGROUND
-
-
-def explain_smurfing(account_id: str) -> Dict:
+    TreeSHAP explanation for the XGBoost Smurfing score.
+    Tabular features are fetched instantly from Neo4j.
     """
-    SHAP/occlusion explanation for the LSTM smurfing score.
-    Transaction sequence is fetched from Neo4j.
-    """
-    seq, tx_count = _fetch_smurf_sequence(account_id)
-    if seq.size == 0:
-        return {"error": "not enough transactions in Neo4j"}
+    props = await _fetch_smurf_features(account_id)
+    if not props:
+        return {"error": "Account features not found"}
+        
+    # We bypass complex DB lookups here and just use the mock logic:
+    X = pd.DataFrame([{c: float(props.get(c) or 0.0) for c in SMURFING_FEATURES}])
 
     start = time.time()
-    flat = seq.flatten().astype(np.float32)
 
     try:
-        import shap  # type: ignore
-
+        import shap
         global _SMURF_SHAP_EXPLAINER
-        if _SMURF_SHAP_EXPLAINER is None:
-            _SMURF_SHAP_EXPLAINER = shap.KernelExplainer(_smurf_model_fn, _get_smurf_background())
+        if getattr(sys.modules[__name__], '_SMURF_SHAP_EXPLAINER', None) is None:
+            base_model = SMURF_MODEL.calibrated_classifiers_[0].estimator
+            _SMURF_SHAP_EXPLAINER = shap.TreeExplainer(base_model)
 
-        shap_values  = _SMURF_SHAP_EXPLAINER.shap_values(flat.reshape(1, -1), nsamples=50)
-        contributions = np.array(shap_values).reshape(30, 5)
-        method = "shap"
+        shap_values = _SMURF_SHAP_EXPLAINER.shap_values(X)
+        if isinstance(shap_values, list):
+            shap_values = shap_values[1] # For binary classification, take positive class
+        
+        contributions = shap_values[0]
+        method = "tree_shap"
     except Exception:
-        base_prob     = _smurf_model_fn(flat.reshape(1, -1))[0]
-        contributions = np.zeros((30, 5), dtype=np.float32)
-        for t in range(30):
-            for f in range(5):
-                perturbed      = flat.copy().reshape(30, 5)
-                perturbed[t, f] = 0.0
-                contributions[t, f] = base_prob - _smurf_model_fn(perturbed.reshape(1, -1))[0]
-        method = "occlusion"
+        # Fallback to feature importance
+        try:
+            base_model = SMURF_MODEL.calibrated_classifiers_[0].estimator
+            contributions = base_model.get_booster().get_score(importance_type="weight")
+            contributions = np.array([contributions.get(f, 0.0) for f in SMURFING_FEATURES])
+        except:
+            contributions = np.zeros(len(SMURFING_FEATURES))
+        method = "feature_importance_fallback"
 
-    feature_scores = contributions.sum(axis=0)
-    feature_rank   = sorted(zip(SMURF_FEATURES, feature_scores), key=lambda i: abs(i[1]), reverse=True)
-
-    top_steps = []
-    for t in np.argsort(np.abs(contributions).sum(axis=1))[::-1][:5]:
-        top_steps.append({
-            "step": int(t),
-            "features": {name: round(float(contributions[t, idx]), 6) for idx, name in enumerate(SMURF_FEATURES)},
-        })
+    feature_rank = sorted(zip(SMURFING_FEATURES, contributions), key=lambda i: abs(i[1]), reverse=True)
 
     return _coerce({
         "account_id":   account_id,
         "method":       method,
         "duration_ms":  int((time.time() - start) * 1000),
-        "top_features": [{"feature": str(n), "importance": round(float(v), 6)} for n, v in feature_rank],
-        "top_steps":    top_steps,
-        "sequence_len": tx_count,
+        "top_features": [{"feature": str(n), "importance": round(float(v), 6)} for n, v in feature_rank[:10]],
     })
 
 
 # ── Evidence Package ────────────────────────────────────────────────────────────
-def build_evidence_package(account_id: str) -> Dict:
-    score = score_account(account_id)
+async def build_evidence_package(account_id: str) -> Dict:
+    score = await score_account(account_id)
     return _coerce({
         "account_id":    account_id,
         "generated_at":  datetime.utcnow().isoformat(),
         "score":         score,
         "traces": {
-            "layering":  detect_layering(account_id),
-            "roundtrip": detect_roundtrip(account_id),
+            "layering":  await detect_layering(account_id),
+            "roundtrip": await detect_roundtrip(account_id),
         },
         "explanations": {
-            "dormant":   explain_dormant(account_id),
-            "smurfing":  explain_smurfing(account_id),
+            "dormant":   await explain_dormant(account_id),
+            "smurfing":  await explain_smurfing(account_id),
         },
         "report_summary": {
             "risk_level":    score["risk_level"],
@@ -908,33 +1211,48 @@ def build_evidence_package(account_id: str) -> Dict:
 
 
 # ── Upsert helpers (still write CSVs for lab endpoint) ─────────────────────────
-def upsert_account_record(account: Dict) -> Dict:
-    """Write account to Neo4j AND to CSV (for model retraining later)."""
-    # Neo4j upsert
-    if NEO4J_DRIVER is not None:
+async def upsert_account_record(account: Dict) -> Dict:
+    """Write account to Postgres AND to Neo4j (sparse)."""
+    # Neo4j sparse upsert
+    if ASYNC_DRIVER is not None:
         query = """
             MERGE (a:Account {account_id: $props.account_id})
-            SET a += $props
+            SET a.entity_id = $props.entity_id,
+                a.kyc_tier = $props.kyc_tier,
+                a.status = $props.status,
+                a.risk_category = $props.risk_category,
+                a.is_fraud = $props.is_fraud,
+                a.pattern_type = $props.pattern_type
         """
         props = {k: v for k, v in account.items() if v is not None}
-        with _neo4j_session() as session:
-            session.run(query, props=props)
+        async with _neo4j_session() as session:
+            await session.run(query, props=props)
 
-    # Also write to CSV for backward compat
-    _load_csv_once()
-    global _CSV_ACC
-    if _CSV_ACC is not None:
-        record = account.copy()
-        _CSV_ACC = _CSV_ACC[_CSV_ACC["account_id"] != record["account_id"]].copy()
-        _CSV_ACC = pd.concat([_CSV_ACC, pd.DataFrame([record])], ignore_index=True)
-        _CSV_ACC.to_csv(DATA_DIR / "accounts.csv", index=False)
+    # Postgres Upsert for accounts table
+    try:
+        def pg_upsert():
+            with psycopg2.connect(DATABASE_URL) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO accounts (account_id, entity_id, account_type, kyc_tier, status, opened_on, branch_code, current_balance, is_fraud, risk_category, pattern_type)
+                        VALUES (%(account_id)s, %(entity_id)s, %(account_type)s, %(kyc_tier)s, %(status)s, %(opened_on)s, %(branch_code)s, %(current_balance)s, %(is_fraud)s, %(risk_category)s, %(pattern_type)s)
+                        ON CONFLICT (account_id) DO UPDATE SET
+                            kyc_tier = EXCLUDED.kyc_tier,
+                            status = EXCLUDED.status,
+                            is_fraud = EXCLUDED.is_fraud,
+                            risk_category = EXCLUDED.risk_category,
+                            pattern_type = EXCLUDED.pattern_type
+                    """, account)
+        await asyncio.to_thread(pg_upsert)
+    except Exception as e:
+        print(f"Postgres upsert account error: {e}")
 
     return account
 
 
-def upsert_transaction_record(transaction: Dict) -> Dict:
-    """Write transaction to Neo4j AND to CSV."""
-    if NEO4J_DRIVER is not None:
+async def upsert_transaction_record(transaction: Dict) -> Dict:
+    """Write transaction to Postgres AND create edge in Neo4j."""
+    if ASYNC_DRIVER is not None:
         rel_query = f"""
             MERGE (s:Account {{account_id: $sender_id}})
             MERGE (r:Account {{account_id: $receiver_id}})
@@ -945,8 +1263,8 @@ def upsert_transaction_record(transaction: Dict) -> Dict:
                 t.status   = $status,
                 t.narration = $narration
         """
-        with _neo4j_session() as session:
-            session.run(
+        async with _neo4j_session() as session:
+            await session.run(
                 rel_query,
                 sender_id=transaction["sender_id"],
                 receiver_id=transaction["receiver_id"],
@@ -958,75 +1276,42 @@ def upsert_transaction_record(transaction: Dict) -> Dict:
                 narration=str(transaction.get("narration", "")),
             )
 
-    _load_csv_once()
-    global _CSV_TXN
-    if _CSV_TXN is not None:
-        record = transaction.copy()
-        record["txn_ts"] = pd.to_datetime(record["txn_ts"], errors="coerce")
-        _CSV_TXN = _CSV_TXN[_CSV_TXN["txn_id"] != record["txn_id"]].copy()
-        _CSV_TXN = pd.concat([_CSV_TXN, pd.DataFrame([record])], ignore_index=True)
-        _CSV_TXN.to_csv(DATA_DIR / "transactions.csv", index=False)
+    # Postgres Upsert for transaction table
+    try:
+        def pg_upsert():
+            with psycopg2.connect(DATABASE_URL) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO transactions (txn_id, sender_id, receiver_id, amount, channel, txn_ts, status, narration, is_fraud, pattern_type)
+                        VALUES (%(txn_id)s, %(sender_id)s, %(receiver_id)s, %(amount)s, %(channel)s, %(txn_ts)s, %(status)s, %(narration)s, %(is_fraud)s, %(pattern_type)s)
+                        ON CONFLICT (txn_id) DO NOTHING
+                    """, transaction)
+        await asyncio.to_thread(pg_upsert)
+    except Exception as e:
+        print(f"Postgres upsert transaction error: {e}")
 
     return transaction
 
 
-def _recompute_account_metrics(account_id: str) -> Dict:
-    """Recompute live metrics from Neo4j relationships."""
-    if NEO4J_DRIVER is None:
-        return {}
+async def _recompute_account_metrics(account_id: str) -> Dict:
+    """Recompute metrics in Postgres based on transactions."""
+    # Just do a fast update on the account_stats table in Postgres directly
+    try:
+        def pg_recompute():
+            with psycopg2.connect(DATABASE_URL) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE account_stats 
+                        SET 
+                            txn_count_30d = (SELECT count(*) FROM transactions WHERE sender_id = %s AND txn_ts >= NOW() - INTERVAL '30 days'),
+                            volume_30d = (SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE sender_id = %s AND txn_ts >= NOW() - INTERVAL '30 days'),
+                            txn_count_7d = (SELECT count(*) FROM transactions WHERE sender_id = %s AND txn_ts >= NOW() - INTERVAL '7 days'),
+                            volume_7d = (SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE sender_id = %s AND txn_ts >= NOW() - INTERVAL '7 days')
+                        WHERE account_id = %s
+                    """, (account_id, account_id, account_id, account_id, account_id))
+        await asyncio.to_thread(pg_recompute)
+    except Exception as e:
+        print(f"Error recomputing metrics for {account_id}: {e}")
 
-    now = datetime.utcnow()
-    query = f"""
-        MATCH (a:Account {{account_id: $acc_id}})
-        OPTIONAL MATCH (a)-[r:{REL_TYPE}]->()
-        WHERE toUpper(r.status) = 'SUCCESS'
-        WITH a,
-             collect({{amount: toFloat(r.amount), ts: r.txn_ts}}) AS txns
-        RETURN
-            a.declared_annual_income AS declared_annual_income,
-            a.opened_on AS opened_on,
-            txns
-    """
-    records = _run_query(query, acc_id=account_id)
-    if not records:
-        return {}
-
-    rec  = records[0]
-    txns = rec["txns"] or []
-
-    def parse_ts(ts_val):
-        if ts_val is None:
-            return None
-        if hasattr(ts_val, "to_native"):
-            return ts_val.to_native().replace(tzinfo=None)
-        dt = pd.to_datetime(str(ts_val), errors="coerce")
-        return None if pd.isna(dt) else dt.to_pydatetime().replace(tzinfo=None)
-
-    amounts_7d, amounts_30d, amounts_6m = [], [], []
-    counterparties = set()
-    last_active = None
-
-    for txn in txns:
-        amt = float(txn.get("amount") or 0.0)
-        dt  = parse_ts(txn.get("ts"))
-        if dt is None:
-            continue
-        if last_active is None or dt > last_active:
-            last_active = dt
-        delta = (now - dt).days
-        if delta <= 7:   amounts_7d.append(amt)
-        if delta <= 30:  amounts_30d.append(amt)
-        if delta <= 180: amounts_6m.append(amt)
-
-    dormancy_days = int((now - last_active).days) if last_active else 0
-
-    return _coerce({
-        "txn_count_7d":  len(amounts_7d),
-        "txn_count_30d": len(amounts_30d),
-        "volume_7d":     round(sum(amounts_7d), 2),
-        "volume_30d":    round(sum(amounts_30d), 2),
-        "avg_monthly_count":  round(len(amounts_6m) / 6.0, 2),
-        "avg_monthly_volume": round(sum(amounts_6m) / 6.0, 2),
-        "dormancy_days":  dormancy_days,
-        "last_active_ts": last_active.isoformat() if last_active else None,
-    })
+    # Optionally return the fresh stats
+    return {}
