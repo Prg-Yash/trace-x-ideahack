@@ -418,6 +418,353 @@ async def detect_dormant(account_id: str) -> Dict:
     })
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# XAI / SHAP EXPLANATION ENGINE
+# ══════════════════════════════════════════════════════════════════════════════
+# Lazily import shap so the server still boots even if shap is not installed.
+try:
+    import shap as _shap
+    _SHAP_AVAILABLE = True
+except ImportError:
+    _SHAP_AVAILABLE = False
+
+# Cache SHAP explainers after first construction (heavy to re-init each call)
+_SHAP_XGB_EXPLAINER   = None   # TreeExplainer for XGB_MODEL  (KYC Mismatch)
+_SHAP_SMURF_EXPLAINER = None   # TreeExplainer for SMURF_MODEL
+_SHAP_ISO_EXPLAINER   = None   # TreeExplainer for ISO_MODEL
+
+
+def _get_shap_xgb_explainer():
+    global _SHAP_XGB_EXPLAINER
+    if not _SHAP_AVAILABLE:
+        return None
+    if _SHAP_XGB_EXPLAINER is None:
+        _SHAP_XGB_EXPLAINER = _shap.TreeExplainer(XGB_MODEL)
+    return _SHAP_XGB_EXPLAINER
+
+
+def _get_shap_smurf_explainer():
+    global _SHAP_SMURF_EXPLAINER
+    if not _SHAP_AVAILABLE or SMURF_MODEL is None:
+        return None
+    if _SHAP_SMURF_EXPLAINER is None:
+        try:
+            base_model = SMURF_MODEL.calibrated_classifiers_[0].estimator
+        except AttributeError:
+            base_model = SMURF_MODEL
+        _SHAP_SMURF_EXPLAINER = _shap.TreeExplainer(base_model)
+    return _SHAP_SMURF_EXPLAINER
+
+
+def _get_shap_iso_explainer():
+    global _SHAP_ISO_EXPLAINER
+    if not _SHAP_AVAILABLE:
+        return None
+    if _SHAP_ISO_EXPLAINER is None:
+        _SHAP_ISO_EXPLAINER = _shap.TreeExplainer(ISO_MODEL)
+    return _SHAP_ISO_EXPLAINER
+
+
+# Human-readable labels for all feature columns across all models
+_FEATURE_LABELS: Dict[str, str] = {
+    # ── Smurfing features ──────────────────────────────────────────
+    "amount":                      "Transaction Amount",
+    "tx_count_last_24h":           "Transactions in last 24h",
+    "total_volume_24h":            "Total Volume (24h)",
+    "channel_upi_ratio":           "UPI Channel Ratio",
+    "tx_count_last_7d":            "Transactions in last 7 days",
+    "tx_count_last_30d":           "Transactions in last 30 days",
+    "total_volume_7d":             "Total Volume (7 days)",
+    "total_volume_30d":            "Total Volume (30 days)",
+    "near_threshold_count_30d":    "Near-Threshold Transactions (30d)",
+    "amount_variance_24h":         "Amount Variance (24h)",
+    "amount_clustering_score":     "Amount Clustering Score",
+    "threshold_avoidance_ratio":   "Threshold Avoidance Ratio",
+    "time_gap_mean_min":           "Mean Time Gap (minutes)",
+    "time_gap_stddev":             "Time Gap Std Deviation",
+    "is_weekend":                  "Weekend Activity",
+    "unique_recipients_24h":       "Unique Recipients (24h)",
+    "account_age_days":            "Account Age (days)",
+    "orig_balance_after_ratio":    "Balance After-Txn Ratio",
+    # ── KYC / Profile Mismatch features ───────────────────────────
+    "kyc_tier":                    "KYC Tier Level",
+    "declared_annual_income":      "Declared Annual Income",
+    "volume_30d":                  "Transaction Volume (30 days)",
+    "txn_count_30d":               "Transaction Count (30 days)",
+    "income_utilization_ratio_30d":"Income Utilization Ratio",
+    "age_band_encoded":            "Age Band",
+    "geography_tier_metro":        "Metro City Account",
+    "geography_tier_rural":        "Rural Account",
+    "geography_tier_tier2":        "Tier-2 City Account",
+    "volume_vs_age_kyc_peer":      "Volume vs. Peer (Age/KYC Bracket)",
+    "cash_inflow_pct":             "Cash Inflow %",
+    "upi_family_inflow_pct":       "UPI/Family Inflow %",
+    "corporate_wire_inflow_pct":   "Corporate Wire Inflow %",
+    "unknown_source_pct":          "Unknown Source Inflow %",
+    "salary_credit_regular":       "Regular Salary Credits",
+    "income_source_count":         "Number of Income Sources",
+    "volume_growth_rate_3m":       "Volume Growth Rate (3 months)",
+    "months_at_current_volume":    "Months Maintained at Current Volume",
+    "kyc_update_recency_days":     "KYC Last Updated (days ago)",
+    "outflow_to_known_contacts":   "Outflow to Known Contacts",
+    "outflow_to_new_accounts":     "Outflow to New/Unknown Accounts",
+    "cash_withdrawal_ratio":       "Cash Withdrawal Ratio",
+    # ── Isolation Forest / Dormancy features ──────────────────────
+    "dormancy_days":               "Dormancy Duration (days)",
+    "txn_count_7d":                "Transaction Count (7 days)",
+    "volume_7d":                   "Transaction Volume (7 days)",
+    "avg_monthly_volume":          "Average Monthly Volume",
+    "avg_monthly_count":           "Average Monthly Txn Count",
+    "unique_counterparties_30d":   "Unique Counterparties (30 days)",
+    "risk_score_7d_ago":           "Risk Score 7 Days Ago",
+    "risk_score_delta_7d":         "Risk Score Change (7 days)",
+    "tx_count_week1_post_dormancy":"Txns in Week 1 Post-Activation",
+    "tx_count_week2_post_dormancy":"Txns in Week 2 Post-Activation",
+    "volume_acceleration":         "Volume Acceleration",
+    "has_foreign_inflow":          "Has Foreign Inflow",
+    "inflow_source_type":          "Inflow Source Type",
+    "immediate_outflow_pct":       "Immediate Outflow %",
+}
+
+
+def _build_shap_factors(feature_names: list, shap_values: list,
+                         feature_values: list, top_n: int = 8) -> list:
+    """
+    Convert raw SHAP values into a clean, ranked, frontend-ready list.
+    Returns top_n factors sorted by absolute SHAP impact.
+    """
+    factors = []
+    for fname, sv, fval in zip(feature_names, shap_values, feature_values):
+        try:
+            sv_f   = float(sv)
+            fval_f = round(float(fval), 4)
+        except (TypeError, ValueError):
+            sv_f = 0.0
+            fval_f = fval
+        factors.append({
+            "feature":       fname,
+            "label":         _FEATURE_LABELS.get(fname, fname.replace("_", " ").title()),
+            "shap_value":    round(sv_f, 6),
+            "feature_value": fval_f,
+            "direction":     "RISK" if sv_f > 0 else "SAFE",
+        })
+    factors.sort(key=lambda x: abs(x["shap_value"]), reverse=True)
+    return factors[:top_n]
+
+
+def _generate_explanation_text(factors: list, fraud_type: str) -> str:
+    """
+    Auto-generate a natural language sentence from the top SHAP factors.
+    Used as evidence narrative when Gemini AI is unavailable.
+    """
+    risk_factors = [f for f in factors if f["direction"] == "RISK"]
+    safe_factors = [f for f in factors if f["direction"] == "SAFE"]
+    if not risk_factors:
+        return f"No significant risk indicators detected for {fraud_type}."
+    top_names = [f["label"] for f in risk_factors[:3]]
+    text = f"Flagged for {fraud_type} primarily due to: {', '.join(top_names)}."
+    if safe_factors:
+        text += f" Mitigating factor: {safe_factors[0]['label']}."
+    return text
+
+
+async def explain_smurfing(account_id: str) -> Dict:
+    """
+    SHAP TreeExplainer on the Smurfing XGBoost model.
+    Returns ranked feature contributions explaining why the account
+    was / was not flagged for structuring / smurfing.
+    """
+    explainer = _get_shap_smurf_explainer()
+    if explainer is None:
+        return {"error": "SHAP or Smurfing model not available", "top_factors": []}
+
+    props = await _fetch_smurf_features(account_id)
+    if not props:
+        return {"error": "Account features not found in database", "top_factors": []}
+
+    X = pd.DataFrame([{c: float(props.get(c) or 0.0) for c in SMURFING_FEATURES}])
+    feature_values = X.iloc[0].tolist()
+
+    try:
+        shap_vals = explainer.shap_values(X)
+        # Binary classifiers return [class0_vals, class1_vals] — we want class 1 (fraud)
+        if isinstance(shap_vals, list) and len(shap_vals) == 2:
+            sv = shap_vals[1][0]
+        else:
+            sv = np.array(shap_vals).flatten()
+
+        base_value = float(
+            explainer.expected_value[1]
+            if isinstance(explainer.expected_value, (list, np.ndarray))
+            else explainer.expected_value
+        )
+        prob = float(SMURF_MODEL.predict_proba(X)[0][1]) if SMURF_MODEL is not None else 0.0
+        factors = _build_shap_factors(SMURFING_FEATURES, sv.tolist(), feature_values)
+
+        return _coerce({
+            "account_id":          account_id,
+            "fraud_type":          "STRUCTURING_SMURFING",
+            "model":               "XGBoost Smurfing Classifier",
+            "fraud_probability":   round(prob, 4),
+            "base_value":          round(base_value, 4),
+            "top_factors":         factors,
+            "explanation_summary": _generate_explanation_text(factors, "Structuring/Smurfing"),
+        })
+    except Exception as e:
+        return {"error": str(e), "top_factors": []}
+
+
+async def explain_kyc_mismatch(account_id: str) -> Dict:
+    """
+    SHAP TreeExplainer on the KYC/Profile Mismatch XGBoost model.
+    Returns ranked feature contributions explaining income-vs-activity mismatch.
+    """
+    explainer = _get_shap_xgb_explainer()
+    if explainer is None:
+        return {"error": "SHAP not available", "top_factors": []}
+
+    props = await _fetch_full_ml_features(account_id)
+    if not props:
+        return {"error": "Account features not found in database", "top_factors": []}
+
+    row_dict = {col: 0.0 for col in FEATURE_SEQUENCE}
+    for col in FEATURE_SEQUENCE:
+        if col in props and not isinstance(props[col], str):
+            row_dict[col] = float(props[col] or 0.0)
+    for cat_field in ["account_type", "entity_type", "status", "risk_category"]:
+        val = props.get(cat_field, "")
+        if val:
+            ohe_col = f"{cat_field}_{val}"
+            if ohe_col in FEATURE_SEQUENCE:
+                row_dict[ohe_col] = 1.0
+
+    X = pd.DataFrame([row_dict], columns=FEATURE_SEQUENCE)
+    feature_values = X.iloc[0].tolist()
+
+    try:
+        dmatrix = xgb.DMatrix(X)
+        prob    = float(XGB_MODEL.predict(dmatrix)[0])
+
+        shap_vals = explainer.shap_values(X)
+        sv = shap_vals[0] if (isinstance(shap_vals, np.ndarray) and shap_vals.ndim == 2) \
+             else np.array(shap_vals).flatten()
+
+        base_value = float(
+            explainer.expected_value
+            if not isinstance(explainer.expected_value, (list, np.ndarray))
+            else np.array(explainer.expected_value).flatten()[0]
+        )
+        factors = _build_shap_factors(FEATURE_SEQUENCE, sv.tolist(), feature_values)
+
+        return _coerce({
+            "account_id":          account_id,
+            "fraud_type":          "KYC_MISMATCH",
+            "model":               "XGBoost Profile Mismatch Classifier",
+            "fraud_probability":   round(prob, 4),
+            "base_value":          round(base_value, 4),
+            "top_factors":         factors,
+            "explanation_summary": _generate_explanation_text(factors, "KYC/Profile Mismatch"),
+        })
+    except Exception as e:
+        return {"error": str(e), "top_factors": []}
+
+
+async def explain_dormant(account_id: str) -> Dict:
+    """
+    SHAP TreeExplainer on the Isolation Forest model.
+    Explains which features pushed the account into anomaly territory.
+    Note: For IF, negative decision_function = more anomalous, so SHAP
+    values are negated so positive = "pushes toward fraud / anomaly".
+    """
+    explainer = _get_shap_iso_explainer()
+    if explainer is None:
+        return {"error": "SHAP not available", "top_factors": []}
+
+    props = await _fetch_full_ml_features(account_id)
+    if not props:
+        return {"error": "Account features not found in database", "top_factors": []}
+
+    X = pd.DataFrame([{c: float(props.get(c, 0.0) or 0.0) for c in FEATURE_COLS}])
+    X_scaled = SCALER.transform(X.values)
+    feature_values = X.iloc[0].tolist()
+
+    try:
+        anomaly_score = float(ISO_MODEL.decision_function(X_scaled)[0])
+        pred          = ISO_MODEL.predict(X_scaled)[0]
+        is_anomaly    = bool(pred == -1)
+
+        shap_vals = explainer.shap_values(X_scaled)
+        sv = shap_vals[0] if (isinstance(shap_vals, np.ndarray) and shap_vals.ndim == 2) \
+             else np.array(shap_vals).flatten()
+
+        # Negate: positive SHAP = pushes anomaly score DOWN = more suspicious
+        sv_fraud = [-v for v in sv.tolist()]
+        base_value = float(
+            np.array(explainer.expected_value).flatten()[0] 
+            if isinstance(explainer.expected_value, (list, np.ndarray)) 
+            else explainer.expected_value
+        )
+        factors    = _build_shap_factors(FEATURE_COLS, sv_fraud, feature_values)
+
+        return _coerce({
+            "account_id":          account_id,
+            "fraud_type":          "DORMANT_ACTIVATION",
+            "model":               "Isolation Forest Anomaly Detector",
+            "is_anomaly":          is_anomaly,
+            "anomaly_score":       round(anomaly_score, 6),
+            "base_value":          round(base_value, 6),
+            "top_factors":         factors,
+            "explanation_summary": _generate_explanation_text(factors, "Dormant Account Activation"),
+        })
+    except Exception as e:
+        return {"error": str(e), "top_factors": []}
+
+
+async def explain_account(account_id: str) -> Dict:
+    """
+    Master XAI endpoint: runs SHAP explanations concurrently across
+    ALL three ML models (Smurfing, KYC Mismatch, Dormancy) and returns
+    a unified, ranked evidence package for the investigator dashboard.
+    """
+    smurf_result, kyc_result, dormant_result = await asyncio.gather(
+        explain_smurfing(account_id),
+        explain_kyc_mismatch(account_id),
+        explain_dormant(account_id),
+        return_exceptions=True,
+    )
+
+    def _safe(r: object) -> dict:
+        return r if isinstance(r, dict) else {"error": str(r), "top_factors": []}
+
+    s = _safe(smurf_result)
+    k = _safe(kyc_result)
+    d = _safe(dormant_result)
+
+    # Build a unified cross-model risk factor ranking
+    all_factors: list = []
+    for result in (s, k, d):
+        for f in result.get("top_factors", []):
+            entry = dict(f)
+            entry["fraud_type"] = result.get("fraud_type", "UNKNOWN")
+            all_factors.append(entry)
+    all_factors.sort(key=lambda x: abs(x.get("shap_value", 0)), reverse=True)
+
+    return _coerce({
+        "account_id":     account_id,
+        "generated_at":   datetime.utcnow().isoformat() + "Z",
+        "models_used": [
+            "XGBoost Smurfing Classifier",
+            "XGBoost Profile Mismatch Classifier",
+            "Isolation Forest Anomaly Detector",
+        ],
+        "top_risk_factors": all_factors[:10],
+        "by_fraud_type": {
+            "smurfing":    s,
+            "kyc_mismatch": k,
+            "dormant":     d,
+        },
+    })
+
 # ── Detector: KYC Mismatch (Neo4j) ────────────────────────────────────────────
 async def detect_kyc_mismatch(account_id: str) -> Dict:
     props = await _fetch_full_ml_features(account_id)
@@ -1073,118 +1420,7 @@ async def trace_account(account_id: str, hint: str = "") -> Dict:
 
 
 
-# ── SHAP Explainability ─────────────────────────────────────────────────────────
-_SHAP_EXPLAINER      = None
-_SMURF_SHAP_EXPLAINER = None
-_SMURF_SHAP_BACKGROUND = None
 
-
-async def explain_dormant(account_id: str) -> Dict:
-    """
-    SHAP explanation for the Isolation Forest score using 
-    the correct 5-column core features space.
-    """
-    try:
-        import shap  # type: ignore
-    except ImportError:
-        return {"error": "shap not installed"}
-
-    props = _fetch_full_ml_features(account_id)
-    if props is None:
-        return {"error": "account not found in Neo4j"}
-
-    core_features = [
-        "dormancy_days", "txn_count_7d", "txn_count_30d", "volume_7d", 
-        "volume_30d", "avg_monthly_volume", "avg_monthly_count", 
-        "unique_counterparties_30d"
-    ]
-
-    # Build background sample from Neo4j
-    bg_query = f"""
-        MATCH (a:Account)
-        RETURN 
-            coalesce(a.dormancy_days, 0) AS dormancy_days,
-            coalesce(a.txn_count_7d, 0) AS txn_count_7d,
-            coalesce(a.txn_count_30d, 0) AS txn_count_30d,
-            coalesce(a.volume_7d, 0.0) AS volume_7d,
-            coalesce(a.volume_30d, 0.0) AS volume_30d,
-            coalesce(a.avg_monthly_volume, 0.0) AS avg_monthly_volume,
-            coalesce(a.avg_monthly_count, 0) AS avg_monthly_count,
-            coalesce(a.unique_counterparties_30d, 0) AS unique_counterparties_30d
-        LIMIT 100
-    """
-    bg_records = await _run_query(bg_query)
-    background = pd.DataFrame([{c: float(r[c] or 0.0) for c in core_features} for r in bg_records])
-
-    # Function mapping raw sample space to scaled space
-    def model_fn(X):
-        return -ISO_MODEL.score_samples(SCALER.transform(X))
-
-    global _SHAP_EXPLAINER
-    if _SHAP_EXPLAINER is None:
-        _SHAP_EXPLAINER = shap.KernelExplainer(model_fn, background.values)
-
-    x = np.array([[float(props.get(c, 0.0) or 0.0) for c in core_features]], dtype=np.float32)
-    shap_values = _SHAP_EXPLAINER.shap_values(x, nsamples=50)
-    sv = np.array(shap_values).flatten()
-
-    contributions = sorted(zip(core_features, sv), key=lambda item: abs(item[1]), reverse=True)
-    
-    return _coerce({
-        "account_id": account_id,
-        "base_value": float(_SHAP_EXPLAINER.expected_value),
-        "top_features": [
-            {"feature": str(name), "shap": round(float(val), 6)}
-            for name, val in contributions
-        ],
-    })
-
-
-async def explain_smurfing(account_id: str) -> Dict:
-    """
-    TreeSHAP explanation for the XGBoost Smurfing score.
-    Tabular features are fetched instantly from Neo4j.
-    """
-    props = await _fetch_smurf_features(account_id)
-    if not props:
-        return {"error": "Account features not found"}
-        
-    # We bypass complex DB lookups here and just use the mock logic:
-    X = pd.DataFrame([{c: float(props.get(c) or 0.0) for c in SMURFING_FEATURES}])
-
-    start = time.time()
-
-    try:
-        import shap
-        global _SMURF_SHAP_EXPLAINER
-        if getattr(sys.modules[__name__], '_SMURF_SHAP_EXPLAINER', None) is None:
-            base_model = SMURF_MODEL.calibrated_classifiers_[0].estimator
-            _SMURF_SHAP_EXPLAINER = shap.TreeExplainer(base_model)
-
-        shap_values = _SMURF_SHAP_EXPLAINER.shap_values(X)
-        if isinstance(shap_values, list):
-            shap_values = shap_values[1] # For binary classification, take positive class
-        
-        contributions = shap_values[0]
-        method = "tree_shap"
-    except Exception:
-        # Fallback to feature importance
-        try:
-            base_model = SMURF_MODEL.calibrated_classifiers_[0].estimator
-            contributions = base_model.get_booster().get_score(importance_type="weight")
-            contributions = np.array([contributions.get(f, 0.0) for f in SMURFING_FEATURES])
-        except:
-            contributions = np.zeros(len(SMURFING_FEATURES))
-        method = "feature_importance_fallback"
-
-    feature_rank = sorted(zip(SMURFING_FEATURES, contributions), key=lambda i: abs(i[1]), reverse=True)
-
-    return _coerce({
-        "account_id":   account_id,
-        "method":       method,
-        "duration_ms":  int((time.time() - start) * 1000),
-        "top_features": [{"feature": str(n), "importance": round(float(v), 6)} for n, v in feature_rank[:10]],
-    })
 
 
 # ── Evidence Package ────────────────────────────────────────────────────────────
