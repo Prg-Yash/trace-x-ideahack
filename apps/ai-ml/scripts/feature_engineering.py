@@ -16,11 +16,47 @@ def build_training_features(data_dir=DATA_DIR):
     X = df_stats.merge(df_acc, on="account_id").merge(df_ent, on="entity_id")
     
     print("Engineering Smurfing features...")
-    # 1. Smurfing Feature: Calculate transactions near the 10L threshold
-    near_threshold = df_txn[(df_txn['amount'] >= 900000) & (df_txn['amount'] < 1000000)]
-    smurf_counts = near_threshold.groupby('sender_id').size().rename('near_threshold_txns_30d')
+    # 1. Smurfing Feature: Calculate transactions near the 1L threshold
+    near_threshold = df_txn[(df_txn['amount'] >= 90000) & (df_txn['amount'] < 100000)]
+    smurf_counts = near_threshold.groupby('sender_id').size().rename('near_threshold_count_30d')
     X = X.merge(smurf_counts, left_on='account_id', right_index=True, how='left')
-    X['near_threshold_txns_30d'] = X['near_threshold_txns_30d'].fillna(0)
+    X['near_threshold_count_30d'] = X['near_threshold_count_30d'].fillna(0)
+    
+    # 1b. Additional Smurfing Features needed for XGBoost
+    df_txn_success = df_txn[df_txn["status"].str.upper() == "SUCCESS"].copy()
+    df_txn_success['txn_ts'] = pd.to_datetime(df_txn_success['txn_ts'], format='mixed', errors='coerce')
+    out_txn = df_txn_success.dropna(subset=['txn_ts', 'sender_id'])
+    
+    gb = out_txn.groupby('sender_id')
+    features = pd.DataFrame(index=gb.groups.keys())
+    
+    time_span = (out_txn.groupby('sender_id')['txn_ts'].max() - out_txn.groupby('sender_id')['txn_ts'].min()).dt.total_seconds() / 86400.0
+    time_span = time_span.replace(0, 1)
+    
+    features['tx_count_last_24h'] = gb.size() / time_span
+    features['total_volume_24h'] = gb['amount'].sum() / time_span
+    features['channel_upi_ratio'] = out_txn[out_txn['channel'].str.upper() == 'UPI'].groupby('sender_id').size() / gb.size()
+    features['amount_variance_24h'] = gb['amount'].var()
+    
+    out_txn = out_txn.sort_values(['sender_id', 'txn_ts'])
+    out_txn['time_gap'] = out_txn.groupby('sender_id')['txn_ts'].diff().dt.total_seconds() / 60.0
+    features['time_gap_mean_min'] = out_txn.groupby('sender_id')['time_gap'].mean()
+    features['time_gap_stddev'] = out_txn.groupby('sender_id')['time_gap'].std()
+    
+    features['unique_recipients_24h'] = gb['receiver_id'].nunique()
+    features['is_weekend'] = out_txn[out_txn['txn_ts'].dt.dayofweek >= 5].groupby('sender_id').size() / gb.size()
+    features['amount_clustering_score'] = features['amount_variance_24h'] / (gb['amount'].mean() ** 2 + 1)
+    features['threshold_avoidance_ratio'] = out_txn[(out_txn['amount'] >= 65000) & (out_txn['amount'] <= 99999)].groupby('sender_id').size() / gb.size()
+    features['amount'] = gb['amount'].mean()
+    features['orig_balance_after_ratio'] = 0.1
+    features = features.fillna(0)
+    
+    X = X.merge(features, left_on='account_id', right_index=True, how='left').fillna(0)
+    X['tx_count_last_7d'] = X.get('txn_count_7d', 0)
+    X['tx_count_last_30d'] = X.get('txn_count_30d', 0)
+    X['total_volume_7d'] = X.get('volume_7d', 0)
+    X['total_volume_30d'] = X.get('volume_30d', 0)
+    X['near_threshold_txns_30d'] = X['near_threshold_count_30d']
     
     print("Engineering Profile Mismatch features...")
     # 2. Profile Mismatch Feature: Calculate income utilization ratio

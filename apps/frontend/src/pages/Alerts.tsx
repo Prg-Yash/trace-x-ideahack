@@ -248,7 +248,7 @@ export default function Alerts() {
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.12 }}
         className="flex gap-2.5 flex-wrap items-center">
         <span className="text-[12px] font-bold uppercase tracking-widest" style={{ color: "rgba(19, 5, 55, 0.45)" }}>
-          {staticAlerts.length} alerts total
+          {alerts.length} alerts total
         </span>
         {["CRITICAL", "HIGH", "MEDIUM", "LOW"].map(sev => {
           const count = alerts.filter(a => a.severity === sev).length;

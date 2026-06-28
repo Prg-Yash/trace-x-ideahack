@@ -407,8 +407,8 @@ async def detect_dormant(account_id: str) -> Dict:
         df_eval = pd.DataFrame([props])
 
         # Compute derived features inline
-        if "avg_monthly_volume" in df_eval.columns and "volume_30d" in df_eval.columns:
-            df_eval["volume_spike_ratio"] = df_eval["volume_30d"] / (df_eval["avg_monthly_volume"] + 1.0)
+        if "total_volume_180d" in df_eval.columns and "volume_7d" in df_eval.columns:
+            df_eval["volume_spike_ratio"] = df_eval["volume_7d"] / ((df_eval["total_volume_180d"] / 26.0) + 1.0)
         else:
             df_eval["volume_spike_ratio"] = 0.0
 
@@ -719,8 +719,8 @@ async def explain_dormant(account_id: str) -> Dict:
             features = DORMANCY_HYBRID["features"]
             df_eval = pd.DataFrame([props])
 
-            if "avg_monthly_volume" in df_eval.columns and "volume_30d" in df_eval.columns:
-                df_eval["volume_spike_ratio"] = df_eval["volume_30d"] / (df_eval["avg_monthly_volume"] + 1.0)
+            if "total_volume_180d" in df_eval.columns and "volume_7d" in df_eval.columns:
+                df_eval["volume_spike_ratio"] = df_eval["volume_7d"] / ((df_eval["total_volume_180d"] / 26.0) + 1.0)
             else:
                 df_eval["volume_spike_ratio"] = 0.0
 
