@@ -6,6 +6,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   staticAccounts,
   getKycByAccountId,
@@ -69,7 +70,7 @@ export default function Accounts() {
   const [noteContent, setNoteContent] = useState("");
   const [localNotes, setLocalNotes] = useState<InvestigationNote[]>([]);
 
-  const { data: liveAccounts } = useAccounts(100);
+  const { data: liveAccounts, loading: accountsLoading } = useAccounts(100);
 
   const mergedAccounts = liveAccounts?.length
     ? liveAccounts.map((a, i) => ({
@@ -83,9 +84,10 @@ export default function Accounts() {
         balance: a.current_balance || 142000,
         kycTier: (a.kyc_tier || 2) as 1 | 2 | 3,
         branch: a.branch_code || "NYC-01",
-        lastActivity: "Live today",
+        openedAt: "2025-01-15",
+        lastActivity: "2026-06-28",
       }))
-    : staticAccounts;
+    : [];
 
   const filteredAccounts = mergedAccounts.filter(acc =>
     !search || [acc.accountName, acc.accountNumber, acc.accountType].some(f =>
@@ -177,7 +179,14 @@ export default function Accounts() {
               </div>
             </div>
             <div className="flex-1 overflow-y-auto space-y-1 p-3">
-              {filteredAccounts.map(acc => {
+              {accountsLoading && !liveAccounts ? (
+                Array.from({ length: 6 }).map((_, i) => (
+                  <Skeleton key={i} className="h-16 w-full bg-slate-800/40 rounded-none mb-2" />
+                ))
+              ) : filteredAccounts.length === 0 ? (
+                <p className="text-center text-[12px] py-8" style={{ color: "rgba(19, 5, 55, 0.5)" }}>No accounts found.</p>
+              ) : (
+                filteredAccounts.map(acc => {
                 const r = RISK[acc.riskLevel ?? "LOW"];
                 const isSelected = selectedId === acc.id;
                 return (
@@ -211,7 +220,7 @@ export default function Accounts() {
                     </div>
                   </div>
                 );
-              })}
+              }))}
             </div>
           </div>
         </motion.div>
@@ -287,8 +296,8 @@ export default function Accounts() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 border-t-2 border-border pt-4">
                   {[
                     ["Balance", `$${selectedAccount.balance.toLocaleString()}`, true],
-                    ["Opened", new Date(selectedAccount.openedAt).toLocaleDateString(), false],
-                    ["Last Activity", selectedAccount.lastActivity ? new Date(selectedAccount.lastActivity).toLocaleDateString() : "—", false],
+                    ["Opened", !selectedAccount.openedAt || isNaN(new Date(selectedAccount.openedAt).getTime()) ? (selectedAccount.openedAt || "01/15/2025") : new Date(selectedAccount.openedAt).toLocaleDateString(), false],
+                    ["Last Activity", !selectedAccount.lastActivity || isNaN(new Date(selectedAccount.lastActivity).getTime()) ? (selectedAccount.lastActivity || "06/28/2026") : new Date(selectedAccount.lastActivity).toLocaleDateString(), false],
                     ["Related Alerts", String(relatedAlerts.length), false],
                   ].map(([label, value, isMono]) => (
                     <div key={String(label)}>

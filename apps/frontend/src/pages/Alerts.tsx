@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle, Search, X, Clock, User,
-  ChevronRight, ChevronDown, CheckCircle2, Network,
+  ChevronRight, ChevronDown, CheckCircle2, Network, Shield,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   staticAlerts,
   getTimelineByAlertId,
@@ -129,7 +130,7 @@ export default function Alerts() {
         accountName: a.account_id,
         accountNumber: a.account_id,
       }))
-    : staticAlerts;
+    : [];
 
   const handleStartInvestigation = (alertId: number) => {
     const alert = mergedAlerts.find(a => a.id === alertId);
@@ -279,7 +280,15 @@ export default function Alerts() {
                 </tr>
               </thead>
               <tbody>
-                {alerts.length === 0 ? (
+                {alertsLoading && !liveAlertsData ? (
+                  Array.from({ length: 8 }).map((_, i) => (
+                    <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
+                      <td colSpan={9} className="px-4 py-4">
+                        <Skeleton className="h-6 w-full bg-slate-800/40 rounded-none" />
+                      </td>
+                    </tr>
+                  ))
+                ) : alerts.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="px-4 py-12 text-center text-[13px]" style={{ color: "rgba(19, 5, 55, 0.5)" }}>
                       No alerts match the current filters.
@@ -464,6 +473,20 @@ export default function Alerts() {
                       >
                         <Network className="h-3.5 w-3.5 mr-2" />
                         Start Investigation
+                      </Button>
+
+                      <Button
+                        onClick={() => { setDrawerOpen(false); navigate(`/evidence?account=${alertDetail.accountName}`); }}
+                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105 mt-3"
+                        style={{
+                          backgroundColor: "#130537",
+                          color: "#e8e8e2",
+                          border: `1px solid #a3e635`,
+                          boxShadow: `3px 3px 0px #a3e635`,
+                        }}
+                      >
+                        <Shield className="h-3.5 w-3.5 mr-2 text-[#a3e635]" />
+                        Escalate to FIU Evidence Case
                       </Button>
 
                       <div>
