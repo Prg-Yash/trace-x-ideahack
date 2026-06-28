@@ -65,8 +65,14 @@ def _get_driver():
 if not MODELS_DIR.exists():
     raise FileNotFoundError(f"Missing models directory: {MODELS_DIR}")
 
-ISO_MODEL = joblib.load(MODELS_DIR / "isolation_forest.pkl")
-SCALER = joblib.load(MODELS_DIR / "scaler.pkl")
+try:
+    DORMANCY_HYBRID = joblib.load(MODELS_DIR / "dormancy_hybrid.pkl")
+    ISO_MODEL = DORMANCY_HYBRID["iso"]
+    SCALER = DORMANCY_HYBRID["scaler"]
+except Exception:
+    DORMANCY_HYBRID = None
+    ISO_MODEL = joblib.load(MODELS_DIR / "isolation_forest.pkl")
+    SCALER = joblib.load(MODELS_DIR / "scaler.pkl")
 
 XGB_MODEL = xgb.Booster()
 if (MODELS_DIR / "profile_mismatch_model.json").exists():
@@ -386,18 +392,48 @@ async def detect_dormant(account_id: str) -> Dict:
     if props is None:
         return {"detected": False, "fraud_type": "DORMANT_ACTIVATION", "confidence": 0.0}
 
-    X = pd.DataFrame([{
-        c: float(props.get(c, 0.0) or 0.0) for c in FEATURE_COLS
-    }])
+    if DORMANCY_HYBRID is not None:
+        # Hybrid Pipeline
+        features = DORMANCY_HYBRID["features"]
+        df_eval = pd.DataFrame([props])
 
-    # predict returns -1 for anomaly, 1 for normal
-    pred = ISO_MODEL.predict(SCALER.transform(X.values))[0]
-    detected = bool(pred == -1)
+        # Compute derived features inline
+        if "avg_monthly_volume" in df_eval.columns and "volume_30d" in df_eval.columns:
+            df_eval["volume_spike_ratio"] = df_eval["volume_30d"] / (df_eval["avg_monthly_volume"] + 1.0)
+        else:
+            df_eval["volume_spike_ratio"] = 0.0
+
+        if "avg_monthly_count" in df_eval.columns and "txn_count_30d" in df_eval.columns:
+            df_eval["txn_count_spike_ratio"] = df_eval["txn_count_30d"] / (df_eval["avg_monthly_count"] + 1.0)
+        else:
+            df_eval["txn_count_spike_ratio"] = 0.0
+
+        for col in features:
+            if col not in df_eval.columns:
+                df_eval[col] = 0.0
+
+        X = df_eval[features].copy().fillna(0).astype(float)
+        X_scaled = DORMANCY_HYBRID["scaler"].transform(X.values)
+
+        iso_score = DORMANCY_HYBRID["iso"].decision_function(X_scaled)[0]
+        X["iso_anomaly_score"] = iso_score
+
+        proba = DORMANCY_HYBRID["xgb"].predict_proba(X)[0][1]
+        detected = bool(proba >= 0.50)
+        confidence = float(proba)
+    else:
+        # Fallback to standalone ISO
+        X = pd.DataFrame([{
+            c: float(props.get(c, 0.0) or 0.0) for c in FEATURE_COLS
+        }])
+        pred = ISO_MODEL.predict(SCALER.transform(X.values))[0]
+        detected = bool(pred == -1)
+        confidence = 0.85 if detected else 0.0
 
     return _coerce({
         "detected": detected,
         "fraud_type": "DORMANT_ACTIVATION",
-        "confidence": 0.85 if detected else 0.0,
+        "confidence": confidence,
         "dormancy_days": props.get("dormancy_days", 0),
         "volume_30d": props.get("volume_30d", 0),
     })
@@ -446,7 +482,10 @@ def _get_shap_iso_explainer():
     if not _SHAP_AVAILABLE:
         return None
     if _SHAP_ISO_EXPLAINER is None:
-        _SHAP_ISO_EXPLAINER = _shap.TreeExplainer(ISO_MODEL)
+        if DORMANCY_HYBRID is not None:
+            _SHAP_ISO_EXPLAINER = _shap.TreeExplainer(DORMANCY_HYBRID["xgb"])
+        else:
+            _SHAP_ISO_EXPLAINER = _shap.TreeExplainer(ISO_MODEL)
     return _SHAP_ISO_EXPLAINER
 
 
@@ -656,10 +695,7 @@ async def explain_kyc_mismatch(account_id: str) -> Dict:
 
 async def explain_dormant(account_id: str) -> Dict:
     """
-    SHAP TreeExplainer on the Isolation Forest model.
-    Explains which features pushed the account into anomaly territory.
-    Note: For IF, negative decision_function = more anomalous, so SHAP
-    values are negated so positive = "pushes toward fraud / anomaly".
+    SHAP TreeExplainer on the Dormancy model (Hybrid XGBoost or standalone ISO).
     """
     explainer = _get_shap_iso_explainer()
     if explainer is None:
@@ -669,34 +705,74 @@ async def explain_dormant(account_id: str) -> Dict:
     if not props:
         return {"error": "Account features not found in database", "top_factors": []}
 
-    X = pd.DataFrame([{c: float(props.get(c, 0.0) or 0.0) for c in FEATURE_COLS}])
-    X_scaled = SCALER.transform(X.values)
-    feature_values = X.iloc[0].tolist()
-
     try:
-        anomaly_score = float(ISO_MODEL.decision_function(X_scaled)[0])
-        pred          = ISO_MODEL.predict(X_scaled)[0]
-        is_anomaly    = bool(pred == -1)
+        if DORMANCY_HYBRID is not None:
+            features = DORMANCY_HYBRID["features"]
+            df_eval = pd.DataFrame([props])
 
-        shap_vals = explainer.shap_values(X_scaled)
-        sv = shap_vals[0] if (isinstance(shap_vals, np.ndarray) and shap_vals.ndim == 2) \
-             else np.array(shap_vals).flatten()
+            if "avg_monthly_volume" in df_eval.columns and "volume_30d" in df_eval.columns:
+                df_eval["volume_spike_ratio"] = df_eval["volume_30d"] / (df_eval["avg_monthly_volume"] + 1.0)
+            else:
+                df_eval["volume_spike_ratio"] = 0.0
 
-        # Negate: positive SHAP = pushes anomaly score DOWN = more suspicious
-        sv_fraud = [-v for v in sv.tolist()]
+            if "avg_monthly_count" in df_eval.columns and "txn_count_30d" in df_eval.columns:
+                df_eval["txn_count_spike_ratio"] = df_eval["txn_count_30d"] / (df_eval["avg_monthly_count"] + 1.0)
+            else:
+                df_eval["txn_count_spike_ratio"] = 0.0
+
+            for col in features:
+                if col not in df_eval.columns:
+                    df_eval[col] = 0.0
+
+            X = df_eval[features].copy().fillna(0).astype(float)
+            X_scaled = DORMANCY_HYBRID["scaler"].transform(X.values)
+
+            iso_score = DORMANCY_HYBRID["iso"].decision_function(X_scaled)[0]
+            X["iso_anomaly_score"] = iso_score
+            feature_values = X.iloc[0].tolist()
+            feature_cols_used = DORMANCY_HYBRID["enhanced_features"]
+            
+            proba = DORMANCY_HYBRID["xgb"].predict_proba(X)[0][1]
+            detected = bool(proba >= 0.50)
+            
+            shap_vals = explainer.shap_values(X)
+            sv = shap_vals[0] if (isinstance(shap_vals, np.ndarray) and shap_vals.ndim == 2) \
+                 else np.array(shap_vals).flatten()
+            sv_fraud = sv.tolist() # standard SHAP for XGBoost
+            model_name = "Hybrid Dormancy (ISO+XGBoost)"
+            score_to_report = proba
+        else:
+            X = pd.DataFrame([{c: float(props.get(c, 0.0) or 0.0) for c in FEATURE_COLS}])
+            X_scaled = SCALER.transform(X.values)
+            feature_values = X.iloc[0].tolist()
+            feature_cols_used = FEATURE_COLS
+
+            anomaly_score = float(ISO_MODEL.decision_function(X_scaled)[0])
+            pred          = ISO_MODEL.predict(X_scaled)[0]
+            detected      = bool(pred == -1)
+
+            shap_vals = explainer.shap_values(X_scaled)
+            sv = shap_vals[0] if (isinstance(shap_vals, np.ndarray) and shap_vals.ndim == 2) \
+                 else np.array(shap_vals).flatten()
+
+            # Negate: positive SHAP = pushes anomaly score DOWN = more suspicious
+            sv_fraud = [-v for v in sv.tolist()]
+            model_name = "Isolation Forest Anomaly Detector"
+            score_to_report = anomaly_score
+
         base_value = float(
             np.array(explainer.expected_value).flatten()[0] 
             if isinstance(explainer.expected_value, (list, np.ndarray)) 
             else explainer.expected_value
         )
-        factors    = _build_shap_factors(FEATURE_COLS, sv_fraud, feature_values)
+        factors = _build_shap_factors(feature_cols_used, sv_fraud, feature_values)
 
         return _coerce({
             "account_id":          account_id,
             "fraud_type":          "DORMANT_ACTIVATION",
-            "model":               "Isolation Forest Anomaly Detector",
-            "is_anomaly":          is_anomaly,
-            "anomaly_score":       round(anomaly_score, 6),
+            "model":               model_name,
+            "is_anomaly":          detected,
+            "anomaly_score":       round(score_to_report, 6),
             "base_value":          round(base_value, 6),
             "top_factors":         factors,
             "explanation_summary": _generate_explanation_text(factors, "Dormant Account Activation"),
