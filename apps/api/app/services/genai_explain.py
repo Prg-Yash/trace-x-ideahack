@@ -11,14 +11,14 @@ if API_KEY:
 else:
     print("Warning: GEMINI_API_KEY not set. Narratives will fail.")
 
-def generate_narrative(account_id: str) -> Dict:
+async def generate_narrative(account_id: str) -> Dict:
     """Generate a human-readable explanation of fraud using Gemini AI."""
     if not API_KEY:
         return {"error": "GEMINI_API_KEY not configured"}
         
     try:
         # Get the full context
-        score_data = score_account(account_id)
+        score_data = await score_account(account_id)
         
         # Build prompt
         prompt = f"""

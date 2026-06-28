@@ -340,17 +340,17 @@ async def get_smurfing_explanation(account_id: str):
 
 @router.get("/explain/{account_id}")
 async def get_full_explanation(account_id: str):
-    return _coerce({
-        "account_id": account_id,
-        "dormant":   await explain_dormant(account_id),
-        "smurfing":  await explain_smurfing(account_id),
-    })
+    return _coerce(await explain_account(account_id))
+
+@router.get("/explain/kyc_mismatch/{account_id}")
+async def get_kyc_mismatch_explanation(account_id: str):
+    return _coerce(await explain_kyc_mismatch(account_id))
 
 
 @router.get("/narrative/{account_id}")
-def get_narrative(account_id: str):
+async def get_narrative(account_id: str):
     from app.services.genai_explain import generate_narrative
-    return _coerce(generate_narrative(account_id))
+    return _coerce(await generate_narrative(account_id))
 
 
 # ── Lab: Create Account ────────────────────────────────────────────────────────

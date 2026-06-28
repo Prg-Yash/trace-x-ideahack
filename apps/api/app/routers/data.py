@@ -2,7 +2,7 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from fastapi import APIRouter, HTTPException
-from fraud_detector import _run_query, REL_TYPE, ASYNC_DRIVER
+from fraud_detector import _run_query, REL_TYPE, _get_driver
 
 router = APIRouter(
     tags=["data"]
@@ -20,7 +20,7 @@ def get_db_connection():
 
 @router.get("/accounts")
 async def get_all_accounts(skip: int = 0, limit: int = 100):
-    if ASYNC_DRIVER is None:
+    if _get_driver() is None:
         raise HTTPException(status_code=503, detail="Neo4j is not connected")
     
     # 1. Fetch from Neo4j
@@ -96,7 +96,7 @@ async def get_all_accounts(skip: int = 0, limit: int = 100):
 
 @router.get("/transactions")
 async def get_all_transactions(skip: int = 0, limit: int = 100):
-    if ASYNC_DRIVER is None:
+    if _get_driver() is None:
         raise HTTPException(status_code=503, detail="Neo4j is not connected")
     
     neo4j_query = f"""
@@ -170,10 +170,8 @@ async def get_account(account_id: str):
             s.txn_count_30d,
             s.dormancy_days,
             e.declared_annual_income,
-            e.entity_name,
             e.entity_type,
-            e.kyc_status,
-            e.pin_code
+            e.kyc_status
         FROM accounts a
         LEFT JOIN account_stats s ON a.account_id = s.account_id
         LEFT JOIN entities e ON a.entity_id = e.entity_id
@@ -185,6 +183,8 @@ async def get_account(account_id: str):
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(pg_query, (account_id,))
             pg_record = cur.fetchone()
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=str(ex))
     finally:
         conn.close()
 
