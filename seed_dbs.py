@@ -16,7 +16,7 @@ csvs = {
     "accounts": "apps/ai-ml/data/accounts.csv",
     "account_stats": "apps/ai-ml/data/account_stats.csv",
     "entities": "apps/ai-ml/data/entities.csv",
-    "transactions": "apps/ai-ml/data/transactions.csv"
+    "transactions": "apps/ai-ml/data/neo4j/transactions.csv"
 }
 
 from sqlalchemy import text
@@ -26,6 +26,8 @@ for table, path in csvs.items():
     with engine.connect() as conn:
         conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
         conn.commit()
+    if 'txn_ts' in df.columns:
+        df['txn_ts'] = pd.to_datetime(df['txn_ts'], format='mixed')
     df.to_sql(table, engine, if_exists="replace", index=False)
 
 # Generate ML features and store in Postgres (Polyglot approach)

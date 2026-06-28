@@ -76,8 +76,9 @@ def load_transactions() -> pd.DataFrame:
     if not TRANSACTIONS_CSV.exists():
         raise FileNotFoundError(f"Missing {TRANSACTIONS_CSV}")
 
+    # ALWAYS load the full dataset for ML training, never the Neo4j subset
     df = pd.read_csv(TRANSACTIONS_CSV)
-    df["txn_ts"] = pd.to_datetime(df["txn_ts"], errors="coerce")
+    df["txn_ts"] = pd.to_datetime(df["txn_ts"], format="mixed", errors="coerce")
     df = df.dropna(subset=["txn_ts", "sender_id", "receiver_id", "amount", "channel", "status"])
     return df
 
@@ -336,15 +337,21 @@ def train_smurf_xgboost(X_train: pd.DataFrame, df_txn: pd.DataFrame) -> None:
         return
 
     df_txn_success = df_txn[df_txn["status"].str.upper() == "SUCCESS"].copy()
+    
+    def normalize_acc(acc_id: str) -> str:
+        try:
+            return f"ACC_{int(str(acc_id).split('_')[1]):05d}"
+        except:
+            return str(acc_id)
+            
     labels_path = DATA_DIR / "labels" / "smurf_accounts.csv"
     if labels_path.exists():
         labels_df = pd.read_csv(labels_path)
-        smurfers = set(labels_df["account_id"].dropna().astype(str))
+        smurfers = {normalize_acc(x) for x in labels_df["account_id"].dropna()}
         print(f"  Smurf labels loaded: {len(smurfers)} accounts")
     else:
-        smurfers = detect_smurf_accounts(df_txn_success)
+        smurfers = {normalize_acc(x) for x in detect_smurf_accounts(df_txn_success)}
         print(f"  Smurf labeler found {len(smurfers)} accounts")
-
 
     feature_cols = [
         'amount', 'tx_count_last_24h', 'total_volume_24h', 'channel_upi_ratio',
@@ -354,14 +361,51 @@ def train_smurf_xgboost(X_train: pd.DataFrame, df_txn: pd.DataFrame) -> None:
         'unique_recipients_24h', 'account_age_days', 'orig_balance_after_ratio'
     ]
 
-    missing = [col for col in feature_cols if col not in X_train.columns]
+    print("  Dynamically building offline smurfing features...")
+    df_txn_success['txn_ts'] = pd.to_datetime(df_txn_success['txn_ts'], format='mixed', errors='coerce')
+    out_txn = df_txn_success.dropna(subset=['txn_ts', 'sender_id'])
+    
+    gb = out_txn.groupby('sender_id')
+    features = pd.DataFrame(index=gb.groups.keys())
+    
+    time_span = (out_txn.groupby('sender_id')['txn_ts'].max() - out_txn.groupby('sender_id')['txn_ts'].min()).dt.total_seconds() / 86400.0
+    time_span = time_span.replace(0, 1)
+    
+    features['tx_count_last_24h'] = gb.size() / time_span
+    features['total_volume_24h'] = gb['amount'].sum() / time_span
+    features['channel_upi_ratio'] = out_txn[out_txn['channel'].str.upper() == 'UPI'].groupby('sender_id').size() / gb.size()
+    features['amount_variance_24h'] = gb['amount'].var()
+    
+    out_txn = out_txn.sort_values(['sender_id', 'txn_ts'])
+    out_txn['time_gap'] = out_txn.groupby('sender_id')['txn_ts'].diff().dt.total_seconds() / 60.0
+    features['time_gap_mean_min'] = out_txn.groupby('sender_id')['time_gap'].mean()
+    features['time_gap_stddev'] = out_txn.groupby('sender_id')['time_gap'].std()
+    
+    features['unique_recipients_24h'] = gb['receiver_id'].nunique()
+    features['is_weekend'] = out_txn[out_txn['txn_ts'].dt.dayofweek >= 5].groupby('sender_id').size() / gb.size()
+    features['amount_clustering_score'] = features['amount_variance_24h'] / (gb['amount'].mean() ** 2 + 1)
+    
+    # Smurf pattern: dodging 10L threshold (e.g. sending exactly 9.9L)
+    features['threshold_avoidance_ratio'] = out_txn[(out_txn['amount'] >= 900000) & (out_txn['amount'] <= 999999)].groupby('sender_id').size() / gb.size()
+    features['amount'] = gb['amount'].mean()
+    features['orig_balance_after_ratio'] = 0.1
+    features = features.fillna(0)
+    
+    X_full = X_train.merge(features, left_on='account_id', right_index=True, how='left').fillna(0)
+    
+    X_full['tx_count_last_7d'] = X_full.get('txn_count_7d', 0)
+    X_full['tx_count_last_30d'] = X_full.get('txn_count_30d', 0)
+    X_full['total_volume_7d'] = X_full.get('volume_7d', 0)
+    X_full['total_volume_30d'] = X_full.get('volume_30d', 0)
+    X_full['near_threshold_count_30d'] = X_full.get('near_threshold_txns_30d', 0)
+
+    missing = [col for col in feature_cols if col not in X_full.columns]
     if missing:
         for col in missing:
             print(f"Warning: XGBoost missing {col}")
-            X_train[col] = 0
+            X_full[col] = 0
             
     # Make sure we sort properly by account id so labels match features
-    X_full = X_train.copy()
     y_full = X_full['account_id'].apply(lambda x: 1 if x in smurfers else 0).values
     
     print(f"  Dataset: {len(X_full)} accounts, {int(y_full.sum())} smurfers")
@@ -371,24 +415,22 @@ def train_smurf_xgboost(X_train: pd.DataFrame, df_txn: pd.DataFrame) -> None:
     X = X_full[feature_cols].copy().fillna(0)
 
     from sklearn.model_selection import train_test_split
-    from sklearn.metrics import average_precision_score
-    from imblearn.over_sampling import SMOTENC
+    from sklearn.metrics import average_precision_score, f1_score
     from sklearn.calibration import CalibratedClassifierCV
     import joblib
 
     X_tr, X_val, y_tr, y_val = train_test_split(X, y_full, test_size=0.2, random_state=RANDOM_SEED, stratify=y_full)
 
-    # Apply SMOTENC to avoid fractional categorical/count artifacts
-    categorical_indices = [i for i, col in enumerate(feature_cols) if 'is_' in col or 'count' in col]
-    smote = SMOTENC(categorical_features=categorical_indices, random_state=RANDOM_SEED)
-    X_tr_resampled, y_tr_resampled = smote.fit_resample(X_tr, y_tr)
+    # Calculate scale_pos_weight for imbalance
+    pos_weight = float((y_tr == 0).sum()) / max(1, float((y_tr == 1).sum()))
+    print(f"  scale_pos_weight = {pos_weight:.2f}")
 
     # Regularization guardrails
     base_model = xgb.XGBClassifier(
         n_estimators=100,
         max_depth=4,
         learning_rate=0.1,
-        scale_pos_weight=1.0,  # Balanced by SMOTE
+        scale_pos_weight=pos_weight,
         reg_alpha=0.1,         # L1
         reg_lambda=1.0,        # L2
         min_child_weight=1,
@@ -397,7 +439,7 @@ def train_smurf_xgboost(X_train: pd.DataFrame, df_txn: pd.DataFrame) -> None:
     
     # Probability Calibration
     calibrated_model = CalibratedClassifierCV(estimator=base_model, method='isotonic', cv=3)
-    calibrated_model.fit(X_tr_resampled, y_tr_resampled)
+    calibrated_model.fit(X_tr, y_tr)
 
     out_path = MODELS_DIR / "smurf_model.pkl"
     joblib.dump(calibrated_model, out_path)
@@ -430,6 +472,8 @@ def train_layering_xgb(df_txn: pd.DataFrame) -> None:
         models/layering_threshold.json — Optimal classification threshold
     """
     print("\nTraining Model D: XGBoost (Layering chain scorer)...")
+    print(f"  [DEBUG] train_layering_xgb received df_txn with length {len(df_txn)}")
+    print(f"  [DEBUG] LAYERING rows in df_txn: {len(df_txn[df_txn['pattern_type'] == 'LAYERING'])}")
 
     try:
         import xgboost as xgb
@@ -461,13 +505,20 @@ def train_layering_xgb(df_txn: pd.DataFrame) -> None:
             "Regenerate data or check LAYERING labels in transactions.csv."
         )
 
-    # ── 2. Class-imbalance weight ─────────────────────────────────────────────
-    pos_count = int(y.sum())
-    neg_count = int((y == 0).sum())
-    spw       = neg_count / max(pos_count, 1)   # scale_pos_weight
+    # ── 2. 80/20 Train/Test split (stratified) ───────────────────────────────
+    from sklearn.model_selection import train_test_split
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=RANDOM_SEED, stratify=y
+    )
+    print(f"  Train: {len(X_train)} samples | Test (held-out): {len(X_test)} samples")
+
+    # ── 3. Class-imbalance weight (computed from train set only) ─────────────
+    pos_count = int(y_train.sum())
+    neg_count = int((y_train == 0).sum())
+    spw       = neg_count / max(pos_count, 1)
     print(f"  scale_pos_weight = {spw:.2f}")
 
-    # ── 3. Train XGBoost ──────────────────────────────────────────────────────
+    # ── 4. Train XGBoost on 80% only ─────────────────────────────────────────
     model = xgb.XGBClassifier(
         n_estimators=300,
         max_depth=4,
@@ -483,9 +534,12 @@ def train_layering_xgb(df_txn: pd.DataFrame) -> None:
         eval_metric="aucpr",
         use_label_encoder=False,
     )
-    model.fit(X, y)
+    model.fit(X_train, y_train)
 
-    # ── 4. Find optimal threshold via stratified cross-validation ─────────────
+    # ── 5. Evaluate on held-out 20% test set ─────────────────────────────────
+    test_probs = model.predict_proba(X_test)[:, 1]
+
+    # Find threshold using cross-val on train set
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_SEED)
     oof_probs = cross_val_predict(
         xgb.XGBClassifier(
@@ -495,22 +549,20 @@ def train_layering_xgb(df_txn: pd.DataFrame) -> None:
             random_state=RANDOM_SEED, eval_metric="aucpr",
             use_label_encoder=False,
         ),
-        X, y, cv=cv, method="predict_proba",
+        X_train, y_train, cv=cv, method="predict_proba",
     )[:, 1]
+    best_threshold, best_score = pick_threshold(y_train, oof_probs, beta=0.5)
+    auc_pr = average_precision_score(y_test, test_probs)
 
-    # Beta=0.5 favours precision (fewer false positives for investigator queue)
-    best_threshold, best_score = pick_threshold(y, oof_probs, beta=0.5)
-    auc_pr = average_precision_score(y, oof_probs)
-
-    y_pred = (oof_probs >= best_threshold).astype(int)
-    print("\n  OOF Validation Report (thresholded):")
-    print(classification_report(y, y_pred, target_names=["normal", "layering"], zero_division=0))
+    y_pred = (test_probs >= best_threshold).astype(int)
+    print("\n  [TEST SET - 20% Hold-Out, Never Seen During Training]")
+    print(classification_report(y_test, y_pred, target_names=["normal", "layering"], zero_division=0))
     print("  Confusion matrix:")
-    print(confusion_matrix(y, y_pred))
-    print(f"  AUC-PR: {auc_pr:.4f}")
+    print(confusion_matrix(y_test, y_pred))
+    print(f"  AUC-PR (test): {auc_pr:.4f}")
     print(f"  Best threshold (beta=0.5): {best_threshold:.2f} | F-score: {best_score:.4f}")
 
-    # ── 5. Feature importance (leakage check) ─────────────────────────────────
+    # ── 6. Feature importance (leakage check) ─────────────────────────────────
     importances = pd.Series(
         model.feature_importances_, index=LAYERING_FEATURES
     ).sort_values(ascending=False)
@@ -518,7 +570,7 @@ def train_layering_xgb(df_txn: pd.DataFrame) -> None:
     for feat, imp in importances.head(5).items():
         print(f"    {feat}: {imp:.4f}")
 
-    # ── 6. Save artefacts ─────────────────────────────────────────────────────
+    # ── 7. Save artefacts ─────────────────────────────────────────────────────
     model.save_model(MODELS_DIR / "layering_xgb.json")
     threshold_path = MODELS_DIR / "layering_threshold.json"
     with open(threshold_path, "w", encoding="utf-8") as fh:
@@ -528,6 +580,7 @@ def train_layering_xgb(df_txn: pd.DataFrame) -> None:
 
 def train_roundtrip_xgb(df_txn: pd.DataFrame) -> None:
     print("\nTraining Model E: XGBoost (Round-Trip chain scorer)...")
+    import json
     import sys
     sys.path.append(str(Path(__file__).resolve().parent))
     from scripts.extract_chain_features import (
@@ -627,6 +680,7 @@ def main() -> None:
         train_smurf_xgboost(X_train, df_txn)
     except Exception as e:
         print(f"Smurf XGBoost training failed: {e}")
+        print("  NOTE: Smurf model requires account_ml_features table. Skipping for now.")
 
     try:
         train_roundtrip_xgb(df_txn)

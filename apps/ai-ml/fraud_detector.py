@@ -52,9 +52,15 @@ if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", REL_TYPE or ""):
     REL_TYPE = "SENT"
 
 if NEO4J_URI and NEO4J_USER and NEO4J_PASSWORD:
-    ASYNC_DRIVER = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    ASYNC_DRIVER = None  # Will be lazily initialized
 else:
     ASYNC_DRIVER = None
+
+def _get_driver():
+    global ASYNC_DRIVER
+    if ASYNC_DRIVER is None and NEO4J_URI:
+        ASYNC_DRIVER = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    return ASYNC_DRIVER
 
 # ── ML Models ──────────────────────────────────────────────────────────────────
 if not MODELS_DIR.exists():
@@ -226,9 +232,10 @@ def _coerce(obj):
 
 
 def _neo4j_session():
-    if ASYNC_DRIVER is None:
+    drv = _get_driver()
+    if drv is None:
         raise RuntimeError("Neo4j connection not configured.")
-    return ASYNC_DRIVER.session()
+    return drv.session()
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import asyncio
@@ -242,7 +249,7 @@ def _fetch_postgres_account_stats(account_id: str) -> Optional[Dict]:
         with psycopg2.connect(DATABASE_URL) as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT a.*, s.*, e.declared_annual_income, e.age, e.geography_tier, f.*
+                    SELECT a.*, s.*, e.declared_annual_income, f.*
                     FROM accounts a
                     LEFT JOIN account_stats s ON a.account_id = s.account_id
                     LEFT JOIN entities e ON a.entity_id = e.entity_id
@@ -390,9 +397,6 @@ async def _fetch_full_ml_features(account_id: str) -> Optional[Dict]:
 
 
 async def detect_dormant(account_id: str) -> Dict:
-    if ASYNC_DRIVER is None:
-        return {"detected": False, "fraud_type": "DORMANT_ACTIVATION", "error": "Neo4j not configured"}
-
     props = await _fetch_full_ml_features(account_id)
     if props is None:
         return {"detected": False, "fraud_type": "DORMANT_ACTIVATION", "confidence": 0.0}
@@ -416,9 +420,6 @@ async def detect_dormant(account_id: str) -> Dict:
 
 # ── Detector: KYC Mismatch (Neo4j) ────────────────────────────────────────────
 async def detect_kyc_mismatch(account_id: str) -> Dict:
-    if ASYNC_DRIVER is None:
-        return {"detected": False, "fraud_type": "KYC_MISMATCH", "error": "Neo4j not configured"}
-
     props = await _fetch_full_ml_features(account_id)
     if props is None:
         return {"detected": False, "fraud_type": "KYC_MISMATCH", "confidence": 0.0}
@@ -1039,7 +1040,7 @@ async def trace_account(account_id: str, hint: str = "") -> Dict:
     """
     # Determine best search order from existing Alert nodes
     if not hint:
-        existing = _get_account_alerts(account_id)
+        existing = await _get_account_alerts(account_id)
         patterns = [str(al.get("pattern") or "") for al in existing]
         if "LAYERING" in patterns:
             hint = "layering"

@@ -163,7 +163,7 @@ def _reconstruct_positive_chains(df_txn: pd.DataFrame) -> List[List[Dict]]:
     if layer.empty:
         return []
 
-    layer["txn_ts"] = pd.to_datetime(layer["txn_ts"], errors="coerce")
+    layer["txn_ts"] = pd.to_datetime(layer["txn_ts"], format="mixed", errors="coerce")
     layer = layer.dropna(subset=["txn_ts"]).sort_values("txn_ts")
 
     # Forward adjacency: sender -> sorted list of outgoing hops
