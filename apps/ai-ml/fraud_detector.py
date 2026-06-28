@@ -32,13 +32,12 @@ BASE_DIR   = Path(__file__).resolve().parent
 DATA_DIR   = Path(os.getenv("FRAUD_DATA_DIR",   BASE_DIR / "data"))
 MODELS_DIR = Path(os.getenv("FRAUD_MODELS_DIR", BASE_DIR / "models"))
 
-ROOT_ENV = BASE_DIR.parents[2] / ".env"
+ROOT_ENV = BASE_DIR.parents[1] / ".env"
 # Fallback: walk up the tree to find the repo root .env
 if not ROOT_ENV.exists():
-    for i in range(1, len(BASE_DIR.parents)):
-        candidate = BASE_DIR.parents[i] / ".env"
-        if candidate.exists():
-            ROOT_ENV = candidate
+    for p in BASE_DIR.parents:
+        if (p / ".env").exists():
+            ROOT_ENV = p / ".env"
             break
 load_dotenv(ROOT_ENV, override=False)
 load_dotenv(BASE_DIR / ".env", override=True)
