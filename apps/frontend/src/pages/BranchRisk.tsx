@@ -141,25 +141,22 @@ export default function BranchRisk() {
             <thead style={{ backgroundColor: "var(--surface-2)" }}>
               <tr>
                 <th className="px-4 py-3 font-semibold text-black text-left border-r border-slate-800">Typology</th>
-                <th className="px-4 py-3 font-semibold text-black">CASH</th>
-                <th className="px-4 py-3 font-semibold text-black">UPI</th>
-                <th className="px-4 py-3 font-semibold text-black">NEFT</th>
-                <th className="px-4 py-3 font-semibold text-black">WIRE</th>
-                <th className="px-4 py-3 font-semibold text-black">SWIFT</th>
-                <th className="px-4 py-3 font-semibold text-black">CRYPTO</th>
+                {channels.map((c: any, idx: number) => (
+                  <th key={idx} className="px-4 py-3 font-semibold text-black">{c.channel}</th>
+                ))}
                 <th className="px-4 py-3 font-semibold text-black text-left border-l border-slate-800">Primary Abuse Context</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
-              {matrix.map((m, i) => (
+              {matrix.map((m: any, i: number) => (
                 <tr key={i}>
                   <td className="px-4 py-3 font-medium text-slate-700 text-left border-r border-slate-800">{m.pattern}</td>
-                  <td className="px-4 py-3 font-mono" style={{ backgroundColor: `rgba(239, 68, 68, ${m.CASH / 100})`, color: m.CASH > 40 ? "#fff" : "#94a3b8" }}>{m.CASH}%</td>
-                  <td className="px-4 py-3 font-mono" style={{ backgroundColor: `rgba(239, 68, 68, ${m.UPI / 100})`, color: m.UPI > 40 ? "#fff" : "#94a3b8" }}>{m.UPI}%</td>
-                  <td className="px-4 py-3 font-mono" style={{ backgroundColor: `rgba(239, 68, 68, ${m.NEFT / 100})`, color: m.NEFT > 40 ? "#fff" : "#94a3b8" }}>{m.NEFT}%</td>
-                  <td className="px-4 py-3 font-mono" style={{ backgroundColor: `rgba(239, 68, 68, ${m.WIRE / 100})`, color: m.WIRE > 40 ? "#fff" : "#94a3b8" }}>{m.WIRE}%</td>
-                  <td className="px-4 py-3 font-mono" style={{ backgroundColor: `rgba(239, 68, 68, ${m.SWIFT / 100})`, color: m.SWIFT > 40 ? "#fff" : "#94a3b8" }}>{m.SWIFT}%</td>
-                  <td className="px-4 py-3 font-mono" style={{ backgroundColor: `rgba(239, 68, 68, ${m.CRYPTO / 100})`, color: m.CRYPTO > 40 ? "#fff" : "#94a3b8" }}>{m.CRYPTO}%</td>
+                  {channels.map((c: any, idx: number) => {
+                    const val = m[c.channel] !== undefined ? m[c.channel] : (m.channel_breakdown ? m.channel_breakdown[c.channel] : 0) || 0;
+                    return (
+                      <td key={idx} className="px-4 py-3 font-mono" style={{ backgroundColor: `rgba(239, 68, 68, ${val / 100})`, color: val > 40 ? "#fff" : "#94a3b8" }}>{val}%</td>
+                    );
+                  })}
                   <td className="px-4 py-3 text-slate-700 text-left border-l border-slate-800">{m.primary_abuse}</td>
                 </tr>
               ))}
