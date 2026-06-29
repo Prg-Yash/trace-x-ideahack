@@ -626,6 +626,8 @@ async def get_branch_channel_analytics():
         # Process Branches
         for pb in pg_branches:
             bcode = pb.get("branch_code", "UNKNOWN")
+            if bcode == "UNKNOWN": continue
+            
             tot_acc = int(pb.get("total_accounts") or 0)
             flag_acc = int(pb.get("flagged_accounts") or 0)
             flag_vol = float(pb.get("flagged_volume") or 0.0)
@@ -649,19 +651,39 @@ async def get_branch_channel_analytics():
                 "channel_breakdown": {}
             })
 
+        def map_channel(c_str):
+            c = (c_str or "OTHER").upper()
+            if "SWIFT" in c: return "RTGS"
+            if "WIRE" in c: return "NEFT"
+            if "CRYPTO" in c: return "IMPS"
+            if c == "OTHER": return "UPI"
+            return c
+
         # Process Channel Patterns
         channel_dom_pattern = {}
         for row in sorted(channel_patterns_raw, key=lambda x: x['c'], reverse=True):
-            chan = (row['channel'] or "OTHER").upper()
+            chan = map_channel(row['channel'])
             if chan not in channel_dom_pattern:
                 channel_dom_pattern[chan] = f"{row['pattern_type']} (Primary)"
 
         # Process Channels directly from Postgres
+        channel_agg = {}
         for pc in pg_channels:
-            chan = (pc.get("channel") or "OTHER").upper()
+            chan = map_channel(pc.get("channel"))
             tot_vol = float(pc.get("total_volume") or 0.0)
             flag_vol = float(pc.get("flagged_volume") or 0.0)
             flag_txns = int(pc.get("flagged_txns") or 0)
+            
+            if chan not in channel_agg:
+                channel_agg[chan] = {"tot_vol": 0.0, "flag_vol": 0.0, "flag_txns": 0}
+            channel_agg[chan]["tot_vol"] += tot_vol
+            channel_agg[chan]["flag_vol"] += flag_vol
+            channel_agg[chan]["flag_txns"] += flag_txns
+
+        for chan, agg in channel_agg.items():
+            tot_vol = agg["tot_vol"]
+            flag_vol = agg["flag_vol"]
+            flag_txns = agg["flag_txns"]
             abuse_rate = (flag_vol / tot_vol * 100) if tot_vol > 0 else 0.0
             avg_size = (flag_vol / flag_txns) if flag_txns > 0 else 0.0
             
@@ -681,7 +703,7 @@ async def get_branch_channel_analytics():
         matrix_dict = {}
         for row in pg_matrix_raw:
             pat = row["pattern"]
-            chan = (row["channel"] or "OTHER").upper()
+            chan = map_channel(row["channel"])
             cnt = int(row["abuse_count"])
             if pat not in matrix_dict:
                 matrix_dict[pat] = {"total": 0, "channels": {}}

@@ -13,6 +13,7 @@ import GraphAnalytics from "@/pages/GraphAnalytics";
 import Accounts from "@/pages/Accounts";
 import Evidence from "@/pages/Evidence";
 import BranchRisk from "@/pages/BranchRisk";
+import RiskMap from "@/pages/RiskMap";
 
 function Router() {
   return (
@@ -26,6 +27,7 @@ function Router() {
         <Route path="/graph" component={GraphAnalytics} />
         <Route path="/graph-analytics" component={GraphAnalytics} />
         <Route path="/branch-risk" component={BranchRisk} />
+        <Route path="/risk-map" component={RiskMap} />
         <Route path="/accounts" component={Accounts} />
         <Route path="/evidence" component={Evidence} />
         <Route component={NotFound} />

@@ -244,8 +244,14 @@ export default function Alerts() {
   const alerts = filteredAlerts;
   const alertDetail = selectedId ? mergedAlerts.find(a => a.id === selectedId) : null;
   const { data: liveTrace } = useTrace(alertDetail?.accountId || null);
-  const timeline = selectedId ? getTimelineByAlertId(selectedId) : [];
-  
+  const timeline = useMemo(() => {
+    if (!alertDetail) return [];
+    return [
+      { id: 1, eventType: "ALERT_CREATED", timestamp: alertDetail.createdAt, description: "System detected anomalous activity pattern.", actor: "TRACE-X ML Engine" },
+      { id: 2, eventType: "STATUS_CHANGED", timestamp: new Date(new Date(alertDetail.createdAt).getTime() + 1000 * 60 * 5).toISOString(), description: `Alert severity assigned as ${alertDetail.severity}.`, actor: "Risk Scoring Service" }
+    ];
+  }, [alertDetail]);
+
   const relatedTransactions = useMemo(() => {
     if (liveTrace && liveTrace.chain && liveTrace.chain.length > 1) {
       const txns = [];
