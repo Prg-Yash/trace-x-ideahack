@@ -5,7 +5,7 @@
  */
 
 const rawUrl = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "");
-const BASE = rawUrl
+export const BASE = rawUrl
   ? (rawUrl.endsWith("/api/v1") ? rawUrl : `${rawUrl}/api/v1`)
   : "http://127.0.0.1:8000/api/v1";
 

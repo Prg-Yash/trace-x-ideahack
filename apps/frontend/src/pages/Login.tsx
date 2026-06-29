@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import { Shield, Lock, User, KeyRound, AlertTriangle, ArrowRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
+import { BASE } from "@/lib/api";
 
 export default function Login() {
   const [username, setUsername] = useState("");
@@ -21,7 +22,7 @@ export default function Login() {
       formData.append("username", username);
       formData.append("password", password);
 
-      const res = await fetch("http://localhost:8000/api/v1/auth/login", {
+      const res = await fetch(`${BASE}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: formData.toString()
@@ -33,7 +34,7 @@ export default function Login() {
 
       const data = await res.json();
       
-      const meRes = await fetch("http://localhost:8000/api/v1/auth/me", {
+      const meRes = await fetch(`${BASE}/auth/me`, {
         headers: { "Authorization": `Bearer ${data.access_token}` }
       });
       const userData = await meRes.json();
