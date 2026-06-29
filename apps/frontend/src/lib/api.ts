@@ -5,21 +5,35 @@
  */
 
 const rawUrl = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "");
-const BASE = rawUrl
+export const BASE = rawUrl
   ? (rawUrl.endsWith("/api/v1") ? rawUrl : `${rawUrl}/api/v1`)
   : "http://127.0.0.1:8000/api/v1";
 
 // ── generic fetch wrapper ────────────────────────────────────────────────────
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = localStorage.getItem("trace_x_token");
+  
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+    "ngrok-skip-browser-warning": "true",
+  };
+  
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   const res = await fetch(`${BASE}${path}`, {
     headers: {
-      "Content-Type": "application/json",
-      "ngrok-skip-browser-warning": "true",
+      ...headers,
       ...(init?.headers ?? {}),
     },
     ...init,
   });
   if (!res.ok) {
+    if (res.status === 401) {
+      // Optional: automatically redirect to login or clear token if it expires
+      // For now, let the AuthContext handle this if /me fails
+    }
     const text = await res.text().catch(() => "");
     throw new Error(`API ${res.status}: ${text.slice(0, 200)}`);
   }

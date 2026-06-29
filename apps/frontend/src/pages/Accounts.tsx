@@ -102,11 +102,21 @@ export default function Accounts() {
 
   const { data: apiNotes, refetch: refetchNotes } = useAccountNotes(liveAccountId);
 
-  const kyc = selectedId ? getKycByAccountId(selectedId) : undefined;
-  const transactions = selectedId ? getTransactionsByAccountId(selectedId) : [];
-  const relatedAlerts = selectedId ? getAlertsByAccountId(selectedId) : [];
-  const riskFactors = selectedAccount ? getRiskFactors(selectedAccount) : [];
-  const suspiciousBehaviors = selectedAccount ? getSuspiciousBehaviors(selectedAccount) : [];
+  const transactions = []; // Removed static transactions. Will implement live later if needed.
+  const relatedAlerts = []; // Removed static alerts.
+  const riskFactors = scoreData?.top_risk_factors ? scoreData.top_risk_factors.map(f => ({ factor: f.label, score: Math.round(Math.abs(f.shap_value) * 100), description: `Feature impact: ${f.shap_value.toFixed(2)}` })) : [];
+  const suspiciousBehaviors = scoreData?.flagged_for ? scoreData.flagged_for.map(f => ({ behavior: f, severity: scoreData.risk_level, detectedAt: new Date().toISOString(), details: `ML Engine detected anomalous ${f} pattern.` })) : [];
+
+  const kyc = selectedAccount ? {
+    customerId: selectedAccount.accountNumber,
+    idType: "PAN",
+    nationality: "Indian",
+    occupation: "Business/Corporate",
+    kycLevel: `Tier ${selectedAccount.kycTier}`,
+    lastKycDate: selectedAccount.openedAt,
+    pepStatus: false,
+    sanctionStatus: false,
+  } : undefined;
 
   // Override static risk with live ML score
   const liveRiskLevel = scoreData?.risk_level ?? selectedAccount?.riskLevel;

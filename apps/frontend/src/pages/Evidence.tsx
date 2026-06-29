@@ -569,16 +569,7 @@ export default function Evidence() {
           };
         });
       }
-      if (fundFlow.length === 0) {
-        let acc = selectedCase.suspiciousAccounts?.[0] || "ACC_06264";
-        if (!acc.startsWith("ACC_")) acc = "ACC_00115";
-        const num = parseInt(acc.replace(/\D/g, "")) || 6264;
-        fundFlow = [
-          { step: 1, fromAccount: `ACC_${(num + 112).toString().padStart(5, "0")}`, toAccount: acc, amount: Math.round((selectedCase.totalAmount || 500000) * 0.42), utr: `UTR${txnDateStr.replace(/-/g,"")}100142`, ifsc: "UBIN0554678", method: "RTGS", timestamp: txnDateStr },
-          { step: 2, fromAccount: acc, toAccount: `ACC_${(num + 849).toString().padStart(5, "0")}`, amount: Math.round((selectedCase.totalAmount || 500000) * 0.31), utr: `UTR${txnDateStr.replace(/-/g,"")}100287`, ifsc: "HDFC0001423", method: "NEFT", timestamp: txnDateStr },
-          { step: 3, fromAccount: `ACC_${(num + 849).toString().padStart(5, "0")}`, toAccount: `ACC_${(num + 1203).toString().padStart(5, "0")}`, amount: Math.round((selectedCase.totalAmount || 500000) * 0.27), utr: `UTR${txnDateStr.replace(/-/g,"")}100391`, ifsc: "ICIC0002891", method: "IMPS", timestamp: txnDateStr },
-        ];
-      }
+
 
       let dynamicTotalAmount = selectedCase.totalAmount;
       if (actualTrace?.amounts?.length) {
@@ -649,50 +640,10 @@ All transactions settled via regulated Indian payment rails (RTGS/NEFT/IMPS) and
       };
     }
 
-    if (selectedCase.caseId.startsWith("CASE-2025")) {
-      const detail = getCaseDetail(selectedId);
-      if (detail) return detail;
+    if (!liveReport) {
+      return null;
     }
 
-    const acc = selectedCase.suspiciousAccounts?.[0] || "ACC_03066";
-    const num = parseInt(acc.replace(/\D/g, "")) || 3066;
-    const txnDateStr2 = new Date(Date.now() - 86400000).toISOString().split("T")[0];
-    const suspDate2 = new Date(Date.now() - 86400000).toLocaleDateString("en-IN");
-    const filingDate2 = new Date(Date.now() + 6*86400000).toLocaleDateString("en-IN");
-    const totalAmt = selectedCase.totalAmount || 500000;
-    const INDIAN_RAILS2 = ["RTGS", "NEFT", "IMPS"];
-    const fallbackFlow = [
-      { step: 1, fromAccount: `ACC_${(num + 112).toString().padStart(5, "0")}`, toAccount: acc, amount: Math.round(totalAmt * 0.42), utr: `UTR${txnDateStr2.replace(/-/g,"")}200142`, ifsc: "UBIN0554678", method: INDIAN_RAILS2[0], timestamp: txnDateStr2 },
-      { step: 2, fromAccount: acc, toAccount: `ACC_${(num + 849).toString().padStart(5, "0")}`, amount: Math.round(totalAmt * 0.31), utr: `UTR${txnDateStr2.replace(/-/g,"")}200287`, ifsc: "HDFC0001423", method: INDIAN_RAILS2[1], timestamp: txnDateStr2 },
-      { step: 3, fromAccount: `ACC_${(num + 849).toString().padStart(5, "0")}`, toAccount: `ACC_${(num + 1203).toString().padStart(5, "0")}`, amount: Math.round(totalAmt * 0.27), utr: `UTR${txnDateStr2.replace(/-/g,"")}200391`, ifsc: "ICIC0002891", method: INDIAN_RAILS2[2], timestamp: txnDateStr2 },
-    ];
-    const fallbackNarration = `Account ${acc} exhibits high-risk behavioural indicators consistent with structured layering under PMLA 2002. Sequential fund transfers across ${fallbackFlow.length + 1} domestic accounts detected within 48-hour window. Total aggregate suspicious exposure: ₹${totalAmt.toLocaleString("en-IN")}. KYC transaction limits exceeded by over 400%. SHAP attribution confirms Rapid Chain Hop Velocity and Amount Conservation Decay as primary risk drivers. All transactions cleared via regulated Indian payment rails (RTGS/NEFT/IMPS) — UTR references logged. Immediate account freeze and STR Form 8 submission recommended.`;
-    return {
-      case: selectedCase,
-      customerName: acc,
-      ifscBase: "UBIN0554678",
-      branchCode: `MH${String(num % 999).padStart(3, "0")}`,
-      suspDateFormatted: suspDate2,
-      filingDateFormatted: filingDate2,
-      typologyCodes: "ML, KYC_NON_COMP, MULTI_CHANNEL",
-      riskScore: 87,
-      findings: [
-        { category: "Rapid Layering Velocity", finding: "Funds transferred rapidly across multiple domestic hops within 48 hours to obscure beneficial owner", severity: "CRITICAL" },
-        { category: "KYC Profile Non-Compliance", finding: "Transaction volume exceeds declared customer risk profile limit by over 400%", severity: "HIGH" },
-        { category: "Multi-Channel Switching", finding: "Sequential transfers via RTGS, NEFT, and IMPS to evade single-channel monitoring", severity: "HIGH" },
-      ],
-      fundFlowSummary: fallbackFlow,
-      fiuReportData: {
-        reportId: `FIU-STR-2026-${String(num).padStart(6, "0")}`,
-        reportingEntity: "Union Bank of India",
-        reportingEntityRE: "RE0002341",
-        reportDate: suspDate2,
-        filingDeadline: filingDate2,
-        suspiciousActivityType: "ML, KYC_NON_COMP",
-        narrativeSummary: fallbackNarration,
-        actionRequired: `Freeze accounts ${selectedCase.suspiciousAccounts.join(", ")} and submit STR Form 8 to FIU-IND via FINnet 2.0 portal by ${filingDate2}.`,
-      },
-    };
   }, [selectedId, selectedCase, liveReport, reportLoading]);
 
   const handleCreate = () => {

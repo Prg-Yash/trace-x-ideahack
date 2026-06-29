@@ -27,15 +27,22 @@ from fraud_detector import (
 )
 from app.core.websockets import manager
 
-pg_pool = ThreadedConnectionPool(1, 20, dsn=DATABASE_URL)
+# Lazy pool — created on first use so .env is loaded before connection attempt
+_pg_pool = None
+
+def _get_pool():
+    global _pg_pool
+    if _pg_pool is None:
+        _pg_pool = ThreadedConnectionPool(1, 20, dsn=DATABASE_URL)
+    return _pg_pool
 
 @contextmanager
 def get_pg_connection():
-    conn = pg_pool.getconn()
+    conn = _get_pool().getconn()
     try:
         yield conn
     finally:
-        pg_pool.putconn(conn)
+        _get_pool().putconn(conn)
 
 router = APIRouter(prefix="/demo", tags=["demo"])
 

@@ -1611,7 +1611,24 @@ async def trace_account(account_id: str, hint: str = "") -> Dict:
                 "amounts": r["amounts"] if "amounts" in r and r["amounts"] else [],
                 "confidence": r["prob"] if "prob" in r else 0.95
             }
-        return {"detected": False, "fraud_type": "SMURFING", "chain": [], "amounts": []}
+            
+        # Fallback for Smurfing if al.chain was not pre-populated (e.g., from Curated data)
+        if hint.upper() == "SMURFING":
+            d_records = await _run_query("""
+                MATCH (s:Account)-[r:SENT]->(a:Account {account_id: $acc_id})
+                WHERE r.is_fraud = true OR toUpper(r.pattern_type) = 'SMURFING'
+                RETURN collect(DISTINCT s.account_id) + a.account_id AS chain, collect(toFloat(r.amount)) AS amounts
+            """, acc_id=account_id)
+            if d_records and d_records[0]["chain"] and len(d_records[0]["chain"]) > 1:
+                return {
+                    "detected": True,
+                    "fraud_type": hint.upper(),
+                    "chain": d_records[0]["chain"],
+                    "amounts": d_records[0]["amounts"],
+                    "confidence": 0.95
+                }
+                
+        return {"detected": False, "fraud_type": hint.upper(), "chain": [], "amounts": []}
     elif hint in ("layering", "LAYERING"):
         result = await detect_layering(account_id)
         if result.get("detected"):

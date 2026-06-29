@@ -41,6 +41,7 @@ export default defineConfig({
         target: "https://5215-103-159-208-64.ngrok-free.app/",
         changeOrigin: true,
         secure: false,
+        ws: true,
       },
     },
   },

@@ -14,3 +14,7 @@ xgboost
 networkx
 -e ../../packages/py-schemas
 psycopg2-binary
+aiokafka
+bcrypt==4.0.1
+python-jose[cryptography]
+python-multipart
