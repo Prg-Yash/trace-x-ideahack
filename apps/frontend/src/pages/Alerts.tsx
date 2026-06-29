@@ -1,4 +1,5 @@
-import { useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useState, useEffect, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -110,27 +111,112 @@ export default function Alerts() {
   const [showTimeline, setShowTimeline] = useState(false);
   const [statusOverrides, setStatusOverrides] = useState<Record<number, string>>({});
 
+  const [optimisticAlerts, setOptimisticAlerts] = useState<Alert[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
+
   // Live API data
-  const { data: liveAlertsData, loading: alertsLoading } = useAlertsQuick(200);
+  const { data: liveAlertsData, loading: alertsLoading, refetch: refetchAlerts } = useAlertsQuick(200);
+
+  useEffect(() => {
+    let reconnectTimeout: ReturnType<typeof setTimeout>;
+
+    function connect() {
+      const wsUrl = import.meta.env.VITE_WS_URL || "ws://localhost:8000/api/v1/ws";
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log("WebSocket connected for Demo Injector updates.");
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (!payload) return;
+
+          if (payload.event === "STAGE_UPDATE") {
+             const data = payload.data;
+             toast.info(`Stage ${data.stage}: ${data.message}`);
+          }
+          else if (payload.event === "NEW_ALERT") {
+             const data = payload.data;
+             toast.success(`Demo Injection Complete! Alert ${data.alert_id} generated.`);
+             
+             // Construct optimistic alert
+             const newAlert: Alert = {
+               id: Date.now(), // temporary unique id
+               alertId: data.alert_id,
+               accountId: data.account_ids ? data.account_ids[0] : "unknown",
+               severity: data.severity || data.tier || "CRITICAL",
+               status: "OPEN",
+               pattern: data.pattern || "LAYERING",
+               amount: data.total_amount ?? Math.round((data.fraud_prob || data.fraud_probability || 0.95) * 500000),
+               assignee: null,
+               description: `Live Injection: ${data.pattern}`,
+               createdAt: new Date().toISOString(),
+               updatedAt: new Date().toISOString(),
+               accountName: data.account_ids ? data.account_ids[0] : "unknown",
+               accountNumber: data.account_ids ? data.account_ids[0] : "unknown",
+             };
+             
+             setOptimisticAlerts(prev => [newAlert, ...prev]);
+             
+             // Trigger actual refetch after 1500ms to ensure DB commit is visible
+             setTimeout(() => {
+                if (refetchAlerts) refetchAlerts();
+                setOptimisticAlerts([]); // clear optimistic once live data returns
+             }, 1500);
+          }
+          else if (payload.event === "INJECTION_ERROR") {
+             toast.error(`Injection Failed: ${payload.data.message}`);
+          }
+          else if (payload.event === "DEMO_RESET") {
+             toast.success("Demo data cleared.");
+             if (refetchAlerts) refetchAlerts();
+             setOptimisticAlerts([]);
+          }
+        } catch (e) {
+          console.error("WS Parse Error", e);
+        }
+      };
+
+      ws.onclose = () => {
+        console.log("WebSocket disconnected. Reconnecting in 3s...");
+        reconnectTimeout = setTimeout(connect, 3000);
+      };
+    }
+
+    connect();
+
+    return () => {
+      clearTimeout(reconnectTimeout);
+      if (wsRef.current) {
+        wsRef.current.onclose = null; // Prevent reconnect on unmount
+        wsRef.current.close();
+      }
+    };
+  }, [refetchAlerts]);
 
   // Merge live alerts with static format for UI components
-  const mergedAlerts: Alert[] = liveAlertsData?.alerts?.length
-    ? liveAlertsData.alerts.map((a, i) => ({
+  const apiAlerts: Alert[] = liveAlertsData?.alerts?.length
+    ? liveAlertsData.alerts.map((a: any, i: number) => ({
         id: i + 1,
-        alertId: `ALT-${a.account_id}-${(a.flagged_for[0] || "fraud").toLowerCase()}`,
+        alertId: a.alert_id || `ALT-${a.account_id}-${(a.flagged_for?.[0] || "fraud").toLowerCase()}`,
         accountId: i + 1,
-        severity: a.risk_level as string,
+        severity: (a.risk_level || a.severity) as string,
         status: "OPEN",
-        pattern: a.flagged_for[0] ?? "UNKNOWN",
-        amount: a.total_amount ?? Math.round(a.score * 5_000_000),
+        pattern: a.flagged_for?.[0] ?? a.pattern_type ?? "UNKNOWN",
+        amount: a.total_amount ?? Math.round((a.score || a.fraud_probability || 0.9) * 5_000_000),
         assignee: null,
-        description: `Fraud pattern detected: ${a.flagged_for.join(", ")}`,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        description: `Fraud pattern detected: ${a.flagged_for?.join(", ") || a.pattern_type}`,
+        createdAt: a.created_at || new Date().toISOString(),
+        updatedAt: a.created_at || new Date().toISOString(),
         accountName: a.account_id,
         accountNumber: a.account_id,
       }))
     : [];
+    
+  const mergedAlerts = [...optimisticAlerts, ...apiAlerts];
 
   const handleStartInvestigation = (alertId: number) => {
     const alert = mergedAlerts.find(a => a.id === alertId);
