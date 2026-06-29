@@ -150,7 +150,7 @@ def extract_chain_features(chain_txns: List[Dict]) -> Optional[Dict]:
 
 
 # ── Training data construction (CSV -> chain samples) ─────────────────────────
-def _reconstruct_positive_chains(df_txn: pd.DataFrame) -> List[List[Dict]]:
+def _reconstruct_positive_chains(df_txn: pd.DataFrame, pattern="LAYERING") -> List[List[Dict]]:
     """
     Reconstruct layering chains from LAYERING-labeled transactions.
 
@@ -159,7 +159,7 @@ def _reconstruct_positive_chains(df_txn: pd.DataFrame) -> List[List[Dict]]:
       2. Find chain entry points: senders that never appear as a receiver
       3. Greedy forward traversal: follow the money until the chain ends
     """
-    layer = df_txn[df_txn["pattern_type"] == "LAYERING"].copy()
+    layer = df_txn[df_txn["pattern_type"] == pattern].copy()
     if layer.empty:
         return []
 
@@ -323,12 +323,16 @@ def build_layering_training_dataset(
         y : np.ndarray of int labels (1 = layering, 0 = normal)
     """
     print("  Reconstructing positive layering chains from CSV...")
-    pos_chains = _reconstruct_positive_chains(df_txn)
+    pos_chains = _reconstruct_positive_chains(df_txn, pattern="LAYERING")
     print(f"    Found {len(pos_chains)} positive chains")
 
     n_neg = max(len(pos_chains) * neg_multiplier, 200)
     print(f"  Sampling {n_neg} negative chains...")
     neg_chains = _build_negative_chains(df_txn, n_samples=n_neg, rng_seed=rng_seed)
+    
+    # Add our intentionally planted legitimate chains!
+    legit_chains = _reconstruct_positive_chains(df_txn, pattern="LEGITIMATE_CHAIN")
+    neg_chains.extend(legit_chains)
     print(f"    Sampled {len(neg_chains)} negative chains")
 
     rows: List[Dict] = []
@@ -415,10 +419,10 @@ def extract_roundtrip_features(chain_txns: List[Dict]) -> Optional[Dict]:
         "velocity_score": float(velocity_score),
     }
 
-def _reconstruct_roundtrip_chains(df_txn: pd.DataFrame) -> List[List[Dict]]:
+def _reconstruct_roundtrip_chains(df_txn: pd.DataFrame, pattern="ROUND_TRIP") -> List[List[Dict]]:
     rt_txns = df_txn[
         (df_txn["pattern_type"].notna()) &
-        (df_txn["pattern_type"].str.contains("ROUND_TRIP", na=False))
+        (df_txn["pattern_type"] == pattern)
     ].sort_values("txn_ts")
 
     if rt_txns.empty:
@@ -467,7 +471,7 @@ def build_roundtrip_training_dataset(
 ) -> Tuple[pd.DataFrame, np.ndarray]:
     
     print("  Reconstructing positive roundtrip chains from CSV...")
-    pos_chains = _reconstruct_roundtrip_chains(df_txn)
+    pos_chains = _reconstruct_roundtrip_chains(df_txn, pattern="ROUND_TRIP")
     # Deduplicate chains
     unique_pos = []
     seen = set()
@@ -496,6 +500,10 @@ def build_roundtrip_training_dataset(
             if last_ts:
                 fake_hop["ts"] = last_ts + timedelta(minutes=10)
             neg_chains.append(chain + [fake_hop])
+            
+    # Add our intentionally planted legitimate round-trips!
+    legit_chains = _reconstruct_roundtrip_chains(df_txn, pattern="LEGITIMATE_ROUNDTRIP")
+    neg_chains.extend(legit_chains)
             
     print(f"    Sampled {len(neg_chains)} negative chains")
 

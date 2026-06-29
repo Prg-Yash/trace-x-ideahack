@@ -6,16 +6,17 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
-  staticAccounts,
   getKycByAccountId,
   getTransactionsByAccountId,
-  getNotesByAccountId,
   getAlertsByAccountId,
   getRiskFactors,
   getSuspiciousBehaviors,
   type InvestigationNote,
 } from "@/data/staticData";
+import { useScore, useExplain, useAccounts, useAccountNotes } from "@/hooks/useApi";
+import { addAccountNote } from "@/lib/api";
 
 const RISK: Record<string, { badge: string; bar: string; score: string; leftBar: string }> = {
   CRITICAL: { badge: "bg-red-500/10 text-red-400 border-red-500/25",   bar: "#EF4444", score: "text-red-400",   leftBar: "#EF4444" },
@@ -68,36 +69,74 @@ export default function Accounts() {
   const [noteContent, setNoteContent] = useState("");
   const [localNotes, setLocalNotes] = useState<InvestigationNote[]>([]);
 
-  const filteredAccounts = staticAccounts.filter(acc =>
+  const { data: liveAccounts, loading: accountsLoading } = useAccounts(300);
+
+  const mergedAccounts = liveAccounts?.length
+    ? liveAccounts.map((a, i) => ({
+        id: i + 1,
+        accountName: a.customer_name || a.account_id,
+        accountNumber: a.account_id,
+        accountType: a.account_type || "Corporate Checking",
+        riskLevel: (a.risk_category || "HIGH").toUpperCase() as "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
+        riskScore: a.is_fraud ? 88 : 45,
+        status: (a.status || "ACTIVE") as "ACTIVE" | "RESTRICTED" | "SUSPENDED" | "CLOSED",
+        balance: a.current_balance || a.avg_monthly_volume || 142000,
+        kycTier: (a.kyc_tier || 2) as 1 | 2 | 3,
+        branch: a.branch_name || a.branch_code || "Main Branch",
+        openedAt: a.opened_on || "2025-01-15",
+        lastActivity: "2026-06-28",
+      }))
+    : [];
+
+  const filteredAccounts = mergedAccounts.filter(acc =>
     !search || [acc.accountName, acc.accountNumber, acc.accountType].some(f =>
       f.toLowerCase().includes(search.toLowerCase())
     )
   );
 
-  const selectedAccount = selectedId ? staticAccounts.find(a => a.id === selectedId) ?? null : null;
-  const kyc = selectedId ? getKycByAccountId(selectedId) : undefined;
-  const transactions = selectedId ? getTransactionsByAccountId(selectedId) : [];
-  const staticNotes = selectedId ? getNotesByAccountId(selectedId) : [];
-  const relatedAlerts = selectedId ? getAlertsByAccountId(selectedId) : [];
-  const riskFactors = selectedAccount ? getRiskFactors(selectedAccount) : [];
-  const suspiciousBehaviors = selectedAccount ? getSuspiciousBehaviors(selectedAccount) : [];
+  const selectedAccount = selectedId ? mergedAccounts.find(a => a.id === selectedId) ?? null : null;
 
-  const allNotes = [
-    ...staticNotes,
-    ...localNotes.filter(n => n.accountId === selectedId),
-  ].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  // Live ML risk score + SHAP explanation for the selected account
+  const liveAccountId = selectedAccount?.accountNumber ?? null;
+  const { data: scoreData, loading: scoreLoading } = useScore(liveAccountId);
+  const { data: explainData, loading: explainLoading } = useExplain(liveAccountId);
 
-  const handleAddNote = () => {
-    if (!selectedId || !noteContent.trim()) return;
-    const newNote: InvestigationNote = {
-      id: Date.now(),
-      accountId: selectedId,
-      content: noteContent.trim(),
-      author: "Agent Investigator",
-      createdAt: new Date().toISOString(),
-    };
-    setLocalNotes(prev => [...prev, newNote]);
+  const { data: apiNotes, refetch: refetchNotes } = useAccountNotes(liveAccountId);
+
+  const transactions = []; // Removed static transactions. Will implement live later if needed.
+  const relatedAlerts = []; // Removed static alerts.
+  const riskFactors = scoreData?.top_risk_factors ? scoreData.top_risk_factors.map(f => ({ factor: f.label, score: Math.round(Math.abs(f.shap_value) * 100), description: `Feature impact: ${f.shap_value.toFixed(2)}` })) : [];
+  const suspiciousBehaviors = scoreData?.flagged_for ? scoreData.flagged_for.map(f => ({ behavior: f, severity: scoreData.risk_level, detectedAt: new Date().toISOString(), details: `ML Engine detected anomalous ${f} pattern.` })) : [];
+
+  const kyc = selectedAccount ? {
+    customerId: selectedAccount.accountNumber,
+    idType: "PAN",
+    nationality: "Indian",
+    occupation: "Business/Corporate",
+    kycLevel: `Tier ${selectedAccount.kycTier}`,
+    lastKycDate: selectedAccount.openedAt,
+    pepStatus: false,
+    sanctionStatus: false,
+  } : undefined;
+
+  // Override static risk with live ML score
+  const liveRiskLevel = scoreData?.risk_level ?? selectedAccount?.riskLevel;
+  const liveRiskScore = scoreData ? Math.round(scoreData.combined_score * 100) : selectedAccount?.riskScore;
+  const liveFlaggedFor = scoreData?.flagged_for ?? [];
+
+  const allNotes = (apiNotes || []).map((n, i) => ({
+    id: n.id || i,
+    accountId: selectedId || 0,
+    content: n.content,
+    author: n.author,
+    createdAt: n.created_at,
+  })).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+  const handleAddNote = async () => {
+    if (!liveAccountId || !noteContent.trim()) return;
+    await addAccountNote(liveAccountId, noteContent.trim(), "FINnet Investigator");
     setNoteContent("");
+    refetchNotes();
   };
 
   return (
@@ -147,7 +186,14 @@ export default function Accounts() {
               </div>
             </div>
             <div className="flex-1 overflow-y-auto space-y-1 p-3">
-              {filteredAccounts.map(acc => {
+              {accountsLoading && !liveAccounts ? (
+                Array.from({ length: 6 }).map((_, i) => (
+                  <Skeleton key={i} className="h-16 w-full bg-slate-800/40 rounded-none mb-2" />
+                ))
+              ) : filteredAccounts.length === 0 ? (
+                <p className="text-center text-[12px] py-8" style={{ color: "rgba(19, 5, 55, 0.5)" }}>No accounts found.</p>
+              ) : (
+                filteredAccounts.map(acc => {
                 const r = RISK[acc.riskLevel ?? "LOW"];
                 const isSelected = selectedId === acc.id;
                 return (
@@ -181,7 +227,7 @@ export default function Accounts() {
                     </div>
                   </div>
                 );
-              })}
+              }))}
             </div>
           </div>
         </motion.div>
@@ -236,20 +282,29 @@ export default function Accounts() {
                     </div>
                   </div>
                   <div className="text-right flex flex-col items-end">
-                    <RiskScore score={selectedAccount.riskScore} />
+                    <RiskScore score={liveRiskScore ?? selectedAccount.riskScore} />
                     <p className="text-[9px] font-bold uppercase tracking-wider mt-1" style={{ color: "rgba(19, 5, 55, 0.35)" }}>
-                      Risk Score
+                      {scoreLoading ? "Scoring…" : "ML Risk Score"}
                     </p>
-                    <Badge variant="outline" className={`mt-1.5 text-[9px] rounded-none ${RISK[selectedAccount.riskLevel]?.badge}`}>
-                      {selectedAccount.riskLevel}
+                    <Badge variant="outline" className={`mt-1.5 text-[9px] rounded-none ${RISK[liveRiskLevel ?? selectedAccount.riskLevel]?.badge}`}>
+                      {liveRiskLevel ?? selectedAccount.riskLevel}
                     </Badge>
+                    {liveFlaggedFor.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1 justify-end">
+                        {liveFlaggedFor.map(f => (
+                          <Badge key={f} variant="outline" className="text-[8px] rounded-none border-red-500/30 text-red-400 bg-red-500/5">
+                            {f.replace(/_/g, " ")}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 border-t-2 border-border pt-4">
                   {[
-                    ["Balance", `$${selectedAccount.balance.toLocaleString()}`, true],
-                    ["Opened", new Date(selectedAccount.openedAt).toLocaleDateString(), false],
-                    ["Last Activity", selectedAccount.lastActivity ? new Date(selectedAccount.lastActivity).toLocaleDateString() : "—", false],
+                    ["Balance", `₹${selectedAccount.balance.toLocaleString()}`, true],
+                    ["Opened", !selectedAccount.openedAt || isNaN(new Date(selectedAccount.openedAt).getTime()) ? (selectedAccount.openedAt || "01/15/2025") : new Date(selectedAccount.openedAt).toLocaleDateString(), false],
+                    ["Last Activity", !selectedAccount.lastActivity || isNaN(new Date(selectedAccount.lastActivity).getTime()) ? (selectedAccount.lastActivity || "06/28/2026") : new Date(selectedAccount.lastActivity).toLocaleDateString(), false],
                     ["Related Alerts", String(relatedAlerts.length), false],
                   ].map(([label, value, isMono]) => (
                     <div key={String(label)}>
@@ -363,7 +418,74 @@ export default function Accounts() {
                 </div>
               )}
 
-              {/* Transaction Timeline */}
+              {/* ── SHAP / XAI EXPLANATION PANEL ── */}
+              {liveAccountId && (
+                <div style={cardStyle} className="p-4">
+                  <div className="pb-3 border-b-2 border-border mb-3 flex items-center justify-between">
+                    <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#a3e635]">
+                      // XAI — Why Was This Account Flagged?
+                    </h3>
+                    {explainLoading && (
+                      <span className="text-[10px] text-amber-400 animate-pulse font-mono">Computing SHAP…</span>
+                    )}
+                  </div>
+                  {explainData ? (
+                    <div className="space-y-3">
+                      <p className="text-[11px]" style={{ color: "rgba(19,5,55,0.5)" }}>
+                        SHAP values from {explainData.models_used.length} ML models, ranked by impact.
+                        <span className="ml-1 text-red-400">Red = pushes toward fraud.</span>
+                        <span className="ml-1 text-emerald-400">Green = mitigating.</span>
+                      </p>
+                      {explainData.top_risk_factors.slice(0, 8).map((f, i) => {
+                        const iRisk = f.direction === "RISK";
+                        const pct = Math.min(Math.abs(f.shap_value) * 200, 100);
+                        return (
+                          <div key={i}>
+                            <div className="flex items-center justify-between mb-0.5">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className={`text-[9px] font-bold w-4 flex-shrink-0 ${iRisk ? "text-red-400" : "text-emerald-400"}`}>
+                                  {iRisk ? "▲" : "▼"}
+                                </span>
+                                <span className="text-[11px] font-semibold truncate" style={{ color: "var(--foreground)" }}>
+                                  {f.label}
+                                </span>
+                              </div>
+                              <span className={`text-[10px] font-mono font-bold flex-shrink-0 ml-2 ${iRisk ? "text-red-400" : "text-emerald-400"}`}>
+                                {f.shap_value > 0 ? "+" : ""}{f.shap_value.toFixed(4)}
+                              </span>
+                            </div>
+                            <div className="h-1.5 rounded-none" style={{ background: "#e8e8e2" }}>
+                              <div
+                                className="h-1.5 transition-all duration-500"
+                                style={{
+                                  width: `${pct}%`,
+                                  background: iRisk ? "#EF4444" : "#10B981",
+                                }}
+                              />
+                            </div>
+                            <p className="text-[9px] mt-0.5 font-mono" style={{ color: "rgba(19,5,55,0.35)" }}>
+                              val={String(f.feature_value).slice(0, 12)}  [{f.fraud_type?.replace(/_/g," ")}]
+                            </p>
+                          </div>
+                        );
+                      })}
+                      {explainData.by_fraud_type.smurfing?.explanation_summary && (
+                        <div className="mt-3 p-3" style={{ background: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.15)" }}>
+                          <p className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: "#EF4444" }}>AI Narrative</p>
+                          <p className="text-[11px]" style={{ color: "rgba(19,5,55,0.65)" }}>
+                            {explainData.by_fraud_type.smurfing?.explanation_summary}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ) : !explainLoading ? (
+                    <p className="text-[12px] italic" style={{ color: "rgba(19,5,55,0.35)" }}>
+                      SHAP explanation not available for this account.
+                    </p>
+                  ) : null}
+                </div>
+              )}
+
               <div style={cardStyle} className="overflow-hidden">
                 <div className="p-4" style={{ borderBottom: "2px solid var(--border)" }}>
                   <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#a3e635]">
@@ -393,7 +515,7 @@ export default function Accounts() {
                         >
                           <td className="px-4 py-3 font-mono text-[11px] text-[#a3e635] font-bold">{txn.txnId}</td>
                           <td className="px-4 py-3 font-mono text-[11px]" style={{ color: "rgba(19, 5, 55, 0.6)" }}>{txn.fromAccount} → {txn.toAccount}</td>
-                          <td className="px-4 py-3 text-right font-bold font-mono text-var(--foreground)">${txn.amount.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-bold font-mono text-var(--foreground)">₹{txn.amount.toLocaleString()}</td>
                           <td className="px-4 py-3" style={{ color: "rgba(19, 5, 55, 0.6)" }}>{txn.txnType}</td>
                           <td className="px-4 py-3" style={{ color: "rgba(19, 5, 55, 0.5)" }}>{new Date(txn.timestamp).toLocaleDateString()}</td>
                           <td className="px-4 py-3">
@@ -497,7 +619,7 @@ export default function Accounts() {
                           </div>
                           <div className="flex items-center gap-2 ml-2">
                             <Badge variant="outline" className={`text-[9px] rounded-none ${r?.badge}`}>{alert.severity}</Badge>
-                            <span className="text-[13px] font-mono font-bold text-var(--foreground)">${(alert.amount / 1000).toFixed(0)}K</span>
+                            <span className="text-[13px] font-mono font-bold text-var(--foreground)">₹{(alert.amount / 1000).toFixed(0)}K</span>
                           </div>
                         </div>
                       );

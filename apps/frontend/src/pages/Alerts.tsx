@@ -1,9 +1,10 @@
-import { useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useState, useEffect, useRef, useMemo, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle, Search, X, Clock, User,
-  ChevronRight, ChevronDown, CheckCircle2, Network,
+  ChevronRight, ChevronDown, CheckCircle2, Network, Shield,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,14 +13,15 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
-  staticAlerts,
   getTimelineByAlertId,
   getTransactionsByAccountId,
   type Alert,
 } from "@/data/staticData";
 import { getInvestigationAlertById } from "@/data/investigationData";
 import { useInvestigation } from "@/context/InvestigationContext";
+import { useAlertsQuick, useTrace } from "@/hooks/useApi";
 
 /* ── STYLES ── */
 const SEV: Record<string, { badge: string; dot: string; leftBar: string; drawerBg: string }> = {
@@ -108,12 +110,119 @@ export default function Alerts() {
   const [showTimeline, setShowTimeline] = useState(false);
   const [statusOverrides, setStatusOverrides] = useState<Record<number, string>>({});
 
+  const [optimisticAlerts, setOptimisticAlerts] = useState<Alert[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  // Live API data
+  const { data: liveAlertsData, loading: alertsLoading, refetch: refetchAlerts } = useAlertsQuick(200);
+
+  useEffect(() => {
+    let reconnectTimeout: ReturnType<typeof setTimeout>;
+
+    function connect() {
+      const wsUrl = import.meta.env.VITE_WS_URL || "ws://localhost:8000/api/v1/ws";
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log("WebSocket connected for Demo Injector updates.");
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (!payload) return;
+
+          if (payload.event === "STAGE_UPDATE") {
+            const data = payload.data;
+            toast.info(`Stage ${data.stage}: ${data.message}`);
+          }
+          else if (payload.event === "NEW_ALERT") {
+            const data = payload.data;
+            toast.success(`Demo Injection Complete! Alert ${data.alert_id} generated.`);
+
+            // Construct optimistic alert
+            const newAlert: Alert = {
+              id: Date.now(), // temporary unique id
+              alertId: data.alert_id,
+              accountId: data.account_ids ? data.account_ids[0] : "unknown",
+              severity: data.severity || data.tier || "CRITICAL",
+              status: "OPEN",
+              pattern: data.pattern || "LAYERING",
+              amount: data.total_amount ?? Math.round((data.fraud_prob || data.fraud_probability || 0.95) * 500000),
+              assignee: null,
+              description: `Live Injection: ${data.pattern}`,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              accountName: data.account_ids ? data.account_ids[0] : "unknown",
+              accountNumber: data.account_ids ? data.account_ids[0] : "unknown",
+            };
+
+            setOptimisticAlerts(prev => [newAlert, ...prev]);
+
+            // Trigger actual refetch after 1500ms to ensure DB commit is visible
+            setTimeout(() => {
+              if (refetchAlerts) refetchAlerts();
+              setOptimisticAlerts([]); // clear optimistic once live data returns
+            }, 1500);
+          }
+          else if (payload.event === "INJECTION_ERROR") {
+            toast.error(`Injection Failed: ${payload.data.message}`);
+          }
+          else if (payload.event === "DEMO_RESET") {
+            toast.success("Demo data cleared.");
+            if (refetchAlerts) refetchAlerts();
+            setOptimisticAlerts([]);
+          }
+        } catch (e) {
+          console.error("WS Parse Error", e);
+        }
+      };
+
+      ws.onclose = () => {
+        console.log("WebSocket disconnected. Reconnecting in 3s...");
+        reconnectTimeout = setTimeout(connect, 3000);
+      };
+    }
+
+    connect();
+
+    return () => {
+      clearTimeout(reconnectTimeout);
+      if (wsRef.current) {
+        wsRef.current.onclose = null; // Prevent reconnect on unmount
+        wsRef.current.close();
+      }
+    };
+  }, [refetchAlerts]);
+
+  const apiAlerts: Alert[] = liveAlertsData?.alerts?.length
+    ? liveAlertsData.alerts.map((a: any, i: number) => ({
+      id: i + 1,
+      alertId: a.alert_id || `ALT-${a.account_id}-${(a.flagged_for?.[0] || "fraud").toLowerCase()}`,
+      accountId: a.account_id,
+      severity: (a.risk_level || a.severity) as string,
+      status: "OPEN",
+      pattern: a.flagged_for?.[0] ?? a.pattern_type ?? "UNKNOWN",
+      amount: a.total_amount ?? Math.round((a.score || a.fraud_probability || 0.9) * 5_000_000),
+      assignee: null,
+      description: `Fraud pattern detected: ${(a.flagged_for || []).join(", ")}`,
+      createdAt: a.created_at || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      accountName: (a.customer_name || a.account_id).replace(/\s*\(\d+\)$/, ""),
+      accountNumber: `${a.account_id} (${a.branch_name || "Main Branch"})`,
+      rawAccountId: a.account_id,
+    }))
+    : [];
+
+  const mergedAlerts = [...optimisticAlerts, ...apiAlerts];
+
   const handleStartInvestigation = (alertId: number) => {
-    const investigationAlert = getInvestigationAlertById(alertId);
-    if (!investigationAlert) return;
-    setInvestigation(investigationAlert);
-    setDrawerOpen(false);
-    navigate("/graph-analytics");
+    const alert = mergedAlerts.find(a => a.id === alertId);
+    if (alert) {
+      setDrawerOpen(false);
+      navigate(`/graph/${alert.rawAccountId || alert.alertId}`);
+    }
   };
 
   const handleOpen = (id: number) => {
@@ -122,7 +231,7 @@ export default function Alerts() {
     setShowTimeline(false);
   };
 
-  const filteredAlerts = staticAlerts.filter(a => {
+  const filteredAlerts = mergedAlerts.filter(a => {
     const effectiveStatus = statusOverrides[a.id] ?? a.status;
     const matchSeverity = !severity || severity === "ALL" || a.severity === severity;
     const matchStatus = !status || status === "ALL" || effectiveStatus === status;
@@ -133,9 +242,43 @@ export default function Alerts() {
   });
 
   const alerts = filteredAlerts;
-  const alertDetail = selectedId ? staticAlerts.find(a => a.id === selectedId) : null;
-  const timeline = selectedId ? getTimelineByAlertId(selectedId) : [];
-  const relatedTransactions = alertDetail ? getTransactionsByAccountId(alertDetail.accountId) : [];
+  const alertDetail = selectedId ? mergedAlerts.find(a => a.id === selectedId) : null;
+  const { data: liveTrace } = useTrace(alertDetail?.accountId || null);
+  const timeline = useMemo(() => {
+    if (!alertDetail) return [];
+    return [
+      { id: 1, eventType: "ALERT_CREATED", timestamp: alertDetail.createdAt, description: "System detected anomalous activity pattern.", actor: "TRACE-X ML Engine" },
+      { id: 2, eventType: "STATUS_CHANGED", timestamp: new Date(new Date(alertDetail.createdAt).getTime() + 1000 * 60 * 5).toISOString(), description: `Alert severity assigned as ${alertDetail.severity}.`, actor: "Risk Scoring Service" }
+    ];
+  }, [alertDetail]);
+
+  const relatedTransactions = useMemo(() => {
+    if (liveTrace && liveTrace.chain && liveTrace.chain.length > 1) {
+      const txns = [];
+      const chain = liveTrace.chain;
+      const amounts = liveTrace.amounts || [];
+      const isConvergent = ["SMURFING", "DORMANT", "DORMANT_ACTIVATION"].includes(liveTrace?.fraud_type?.toUpperCase() || "") || 
+                           ["SMURFING", "DORMANT"].includes(alertDetail?.pattern?.toUpperCase() || "");
+      for (let i = 0; i < chain.length - 1; i++) {
+        let fromAccount = chain[i];
+        let toAccount = chain[i + 1];
+        if (isConvergent) {
+            fromAccount = chain[i + 1];
+            toAccount = chain[0];
+        }
+        txns.push({
+          id: `TXN-LIVE-${i}`,
+          txnId: `TXN-LIVE-${i}`,
+          amount: amounts[i] || 0,
+          txnType: "Transfer",
+          fromAccount,
+          toAccount
+        });
+      }
+      return txns;
+    }
+    return alertDetail ? getTransactionsByAccountId(alertDetail.accountId) : [];
+  }, [liveTrace, alertDetail]);
 
   return (
     <div className="p-6 space-y-5 min-h-screen" style={{ backgroundColor: "var(--background)" }}>
@@ -224,7 +367,7 @@ export default function Alerts() {
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.12 }}
         className="flex gap-2.5 flex-wrap items-center">
         <span className="text-[12px] font-bold uppercase tracking-widest" style={{ color: "rgba(19, 5, 55, 0.45)" }}>
-          {staticAlerts.length} alerts total
+          {alerts.length} alerts total
         </span>
         {["CRITICAL", "HIGH", "MEDIUM", "LOW"].map(sev => {
           const count = alerts.filter(a => a.severity === sev).length;
@@ -256,7 +399,15 @@ export default function Alerts() {
                 </tr>
               </thead>
               <tbody>
-                {alerts.length === 0 ? (
+                {alertsLoading && !liveAlertsData ? (
+                  Array.from({ length: 8 }).map((_, i) => (
+                    <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
+                      <td colSpan={9} className="px-4 py-4">
+                        <Skeleton className="h-6 w-full bg-slate-800/40 rounded-none" />
+                      </td>
+                    </tr>
+                  ))
+                ) : alerts.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="px-4 py-12 text-center text-[13px]" style={{ color: "rgba(19, 5, 55, 0.5)" }}>
                       No alerts match the current filters.
@@ -298,7 +449,7 @@ export default function Alerts() {
                           </Badge>
                         </td>
                         <td className="px-4 py-3 text-right font-black tabular-nums font-mono text-[12px]" style={{ color: "var(--foreground)" }}>
-                          ${(alert.amount / 1000).toFixed(0)}K
+                          ₹{(alert.amount / 1000).toFixed(0)}K
                         </td>
                         <td className="px-4 py-3 text-[12px]" style={{ color: "rgba(19, 5, 55, 0.5)" }}>
                           {alert.assignee ?? <span style={{ color: "rgba(19, 5, 55, 0.35)", fontStyle: "italic" }}>Unassigned</span>}
@@ -392,7 +543,7 @@ export default function Alerts() {
                       <div className="grid grid-cols-2 gap-x-8 gap-y-5">
                         {[
                           ["Pattern", alertDetail.pattern],
-                          ["Amount", `$${alertDetail.amount.toLocaleString()}`],
+                          ["Amount", `₹${alertDetail.amount.toLocaleString()}`],
                           ["Assignee", alertDetail.assignee ?? "Unassigned"],
                           ["Created", new Date(alertDetail.createdAt).toLocaleString()],
                         ].map(([label, value]) => (
@@ -429,21 +580,33 @@ export default function Alerts() {
 
                     {/* ── Actions ── */}
                     <section className="py-6 space-y-5">
-                      {getInvestigationAlertById(alertDetail.id) && (
-                        <Button
-                          onClick={() => handleStartInvestigation(alertDetail.id)}
-                          className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
-                          style={{
-                            backgroundColor: DRAWER.accent,
-                            color: DRAWER.accentDark,
-                            border: `1px solid ${DRAWER.accentDark}`,
-                            boxShadow: `3px 3px 0px ${DRAWER.accentDark}`,
-                          }}
-                        >
-                          <Network className="h-3.5 w-3.5 mr-2" />
-                          Start Investigation
-                        </Button>
-                      )}
+                      <Button
+                        onClick={() => handleStartInvestigation(alertDetail.id)}
+                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
+                        style={{
+                          backgroundColor: DRAWER.accent,
+                          color: DRAWER.accentDark,
+                          border: `1px solid ${DRAWER.accentDark}`,
+                          boxShadow: `3px 3px 0px ${DRAWER.accentDark}`,
+                        }}
+                      >
+                        <Network className="h-3.5 w-3.5 mr-2" />
+                        Start Investigation
+                      </Button>
+
+                      <Button
+                        onClick={() => { setDrawerOpen(false); navigate(`/evidence?account=${alertDetail.accountId}`); }}
+                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105 mt-3"
+                        style={{
+                          backgroundColor: "#130537",
+                          color: "#e8e8e2",
+                          border: `1px solid #a3e635`,
+                          boxShadow: `3px 3px 0px #a3e635`,
+                        }}
+                      >
+                        <Shield className="h-3.5 w-3.5 mr-2 text-[#a3e635]" />
+                        Escalate to FIU Evidence Case
+                      </Button>
 
                       <div>
                         <DrawerSectionLabel>{`// Update Status`}</DrawerSectionLabel>
@@ -511,7 +674,7 @@ export default function Alerts() {
                                     className="font-black text-[13px] tabular-nums font-mono"
                                     style={{ color: DRAWER.text }}
                                   >
-                                    ${txn.amount.toLocaleString()}
+                                    ₹{txn.amount.toLocaleString()}
                                   </p>
                                   <p className="text-[10px] mt-0.5" style={{ color: DRAWER.textMuted }}>
                                     {txn.txnType}

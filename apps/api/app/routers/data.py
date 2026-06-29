@@ -1,8 +1,14 @@
 import os
+import re
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from fraud_detector import _run_query, REL_TYPE, _get_driver
+
+class NoteCreate(BaseModel):
+    author: str = "FINnet Investigator"
+    content: str
 
 router = APIRouter(
     tags=["data"]
@@ -26,7 +32,7 @@ async def get_all_accounts(skip: int = 0, limit: int = 100):
     # 1. Fetch from Neo4j
     neo4j_query = """
         MATCH (a:Account)
-        RETURN a.account_id AS account_id, a.entity_id AS entity_id
+        RETURN a.account_id AS account_id, a.entity_id AS entity_id, a.customer_name AS customer_name, a.branch_name AS branch_name, a.branch_code AS branch_code
         SKIP $skip LIMIT $limit
     """
     neo4j_records = await _run_query(neo4j_query, skip=skip, limit=limit)
@@ -49,10 +55,16 @@ async def get_all_accounts(skip: int = 0, limit: int = 100):
             a.is_fraud,
             a.pattern_type,
             a.opened_on,
+            a.branch_name,
+            a.branch_code,
             s.avg_monthly_volume,
             s.volume_30d,
             s.txn_count_30d,
-            e.declared_annual_income
+            e.declared_annual_income,
+            e.customer_name,
+            e.pan_number,
+            e.dob,
+            e.address
         FROM accounts a
         LEFT JOIN account_stats s ON a.account_id = s.account_id
         LEFT JOIN entities e ON a.entity_id = e.entity_id
@@ -79,6 +91,12 @@ async def get_all_accounts(skip: int = 0, limit: int = 100):
         combined = {
             "account_id": acc_id,
             "entity_id": n_rec["entity_id"],
+            "branch_name": pg_rec.get("branch_name") or n_rec.get("branch_name"),
+            "branch_code": pg_rec.get("branch_code") or n_rec.get("branch_code"),
+            "customer_name": re.sub(r"\s*\(\d+\)$", "", str(pg_rec.get("customer_name") or n_rec.get("customer_name") or "")).strip(),
+            "pan_number": pg_rec.get("pan_number"),
+            "dob": pg_rec.get("dob"),
+            "address": pg_rec.get("address"),
             "kyc_tier": pg_rec.get("kyc_tier"),
             "status": pg_rec.get("status"),
             "risk_category": pg_rec.get("risk_category"),
@@ -165,13 +183,19 @@ async def get_account(account_id: str):
             a.is_fraud,
             a.pattern_type,
             a.opened_on,
+            a.branch_name,
+            a.branch_code,
             s.avg_monthly_volume,
             s.volume_30d,
             s.txn_count_30d,
             s.dormancy_days,
             e.declared_annual_income,
             e.entity_type,
-            e.kyc_status
+            e.kyc_status,
+            e.customer_name,
+            e.pan_number,
+            e.dob,
+            e.address
         FROM accounts a
         LEFT JOIN account_stats s ON a.account_id = s.account_id
         LEFT JOIN entities e ON a.entity_id = e.entity_id
@@ -213,3 +237,29 @@ async def get_transaction(txn_id: str):
         raise HTTPException(status_code=404, detail="Transaction not found in PostgreSQL")
         
     return pg_record
+
+@router.get("/accounts/{account_id}/notes")
+async def get_account_notes(account_id: str):
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT id, account_id, author, content, created_at FROM investigation_notes WHERE account_id = %s ORDER BY created_at DESC", (account_id,))
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+@router.post("/accounts/{account_id}/notes")
+async def add_account_note(account_id: str, note: NoteCreate):
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO investigation_notes (account_id, author, content, created_at)
+                VALUES (%s, %s, %s, NOW())
+                RETURNING id, account_id, author, content, created_at
+            """, (account_id, note.author, note.content))
+            new_note = cur.fetchone()
+        conn.commit()
+        return new_note
+    finally:
+        conn.close()

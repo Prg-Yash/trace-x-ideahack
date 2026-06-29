@@ -229,6 +229,58 @@ def main() -> None:
 
     pattern_labels = defaultdict(set)
 
+    def generate_legitimate_chain(base_amount_range=None, is_roundtrip=False):
+        length = random.randint(6, 10) if not is_roundtrip else random.randint(3, 6)
+        chain_accs = random.sample(acc_ids, length)
+        if is_roundtrip:
+            chain_accs.append(chain_accs[0])
+            
+        base_time = datetime.now() - timedelta(days=random.randint(1, 60))
+        max_opened = max([account_opened[a] for a in chain_accs])
+        if base_time < max_opened: base_time = max_opened + timedelta(days=1)
+        if base_time > datetime.now(): base_time = datetime.now() - timedelta(hours=72)
+        
+        profile_type = random.choice(["RETAIL", "SME_PAYMENT", "CORP_TREASURY", "HFT_EXPRESS"])
+        if profile_type == "HFT_EXPRESS":
+            base_amount = random.uniform(10000, 75000)
+            decay_range = (0.99, 1.01)
+            time_gap_hours = random.uniform(0.001, 0.03) 
+        elif profile_type == "CORP_TREASURY":
+            base_amount = random.uniform(500000, 2500000) 
+            decay_range = (0.95, 1.01) 
+            time_gap_hours = random.uniform(0.5, 4.0) 
+        elif profile_type == "SME_PAYMENT":
+            base_amount = random.uniform(60000, 300000)
+            decay_range = (0.90, 1.05)
+            time_gap_hours = random.uniform(2.0, 12.0)
+        else:
+            base_amount = random.uniform(1000, 20000)
+            decay_range = (0.50, 0.95)
+            time_gap_hours = random.uniform(12.0, 72.0)
+            
+        amount = base_amount
+        account_balances[chain_accs[0]] += amount
+        
+        running_amount = amount
+        for i in range(len(chain_accs) - 1):
+            decay = random.uniform(*decay_range)
+            running_amount = round(running_amount * decay, 2)
+            account_balances[chain_accs[i]] -= running_amount
+            account_balances[chain_accs[i + 1]] += running_amount
+            
+            hop_delay = time_gap_hours + random.gauss(0, time_gap_hours * 0.1)
+            hop_delay = max(0.1, hop_delay)
+            base_time += timedelta(hours=hop_delay)
+            
+            transactions.append(
+                make_txn(
+                    counter, txn_width, chain_accs[i], chain_accs[i + 1], running_amount,
+                    random.choice(["NEFT", "RTGS", "IMPS"]), 
+                    base_time,
+                    "SUCCESS", "transfer", False, "LEGITIMATE_ROUNDTRIP" if is_roundtrip else "LEGITIMATE_CHAIN"
+                )
+            )
+
     # Pattern 1: Rapid Layering
     for _ in range(layering_chains):
         chain = random.sample(acc_ids, random.randint(6, 10))
@@ -240,20 +292,29 @@ def main() -> None:
         amount = random.uniform(100000, 400000) # Keep under 5L to realistically use IMPS
         account_balances[chain[0]] += amount
         
+        running_amount = amount
         for i in range(len(chain) - 1):
-            account_balances[chain[i]] -= amount * (0.99**i)
-            account_balances[chain[i + 1]] += amount * (0.99**i)
+            decay = random.uniform(0.92, 0.99)  # Random jitter to prevent data leakage
+            running_amount *= decay
+            account_balances[chain[i]] -= running_amount
+            account_balances[chain[i + 1]] += running_amount
             fraud_accounts.update([chain[i], chain[i + 1]])
             pattern_labels[chain[i]].add("LAYERING")
             pattern_labels[chain[i + 1]].add("LAYERING") # Fix Receiver Blindspot
+            time_jitter = random.randint(2, 12)  # Variable hop timing
             transactions.append(
                 make_txn(
-                    counter, txn_width, chain[i], chain[i + 1], amount * (0.99**i),
-                    "IMPS", # Fast channels for layering
-                    base_time + timedelta(minutes=i * 5),
+                    counter, txn_width, chain[i], chain[i + 1], running_amount,
+                    random.choice(["IMPS", "NEFT", "RTGS"]),  # Vary channels
+                    base_time + timedelta(minutes=i * time_jitter + random.randint(0, 5)),
                     "SUCCESS", "transfer", True, "LAYERING"
                 )
             )
+            
+        # Add 3 legitimate chains for every 1 fraud chain
+        generate_legitimate_chain((5000, 50000))
+        generate_legitimate_chain((50000, 500000))
+        generate_legitimate_chain((100000, 2000000))
 
     # Pattern 2: Round-Tripping
     for _ in range(round_trips):
@@ -267,18 +328,29 @@ def main() -> None:
         amount = random.uniform(500000, 5000000)
         account_balances[ring[0]] += amount
         
+        running_amount = amount
         for i in range(len(ring) - 1):
-            account_balances[ring[i]] -= amount * (0.98**i)
-            account_balances[ring[i + 1]] += amount * (0.98**i)
+            decay = random.uniform(0.93, 0.99)  # Random jitter to prevent data leakage
+            running_amount *= decay
+            account_balances[ring[i]] -= running_amount
+            account_balances[ring[i + 1]] += running_amount
             fraud_accounts.update([ring[i], ring[i + 1]])
             pattern_labels[ring[i]].add("ROUND_TRIP")
             pattern_labels[ring[i + 1]].add("ROUND_TRIP") # Fix Receiver Blindspot
+            time_jitter = random.uniform(1.0, 4.0)  # Variable hop timing in hours
             transactions.append(
                 make_txn(
-                    counter, txn_width, ring[i], ring[i + 1], amount * (0.98**i),
-                    "RTGS", base_time + timedelta(hours=i * 2), "SUCCESS", "settlement", True, "ROUND_TRIP"
+                    counter, txn_width, ring[i], ring[i + 1], running_amount,
+                    random.choice(["RTGS", "NEFT"]),  # Vary channels
+                    base_time + timedelta(hours=i * time_jitter + random.uniform(0, 1)),
+                    "SUCCESS", "settlement", True, "ROUND_TRIP"
                 )
             )
+
+        # Add 3 legitimate round-trips for every 1 fraud roundtrip
+        generate_legitimate_chain((5000, 50000), True)
+        generate_legitimate_chain((50000, 500000), True)
+        generate_legitimate_chain((100000, 2000000), True)
 
     # Pattern 3: Smurfing (Proper amounts just below 10L threshold)
     for _ in range(smurf_clusters):
@@ -291,17 +363,19 @@ def main() -> None:
         if base_time > datetime.now(): base_time = datetime.now() - timedelta(minutes=60)
         
         fraud_accounts.add(master)
-        account_balances[master] += sum([990000 for _ in receivers])
+        account_balances[master] += sum([99000 for _ in receivers])
         pattern_labels[master].add("SMURFING")
         for recv in receivers:
             fraud_accounts.add(recv)
             pattern_labels[recv].add("SMURFING")
+            # Amount between 70k-99k (just below 1L UPI threshold, inside detector window 60k-120k)
+            smurf_amount = random.gauss(85000, 8000)
+            smurf_amount = max(65000, min(smurf_amount, 99000))
             transactions.append(
                 make_txn(
-                    counter, txn_width, master, recv, 
-                    # Inject Gaussian noise / Jitter for data leakage prevention
-                    max(100000, random.gauss(950000, 75000)), 
-                    "NEFT", base_time + timedelta(minutes=random.randint(1, 120)) + timedelta(minutes=random.gauss(0, 30)),
+                    counter, txn_width, master, recv, smurf_amount,
+                    "UPI",  # Smurfing uses UPI — detector requires min_upi_ratio >= 0.7
+                    base_time + timedelta(minutes=random.randint(1, 90)),
                     "SUCCESS", "split transfer", True, "SMURFING"
                 )
             )
