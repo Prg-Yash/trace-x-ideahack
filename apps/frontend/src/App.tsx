@@ -12,6 +12,7 @@ import Demo from "@/pages/Demo";
 import GraphAnalytics from "@/pages/GraphAnalytics";
 import Accounts from "@/pages/Accounts";
 import Evidence from "@/pages/Evidence";
+import LiveStream from "@/pages/LiveStream";
 import BranchRisk from "@/pages/BranchRisk";
 
 function Router() {
@@ -21,6 +22,7 @@ function Router() {
         <Route path="/" component={Home} />
         <Route path="/dashboard" component={Dashboard} />
         <Route path="/demo" component={Demo} />
+        <Route path="/livestream" component={LiveStream} />
         <Route path="/alerts" component={Alerts} />
         <Route path="/graph/:alertId" component={GraphAnalytics} />
         <Route path="/graph" component={GraphAnalytics} />

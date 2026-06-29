@@ -14,3 +14,4 @@ xgboost
 networkx
 -e ../../packages/py-schemas
 psycopg2-binary
+aiokafka

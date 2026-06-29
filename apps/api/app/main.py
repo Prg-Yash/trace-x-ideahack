@@ -10,7 +10,7 @@ warnings.filterwarnings("ignore", message=".*feature names.*")
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import health, schema, fraud, data, demo
+from app.routers import health, schema, fraud, data, demo, stream
 from app.core.config import settings
 from app.core.websockets import manager
 
@@ -24,12 +24,35 @@ from fraud_detector import (
     detect_layering,
     get_account_ids,
     explain_dormant,
-    explain_smurfing,
 )
+
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from app.services.broker import get_active_broker
+    from app.services.stream_simulator import FirehoseProducer, StreamConsumer
+    import app.services.stream_simulator as stream_sim
+    
+    # Init broker
+    active_broker = await get_active_broker()
+    # Init instances
+    stream_sim.producer_instance = FirehoseProducer(active_broker)
+    stream_sim.consumer_instance = StreamConsumer(active_broker)
+    
+    yield
+    
+    # Cleanup
+    if stream_sim.producer_instance:
+        await stream_sim.producer_instance.stop()
+    if stream_sim.consumer_instance:
+        await stream_sim.consumer_instance.stop()
+    await active_broker.stop()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json"
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    lifespan=lifespan
 )
 
 app.add_middleware(
@@ -45,6 +68,7 @@ app.include_router(schema.router, prefix=settings.API_V1_STR)
 app.include_router(fraud.router, prefix=settings.API_V1_STR)
 app.include_router(data.router, prefix=settings.API_V1_STR)
 app.include_router(demo.router, prefix=settings.API_V1_STR)
+app.include_router(stream.router, prefix=f"{settings.API_V1_STR}/stream")
 
 
 @app.get("/")

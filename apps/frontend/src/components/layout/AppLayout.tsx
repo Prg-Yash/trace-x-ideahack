@@ -27,6 +27,7 @@ const navSections = [
   {
     label: "System",
     items: [
+      { name: "Live Stream", href: "/livestream", icon: Activity, badge: "300 TPS" },
       { name: "Demo Control", href: "/demo", icon: Terminal, badge: "Inject" },
     ],
   },
