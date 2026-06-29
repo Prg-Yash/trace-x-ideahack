@@ -1,14 +1,14 @@
+import { useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Link, useRoute } from "wouter";
-import { ArrowLeft, Camera, Loader2, Radio } from "lucide-react";
+import { ArrowLeft, Camera, Loader2, Radio, Video, Square } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useReplayEngine } from "@/hooks/useReplayEngine";
 import { useLiveReplayDataset } from "@/hooks/useLiveReplayDataset";
-import { useAICommentary } from "@/hooks/useAICommentary";
 import { ReplayGraph } from "@/components/replay/ReplayGraph";
 import { ReplayControls } from "@/components/replay/ReplayControls";
 import { TimelinePanel } from "@/components/replay/TimelinePanel";
-import { AICommentaryPanel } from "@/components/replay/AICommentaryPanel";
+import { AIBriefingPanel, type AIBriefingPanelRef } from "@/components/replay/AIBriefingPanel";
 import { AccountInspector } from "@/components/replay/AccountInspector";
 import { RiskScoreCard } from "@/components/replay/RiskScoreCard";
 import { StatisticsPanel } from "@/components/replay/StatisticsPanel";
@@ -27,6 +27,7 @@ export default function TransactionTimeMachine() {
     alertMeta,
     dataset,
     score,
+    explain,
     loading,
     hasTrace,
     error,
@@ -87,6 +88,7 @@ export default function TransactionTimeMachine() {
       alertId={alertId}
       alert={alertMeta}
       dataset={dataset}
+      explain={explain}
       peakRisk={getPeakRiskFromScore(score, dataset.transactions.length)}
       toast={toast}
     />
@@ -97,31 +99,89 @@ function TransactionTimeMachineReplay({
   alertId,
   alert,
   dataset,
+  explain,
   peakRisk,
   toast,
 }: {
   alertId: string;
   alert: LiveAlertMeta;
   dataset: ReplayDataset;
+  explain: any;
   peakRisk: number;
   toast: ReturnType<typeof useToast>["toast"];
 }) {
   const engine = useReplayEngine(dataset);
+  const aiBriefingRef = useRef<AIBriefingPanelRef>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
 
-  // AI commentary — uses already-loaded dataset; independent of replay engine
-  const { commentary, loading: aiLoading, error: aiError, regenerate } = useAICommentary(
-    alertId,
-    dataset.transactions,
-    dataset.accounts,
-    alert,
-  );
+  const handleRecordVideo = async () => {
+    if (isRecording) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
+      setIsRecording(false);
+      return;
+    }
 
-  const handleCapture = () => {
-    const snap = engine.captureSnapshot();
-    toast({
-      title: "Evidence snapshot captured",
-      description: `Risk score ${snap.riskScore} · ${snap.visibleTransactionIds.length} transactions recorded`,
-    });
+    try {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      
+      const recorder = new MediaRecorder(displayStream, { mimeType: "video/webm" });
+      const chunks: BlobPart[] = [];
+      
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+      
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: "video/webm" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `transaction_replay_${alertId}.webm`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setIsRecording(false);
+      };
+      
+      displayStream.getVideoTracks()[0].onended = () => {
+        if (recorder.state !== 'inactive') recorder.stop();
+      };
+
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+      
+      engine.restart();
+      engine.play();
+      
+      if (!aiBriefingRef.current?.getText()) {
+        await aiBriefingRef.current?.generateBriefing();
+      }
+      
+      await aiBriefingRef.current?.speak();
+      
+      // Stop recording automatically when voice finishes
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
+      
+      displayStream.getTracks().forEach(t => t.stop());
+      
+      toast({
+        title: "Video Recorded",
+        description: "Transaction replay and AI voiceover downloaded successfully.",
+      });
+    } catch (e) {
+      console.error("Recording failed:", e);
+      setIsRecording(false);
+      toast({
+        title: "Recording Failed",
+        description: "Could not start video recording.",
+        variant: "destructive"
+      });
+    }
   };
 
   const metaChips = [
@@ -197,16 +257,17 @@ function TransactionTimeMachineReplay({
           </div>
           <button
             type="button"
-            onClick={handleCapture}
+            onClick={handleRecordVideo}
             className="flex items-center gap-1.5 px-2.5 py-1.5 text-[9px] font-black uppercase tracking-[0.1em]"
             style={{
-              backgroundColor: REPLAY_THEME.accent,
+              backgroundColor: isRecording ? REPLAY_THEME.error : REPLAY_THEME.accent,
               color: REPLAY_THEME.border,
-              border: `1px solid ${REPLAY_THEME.border}`,
+              border: `1px solid ${isRecording ? REPLAY_THEME.error : REPLAY_THEME.accent}`,
+              transition: "all 0.2s"
             }}
           >
-            <Camera className="h-3 w-3" />
-            Snapshot
+            {isRecording ? <Square className="h-3 w-3" fill="currentColor" /> : <Video className="h-3 w-3" />}
+            {isRecording ? "Stop Recording" : "Record Video"}
           </button>
         </div>
       </motion.header>
@@ -253,13 +314,13 @@ function TransactionTimeMachineReplay({
               onSeek={engine.seekToIndex}
             />
           </div>
-          {/* AI Commentary Panel replaces the old CommentaryPanel */}
+          {/* AI Briefing Panel replaces the old AICommentaryPanel */}
           <div className="flex-[4] min-h-0">
-            <AICommentaryPanel
-              commentary={commentary}
-              loading={aiLoading}
-              error={aiError}
-              onRegenerate={regenerate}
+            <AIBriefingPanel
+              ref={aiBriefingRef}
+              alert={alert}
+              dataset={dataset}
+              explain={explain}
             />
           </div>
           <div className="h-[130px] shrink-0 min-h-0 hidden lg:block">
