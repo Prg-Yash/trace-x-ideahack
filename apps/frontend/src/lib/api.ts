@@ -174,10 +174,52 @@ export type InvestigationNote = {
   created_at: string;
 };
 
+export type BranchRisk = {
+  branch_code: string;
+  branch_name: string;
+  region: string;
+  total_accounts: number;
+  flagged_accounts: number;
+  flagged_volume: number;
+  risk_score: number;
+  dominant_pattern: string;
+  channel_breakdown: Record<string, number>;
+};
+
+export type ChannelRisk = {
+  channel: string;
+  total_volume: number;
+  flagged_volume: number;
+  flagged_txns: number;
+  risk_percentage: number;
+  top_pattern: string;
+  avg_txn_size: number;
+};
+
+export type MatrixItem = {
+  pattern: string;
+  CASH: number;
+  UPI: number;
+  NEFT: number;
+  WIRE: number;
+  SWIFT: number;
+  CRYPTO: number;
+  primary_abuse: string;
+};
+
+export type BranchChannelAnalytics = {
+  generated_at: string;
+  branches: BranchRisk[];
+  channels: ChannelRisk[];
+  matrix: MatrixItem[];
+};
+
 // ── API calls ────────────────────────────────────────────────────────────────
 
 /** Dashboard KPIs */
 export const fetchStats = () => apiFetch<SystemStats>("/stats");
+
+export const fetchBranchChannelAnalytics = () => apiFetch<BranchChannelAnalytics>("/analytics/branch-channel");
 
 /** Live transaction feed */
 export const fetchFeed = () => apiFetch<FeedResponse>("/feed");

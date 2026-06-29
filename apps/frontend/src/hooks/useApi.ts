@@ -5,9 +5,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   fetchStats, fetchAlertsQuick, fetchFeed,
-  fetchScore, fetchTrace, fetchExplain, fetchEvidencePackage, fetchAccounts, fetchAccountNotes,
+  fetchScore, fetchTrace, fetchExplain, fetchEvidencePackage, fetchAccounts, fetchAccountNotes, fetchBranchChannelAnalytics,
   type SystemStats, type AlertsResponse, type FeedResponse,
-  type ScoreResult, type TraceResult, type ExplainResult, type AccountRecord, type InvestigationNote,
+  type ScoreResult, type TraceResult, type ExplainResult, type AccountRecord, type InvestigationNote, type BranchChannelAnalytics,
 } from "@/lib/api";
 
 // ── Generic fetcher hook ─────────────────────────────────────────────────────
@@ -59,6 +59,10 @@ function useQuery<T>(
 /** System-wide KPI stats – auto-refreshes every 30s */
 export function useStats() {
   return useQuery<SystemStats>(fetchStats, [], { refetchInterval: 30_000 });
+}
+
+export function useBranchChannelAnalytics() {
+  return useQuery<BranchChannelAnalytics>(fetchBranchChannelAnalytics, [], { refetchInterval: 60_000 });
 }
 
 /** Pre-computed quick alerts from Neo4j */
