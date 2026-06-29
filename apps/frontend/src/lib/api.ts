@@ -93,6 +93,10 @@ export type TraceResult = {
   fraud_type: string;
   chain: string[];
   amounts: number[];
+  timestamps?: string[];
+  channels?: string[];
+  confidence?: number;
+  error?: string;
 };
 
 export type ShapFactor = {
@@ -236,9 +240,11 @@ export const fetchAlerts = (limit = 50) =>
 export const fetchScore = (accountId: string) =>
   apiFetch<ScoreResult>(`/score/${encodeURIComponent(accountId)}`);
 
-/** Graph trace for layering / round-trip */
-export const fetchTrace = (accountId: string) =>
-  apiFetch<TraceResult>(`/trace/${encodeURIComponent(accountId)}`);
+/** Graph trace for an account */
+export const fetchTrace = (accountId: string, hint = "") => {
+  const qs = hint ? `?hint=${encodeURIComponent(hint)}` : "";
+  return apiFetch<TraceResult>(`/trace/${encodeURIComponent(accountId)}${qs}`);
+};
 
 /** Full SHAP/XAI explanation package (all models) */
 export const fetchExplain = (accountId: string) =>

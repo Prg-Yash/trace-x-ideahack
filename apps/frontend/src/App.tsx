@@ -13,6 +13,7 @@ import GraphAnalytics from "@/pages/GraphAnalytics";
 import Accounts from "@/pages/Accounts";
 import Evidence from "@/pages/Evidence";
 import BranchRisk from "@/pages/BranchRisk";
+import TransactionTimeMachine from "@/pages/TransactionTimeMachine";
 
 function Router() {
   return (
@@ -28,6 +29,7 @@ function Router() {
         <Route path="/branch-risk" component={BranchRisk} />
         <Route path="/accounts" component={Accounts} />
         <Route path="/evidence" component={Evidence} />
+        <Route path="/transaction-time-machine/:alertId" component={TransactionTimeMachine} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

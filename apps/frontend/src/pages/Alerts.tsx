@@ -4,7 +4,7 @@ import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle, Search, X, Clock, User,
-  ChevronRight, ChevronDown, CheckCircle2, Network, Shield,
+  ChevronRight, ChevronDown, CheckCircle2, Network, Shield, Activity,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -222,6 +222,14 @@ export default function Alerts() {
     if (alert) {
       setDrawerOpen(false);
       navigate(`/graph/${alert.rawAccountId || alert.alertId}`);
+    }
+  };
+
+  const handleVisualizeTransaction = (alertId: number) => {
+    const alert = mergedAlerts.find(a => a.id === alertId);
+    if (alert) {
+      setDrawerOpen(false);
+      navigate(`/transaction-time-machine/${encodeURIComponent(alert.alertId)}`);
     }
   };
 
@@ -586,6 +594,20 @@ export default function Alerts() {
                       >
                         <Network className="h-3.5 w-3.5 mr-2" />
                         Start Investigation
+                      </Button>
+
+                      <Button
+                        onClick={() => handleVisualizeTransaction(alertDetail.id)}
+                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
+                        style={{
+                          backgroundColor: DRAWER.surface,
+                          color: DRAWER.accent,
+                          border: `1px solid ${DRAWER.accent}`,
+                          boxShadow: `3px 3px 0px rgba(163,230,53,0.25)`,
+                        }}
+                      >
+                        <Activity className="h-3.5 w-3.5 mr-2" />
+                        Visualize Transaction
                       </Button>
 
                       <Button
