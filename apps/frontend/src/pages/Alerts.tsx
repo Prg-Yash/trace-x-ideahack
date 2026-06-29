@@ -15,7 +15,6 @@ import {
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  staticAlerts,
   getTimelineByAlertId,
   getTransactionsByAccountId,
   type Alert,
@@ -135,45 +134,45 @@ export default function Alerts() {
           if (!payload) return;
 
           if (payload.event === "STAGE_UPDATE") {
-             const data = payload.data;
-             toast.info(`Stage ${data.stage}: ${data.message}`);
+            const data = payload.data;
+            toast.info(`Stage ${data.stage}: ${data.message}`);
           }
           else if (payload.event === "NEW_ALERT") {
-             const data = payload.data;
-             toast.success(`Demo Injection Complete! Alert ${data.alert_id} generated.`);
-             
-             // Construct optimistic alert
-             const newAlert: Alert = {
-               id: Date.now(), // temporary unique id
-               alertId: data.alert_id,
-               accountId: data.account_ids ? data.account_ids[0] : "unknown",
-               severity: data.severity || data.tier || "CRITICAL",
-               status: "OPEN",
-               pattern: data.pattern || "LAYERING",
-               amount: data.total_amount ?? Math.round((data.fraud_prob || data.fraud_probability || 0.95) * 500000),
-               assignee: null,
-               description: `Live Injection: ${data.pattern}`,
-               createdAt: new Date().toISOString(),
-               updatedAt: new Date().toISOString(),
-               accountName: data.account_ids ? data.account_ids[0] : "unknown",
-               accountNumber: data.account_ids ? data.account_ids[0] : "unknown",
-             };
-             
-             setOptimisticAlerts(prev => [newAlert, ...prev]);
-             
-             // Trigger actual refetch after 1500ms to ensure DB commit is visible
-             setTimeout(() => {
-                if (refetchAlerts) refetchAlerts();
-                setOptimisticAlerts([]); // clear optimistic once live data returns
-             }, 1500);
+            const data = payload.data;
+            toast.success(`Demo Injection Complete! Alert ${data.alert_id} generated.`);
+
+            // Construct optimistic alert
+            const newAlert: Alert = {
+              id: Date.now(), // temporary unique id
+              alertId: data.alert_id,
+              accountId: data.account_ids ? data.account_ids[0] : "unknown",
+              severity: data.severity || data.tier || "CRITICAL",
+              status: "OPEN",
+              pattern: data.pattern || "LAYERING",
+              amount: data.total_amount ?? Math.round((data.fraud_prob || data.fraud_probability || 0.95) * 500000),
+              assignee: null,
+              description: `Live Injection: ${data.pattern}`,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              accountName: data.account_ids ? data.account_ids[0] : "unknown",
+              accountNumber: data.account_ids ? data.account_ids[0] : "unknown",
+            };
+
+            setOptimisticAlerts(prev => [newAlert, ...prev]);
+
+            // Trigger actual refetch after 1500ms to ensure DB commit is visible
+            setTimeout(() => {
+              if (refetchAlerts) refetchAlerts();
+              setOptimisticAlerts([]); // clear optimistic once live data returns
+            }, 1500);
           }
           else if (payload.event === "INJECTION_ERROR") {
-             toast.error(`Injection Failed: ${payload.data.message}`);
+            toast.error(`Injection Failed: ${payload.data.message}`);
           }
           else if (payload.event === "DEMO_RESET") {
-             toast.success("Demo data cleared.");
-             if (refetchAlerts) refetchAlerts();
-             setOptimisticAlerts([]);
+            toast.success("Demo data cleared.");
+            if (refetchAlerts) refetchAlerts();
+            setOptimisticAlerts([]);
           }
         } catch (e) {
           console.error("WS Parse Error", e);
@@ -200,22 +199,22 @@ export default function Alerts() {
   // Merge live alerts with static format for UI components
   const apiAlerts: Alert[] = liveAlertsData?.alerts?.length
     ? liveAlertsData.alerts.map((a: any, i: number) => ({
-        id: i + 1,
-        alertId: a.alert_id || `ALT-${a.account_id}-${(a.flagged_for?.[0] || "fraud").toLowerCase()}`,
-        accountId: i + 1,
-        severity: (a.risk_level || a.severity) as string,
-        status: "OPEN",
-        pattern: a.flagged_for?.[0] ?? a.pattern_type ?? "UNKNOWN",
-        amount: a.total_amount ?? Math.round((a.score || a.fraud_probability || 0.9) * 5_000_000),
-        assignee: null,
-        description: `Fraud pattern detected: ${a.flagged_for?.join(", ") || a.pattern_type}`,
-        createdAt: a.created_at || new Date().toISOString(),
-        updatedAt: a.created_at || new Date().toISOString(),
-        accountName: a.account_id,
-        accountNumber: a.account_id,
-      }))
+      id: i + 1,
+      alertId: a.alert_id || `ALT-${a.account_id}-${(a.flagged_for?.[0] || "fraud").toLowerCase()}`,
+      accountId: i + 1,
+      severity: (a.risk_level || a.severity) as string,
+      status: "OPEN",
+      pattern: a.flagged_for?.[0] ?? a.pattern_type ?? "UNKNOWN",
+      amount: a.total_amount ?? Math.round((a.score || a.fraud_probability || 0.9) * 5_000_000),
+      assignee: null,
+      description: `Fraud pattern detected: ${a.flagged_for.join(", ")}`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      accountName: a.customer_name || a.account_id,
+      accountNumber: `${a.account_id} (${a.branch_name || "Main Branch"})`,
+    }))
     : [];
-    
+
   const mergedAlerts = [...optimisticAlerts, ...apiAlerts];
 
   const handleStartInvestigation = (alertId: number) => {
