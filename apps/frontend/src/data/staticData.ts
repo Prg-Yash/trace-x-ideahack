@@ -816,7 +816,7 @@ export function getCaseDetail(caseId: number) {
       reportingEntity: "G-TEN Financial Intelligence Platform",
       reportDate: new Date(c.updatedAt).toLocaleDateString(),
       suspiciousActivityType: linkedAlert?.pattern ?? "Complex Financial Crime",
-      narrativeSummary: `This Suspicious Activity Report (SAR) documents financial activity identified through automated behavioural analysis and investigator review. The subject entity — ${c.suspiciousAccounts[0] ?? "Unknown"} — engaged in transaction patterns consistent with ${linkedAlert?.pattern ?? "money laundering"}, with a total exposure of $${(c.totalAmount / 1_000_000).toFixed(2)}M across the reporting period.`,
+      narrativeSummary: `This Suspicious Activity Report (SAR) documents financial activity identified through automated behavioural analysis and investigator review. The subject entity — ${c.suspiciousAccounts[0] ?? "Unknown"} — engaged in transaction patterns consistent with ${linkedAlert?.pattern ?? "money laundering"}, with a total exposure of ₹${(c.totalAmount / 1_000_000).toFixed(2)}M across the reporting period.`,
       actionRequired: "File with the Financial Intelligence Unit within 30 days. Preserve all transaction records and account documentation for regulatory review. Do not tip off the subject.",
     },
   };

@@ -329,7 +329,7 @@ export default function Alerts() {
                           </Badge>
                         </td>
                         <td className="px-4 py-3 text-right font-black tabular-nums font-mono text-[12px]" style={{ color: "var(--foreground)" }}>
-                          ${(alert.amount / 1000).toFixed(0)}K
+                          ₹{(alert.amount / 1000).toFixed(0)}K
                         </td>
                         <td className="px-4 py-3 text-[12px]" style={{ color: "rgba(19, 5, 55, 0.5)" }}>
                           {alert.assignee ?? <span style={{ color: "rgba(19, 5, 55, 0.35)", fontStyle: "italic" }}>Unassigned</span>}
@@ -423,7 +423,7 @@ export default function Alerts() {
                       <div className="grid grid-cols-2 gap-x-8 gap-y-5">
                         {[
                           ["Pattern", alertDetail.pattern],
-                          ["Amount", `$${alertDetail.amount.toLocaleString()}`],
+                          ["Amount", `₹${alertDetail.amount.toLocaleString()}`],
                           ["Assignee", alertDetail.assignee ?? "Unassigned"],
                           ["Created", new Date(alertDetail.createdAt).toLocaleString()],
                         ].map(([label, value]) => (
@@ -554,7 +554,7 @@ export default function Alerts() {
                                     className="font-black text-[13px] tabular-nums font-mono"
                                     style={{ color: DRAWER.text }}
                                   >
-                                    ${txn.amount.toLocaleString()}
+                                    ₹{txn.amount.toLocaleString()}
                                   </p>
                                   <p className="text-[10px] mt-0.5" style={{ color: DRAWER.textMuted }}>
                                     {txn.txnType}

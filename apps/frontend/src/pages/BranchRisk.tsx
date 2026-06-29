@@ -105,7 +105,7 @@ export default function BranchRisk() {
                   <tr key={i} className="hover:bg-slate-800/50 transition-colors">
                     <td className="px-4 py-3 font-bold text-slate-700 tracking-wide">{c.channel}</td>
                     <td className="px-4 py-3">
-                      <div className="text-red-400 font-mono">${(c.flagged_volume / 1000000).toFixed(2)}M</div>
+                      <div className="text-red-400 font-mono">₹{(c.flagged_volume / 1000000).toFixed(2)}M</div>
                       <div className="text-[10px] text-slate-500 font-mono mt-0.5">{c.flagged_txns.toLocaleString()} txns</div>
                     </td>
                     <td className="px-4 py-3">

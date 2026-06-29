@@ -426,12 +426,22 @@ async def get_kyc_mismatch_explanation(account_id: str):
 
 
 # ───────────────────────────────────────────────────────────────────────────────
-# NARRATIVE (Gemini AI)
+# NARRATIVE (AI Investigator Briefing)
 # ───────────────────────────────────────────────────────────────────────────────
-@router.get("/narrative/{account_id}")
-async def get_narrative(account_id: str):
+class NarrativeRequest(BaseModel):
+    focused_pattern: str = None
+    all_patterns: list = []
+    shap_features: list = []
+
+@router.post("/narrative/{account_id}")
+async def get_narrative(account_id: str, body: NarrativeRequest):
     from app.services.genai_explain import generate_narrative
-    return _coerce(await generate_narrative(account_id))
+    return _coerce(await generate_narrative(
+        account_id,
+        focused_pattern=body.focused_pattern,
+        all_patterns=body.all_patterns,
+        shap_features=body.shap_features,
+    ))
 
 
 # ───────────────────────────────────────────────────────────────────────────────

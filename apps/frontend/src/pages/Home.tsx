@@ -99,7 +99,7 @@ const features = [
 
 const stats = [
   { value: "14.2M", label: "Transactions Analyzed Daily" },
-  { value: "$840M+", label: "Fraud Exposure Prevented" },
+  { value: "₹840M+", label: "Fraud Exposure Prevented" },
   { value: "12,400", label: "FIU Reports Generated" },
   { value: "98.7%", label: "Alert Accuracy Rate" },
 ];
