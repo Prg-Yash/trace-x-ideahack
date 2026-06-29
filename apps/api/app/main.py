@@ -40,14 +40,15 @@ async def lifespan(app: FastAPI):
     stream_sim.producer_instance = FirehoseProducer(active_broker)
     stream_sim.consumer_instance = StreamConsumer(active_broker)
     
-    yield
-    
-    # Cleanup
-    if stream_sim.producer_instance:
-        await stream_sim.producer_instance.stop()
-    if stream_sim.consumer_instance:
-        await stream_sim.consumer_instance.stop()
-    await active_broker.stop()
+    try:
+        yield
+    finally:
+        # Cleanup
+        if stream_sim.producer_instance:
+            await stream_sim.producer_instance.stop()
+        if stream_sim.consumer_instance:
+            await stream_sim.consumer_instance.stop()
+        await active_broker.stop()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,

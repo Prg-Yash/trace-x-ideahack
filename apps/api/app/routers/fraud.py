@@ -190,7 +190,8 @@ async def get_alerts_quick(limit: int = 200):
             coalesce(al.fraud_probability, al.fraud_prob, 0.8)      AS fraud_prob,
             coalesce(al.severity, al.tier, 'HIGH')                  AS tier,
             coalesce(al.status, 'OPEN')                             AS status,
-            al.created_at                                           AS created_at
+            al.created_at                                           AS created_at,
+            al.amounts                                              AS amounts
         ORDER BY al.fraud_probability DESC
     """
     try:
@@ -209,8 +210,17 @@ async def get_alerts_quick(limit: int = 200):
         pattern = str(rec.get("pattern") or "unknown")
         score   = float(rec.get("fraud_prob") or 0.8)
         tier    = str(rec.get("tier") or PATTERN_RISK.get(pattern, "HIGH"))
-        # Use real volume_30d from Postgres, not missing Neo4j property
-        amount  = amounts_map.get(acc_id, 0.0)
+        
+        # Use real volume_30d from Postgres, or sum of amounts from Neo4j for Live Simulator alerts
+        neo4j_amounts = rec.get("amounts")
+        if neo4j_amounts:
+            amount = sum(float(x) for x in neo4j_amounts)
+        else:
+            amount = amounts_map.get(acc_id, 0.0)
+            
+        if not amount:
+            amount = None
+            
         status  = str(rec.get("status") or "OPEN")
         raw_cname = rec.get("customer_name") or f"Entity ({acc_id})"
         cust_name = re.sub(r"\s*\(\d+\)$", "", str(raw_cname)).strip()
@@ -240,7 +250,7 @@ async def get_alerts_quick(limit: int = 200):
             "risk_level":   tier,
             "flagged_for":  [pattern],
             "score":        round(score, 4),
-            "total_amount": round(amount, 2),
+            "total_amount": round(amount, 2) if amount is not None else None,
             "status":       status,
             "created_at":   created_str,
             "detections":   {pattern: {"detected": True, "confidence": round(score, 4)}},

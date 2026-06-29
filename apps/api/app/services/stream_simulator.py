@@ -254,6 +254,22 @@ class StreamConsumer:
                         # Only trigger one Stage 2 alert per injected pattern in this batch
                         if t["pattern"] not in seen_patterns:
                             seen_patterns.add(t["pattern"])
+                            # Find all txns in this batch for the same pattern to build the chain
+                            related = [x for x in batch if x.get("pattern") == t["pattern"]]
+                            if str(t.get("pattern", "")).lower() == "smurfing":
+                                senders = list({x["sender"] for x in related})
+                                t["chain"] = senders + [t["receiver"]]
+                                t["amounts"] = [x["amount"] for x in related]
+                            elif str(t.get("pattern", "")).lower() in ["layering", "round_trip"]:
+                                nodes = []
+                                amounts = []
+                                for x in related:
+                                    if x["sender"] not in nodes: nodes.append(x["sender"])
+                                    if x["receiver"] not in nodes: nodes.append(x["receiver"])
+                                    amounts.append(x["amount"])
+                                t["chain"] = nodes
+                                t["amounts"] = amounts
+                                
                             anomalies.append(t)
             
             # Stage 2: Deep Graph Traversal for anomalies
@@ -281,6 +297,7 @@ class StreamConsumer:
     async def _run_stage2(self, txn: dict):
         from app.services.websocket_manager import ws_manager
         from app.db.session import get_db
+        import datetime
         driver = get_db()
         
         async with self._stage2_semaphore:
@@ -289,16 +306,24 @@ class StreamConsumer:
             
             pattern_name = str(txn['pattern']).replace('_', ' ').title()
             
+            # Determine which account to flag based on pattern type
+            if str(txn.get('pattern', '')).lower() == 'smurfing':
+                flagged_account_id = txn['receiver']
+            else:
+                flagged_account_id = txn['sender']
+                
             # Persist Alert to Neo4j so Dashboard totals increase
             if driver:
                 alert_query = """
                 MATCH (a:Account {account_id: $account_id})
                 MERGE (al:Alert {alert_id: $alert_id})
-                SET al.pattern = $pattern,
-                    al.fraud_prob = 0.99,
-                    al.tier = 'CRITICAL',
+                SET al.pattern_type = $pattern,
+                    al.fraud_probability = 0.99,
+                    al.severity = 'CRITICAL',
                     al.status = 'OPEN',
-                    al.created_at = timestamp()
+                    al.created_at = $created_at,
+                    al.chain = $chain,
+                    al.amounts = $amounts
                 MERGE (a)-[:FLAGGED_IN]->(al)
                 """
                 def _run_alert():
@@ -306,15 +331,19 @@ class StreamConsumer:
                         # 1. Insert to Neo4j
                         with driver.session() as session:
                             session.run(alert_query, 
-                                account_id=txn['sender'],
+                                account_id=flagged_account_id,
                                 alert_id=f"ALT-LIVE-{txn['txn_id']}",
-                                pattern=txn['pattern']
+                                pattern=str(txn['pattern']).upper(),
+                                created_at=datetime.datetime.utcnow().isoformat(),
+                                chain=txn.get("chain", []),
+                                amounts=txn.get("amounts") or [txn.get("amount", 0)]
                             )
                         
                         # 2. Insert to Postgres
                         import psycopg2
-                        from app.core.config import settings
-                        with psycopg2.connect(settings.DATABASE_URL) as conn:
+                        import os
+                        db_url = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_19nVcEqwLskP@ep-ancient-salad-aopl31tx.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require")
+                        with psycopg2.connect(db_url) as conn:
                             with conn.cursor() as cur:
                                 cur.execute("""
                                     INSERT INTO alerts (alert_id, account_id, pattern_type, fraud_probability, severity, status, created_at)
@@ -323,10 +352,26 @@ class StreamConsumer:
                                         pattern_type = EXCLUDED.pattern_type,
                                         fraud_probability = EXCLUDED.fraud_probability,
                                         severity = EXCLUDED.severity
-                                """, (f"ALT-LIVE-{txn['txn_id']}", txn['sender'], txn['pattern'], 0.99, 'CRITICAL'))
+                                """, (f"ALT-LIVE-{txn['txn_id']}", flagged_account_id, str(txn['pattern']).upper(), 0.99, 'CRITICAL'))
+                                conn.commit()
                     except Exception as e:
                         print(f"Error inserting alert: {e}")
                 await asyncio.to_thread(_run_alert)
+            
+            # Broadcast the anomaly alert
+            await ws_manager.broadcast({
+                "type": "NEW_ALERT",
+                "payload": {
+                    "alert_id": f"ALT-LIVE-{txn['txn_id']}",
+                    "account_id": flagged_account_id,
+                    "pattern_type": str(txn['pattern']).upper(),
+                    "severity": "CRITICAL",
+                    "fraud_probability": 0.99,
+                    "created_at": time.time(),
+                    "status": "OPEN",
+                    "description": f"Live {pattern_name} anomaly detected on account {flagged_account_id}."
+                }
+            })
             
             # Generate Alert for LiveStream UI
             alert_payload = {
@@ -340,7 +385,7 @@ class StreamConsumer:
             # Generate Alert for Alerts Dashboard UI
             dashboard_payload = {
                 "alert_id": f"ALT-LIVE-{txn['txn_id']}",
-                "account_ids": [txn["sender"]],
+                "account_ids": [flagged_account_id],
                 "severity": "CRITICAL",
                 "pattern": txn["pattern"],
                 "total_amount": txn["amount"],
@@ -351,4 +396,3 @@ class StreamConsumer:
 # We will initialize this after the broker boots up in main.py
 producer_instance: FirehoseProducer = None
 consumer_instance: StreamConsumer = None
-
