@@ -61,15 +61,20 @@ export default function Dashboard() {
     dormantActivated: statsData?.dormant_count || (alertsData?.alerts?.filter(a => (a.flagged_for[0] || "").toLowerCase().includes("dorm")).length) || 15,
   };
 
-  const trend = useMemo(() => [
-    { time: "00:00", volume: Math.round(kpis.totalTransactions * 0.08), alerts: Math.round(kpis.activeAlerts * 0.1) },
-    { time: "04:00", volume: Math.round(kpis.totalTransactions * 0.05), alerts: Math.round(kpis.activeAlerts * 0.05) },
-    { time: "08:00", volume: Math.round(kpis.totalTransactions * 0.15), alerts: Math.round(kpis.activeAlerts * 0.15) },
-    { time: "12:00", volume: Math.round(kpis.totalTransactions * 0.25), alerts: Math.round(kpis.activeAlerts * 0.25) },
-    { time: "16:00", volume: Math.round(kpis.totalTransactions * 0.22), alerts: Math.round(kpis.activeAlerts * 0.2) },
-    { time: "20:00", volume: Math.round(kpis.totalTransactions * 0.18), alerts: Math.round(kpis.activeAlerts * 0.15) },
-    { time: "23:59", volume: Math.round(kpis.totalTransactions * 0.07), alerts: Math.round(kpis.activeAlerts * 0.1) },
-  ], [kpis.totalTransactions, kpis.activeAlerts]);
+  const trend = useMemo(() => {
+    const today = new Date();
+    return Array.from({ length: 14 }, (_, i) => {
+      const d = new Date(today);
+      d.setDate(d.getDate() - (13 - i));
+      const label = `${(d.getMonth() + 1).toString().padStart(2, "0")}-${d.getDate().toString().padStart(2, "0")}`;
+      const ratio = i === 13 ? 0.25 : i === 12 ? 0.22 : i === 11 ? 0.20 : i === 10 ? 0.18 : i === 9 ? 0.16 : i === 8 ? 0.14 : i < 4 ? 0.05 + i * 0.01 : 0.08 + i * 0.005;
+      return {
+        date: label,
+        volume: Math.round(kpis.totalTransactions * ratio),
+        flagged: Math.round(kpis.activeAlerts * ratio * 0.45),
+      };
+    });
+  }, [kpis.totalTransactions, kpis.activeAlerts]);
 
   const riskDist = useMemo(() => {
     const alerts = alertsData?.alerts ?? [];
@@ -101,7 +106,7 @@ export default function Dashboard() {
     if (!alerts.length) {
       return [
         { pattern: "Layering", count: 15 },
-        { pattern: "Structuring", count: 15 },
+        { pattern: "Smurfing", count: 15 },
         { pattern: "Round-Trip", count: 15 },
         { pattern: "KYC Mismatch", count: 15 },
         { pattern: "Dormant Act.", count: 15 },
@@ -112,7 +117,7 @@ export default function Dashboard() {
       const p = (a.flagged_for[0] || "other").toLowerCase();
       if (p.includes("layer")) pCounts["Layering"] = (pCounts["Layering"] || 0) + 1;
       else if (p.includes("round")) pCounts["Round-Trip"] = (pCounts["Round-Trip"] || 0) + 1;
-      else if (p.includes("smurf") || p.includes("struct")) pCounts["Structuring"] = (pCounts["Structuring"] || 0) + 1;
+      else if (p.includes("smurf") || p.includes("struct")) pCounts["Smurfing"] = (pCounts["Smurfing"] || 0) + 1;
       else if (p.includes("kyc")) pCounts["KYC Mismatch"] = (pCounts["KYC Mismatch"] || 0) + 1;
       else if (p.includes("dorm")) pCounts["Dormant Act."] = (pCounts["Dormant Act."] || 0) + 1;
       else pCounts["Other"] = (pCounts["Other"] || 0) + 1;
@@ -320,11 +325,11 @@ export default function Dashboard() {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
-                  <XAxis dataKey="date" tick={{ fill: TICK_COLOR, fontSize: 11 }} tickFormatter={v => v.slice(5)} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: TICK_COLOR, fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={LABEL_STYLE} />
-                  <Area type="monotone" dataKey="volume" stroke="#06B6D4" strokeWidth={1.5} fill="url(#volGrad)" name="Volume" />
-                  <Area type="monotone" dataKey="flagged" stroke="#EF4444" strokeWidth={1.5} fill="url(#flagGrad)" name="Flagged" />
+                  <XAxis dataKey="date" tick={{ fill: TICK_COLOR, fontSize: 10 }} interval={1} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: TICK_COLOR, fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={LABEL_STYLE} formatter={(val: number, name: string) => [val.toLocaleString(), name]} />
+                  <Area type="monotone" dataKey="volume" stroke="#06B6D4" strokeWidth={2} fill="url(#volGrad)" name="Volume" dot={false} />
+                  <Area type="monotone" dataKey="flagged" stroke="#EF4444" strokeWidth={2} fill="url(#flagGrad)" name="Flagged" dot={false} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -444,7 +449,7 @@ export default function Dashboard() {
                     </div>
                     <div className="flex items-center gap-2.5 ml-2 flex-shrink-0">
                       <span className="text-[11px] font-mono tabular-nums" style={{ color: "rgba(19, 5, 55, 0.5)" }}>
-                        ${(alert.amount / 1000).toFixed(0)}K
+                        ₹{(alert.amount / 1000).toFixed(0)}K
                       </span>
                       <Badge variant="outline" className={`text-[10px] px-1.5 py-0 border ${s?.badge}`}>
                         {alert.severity}
@@ -536,7 +541,7 @@ export default function Dashboard() {
                         {acc.alertCount}
                       </td>
                       <td className="px-5 py-3 text-right font-black tabular-nums" style={{ color: "var(--foreground)" }}>
-                        ${(acc.totalSuspiciousAmount / 1_000_000).toFixed(2)}M
+                        ₹{(acc.totalSuspiciousAmount / 1_000_000).toFixed(2)}M
                       </td>
                     </tr>
                   );

@@ -292,7 +292,7 @@ export default function Accounts() {
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 border-t-2 border-border pt-4">
                   {[
-                    ["Balance", `$${selectedAccount.balance.toLocaleString()}`, true],
+                    ["Balance", `₹${selectedAccount.balance.toLocaleString()}`, true],
                     ["Opened", !selectedAccount.openedAt || isNaN(new Date(selectedAccount.openedAt).getTime()) ? (selectedAccount.openedAt || "01/15/2025") : new Date(selectedAccount.openedAt).toLocaleDateString(), false],
                     ["Last Activity", !selectedAccount.lastActivity || isNaN(new Date(selectedAccount.lastActivity).getTime()) ? (selectedAccount.lastActivity || "06/28/2026") : new Date(selectedAccount.lastActivity).toLocaleDateString(), false],
                     ["Related Alerts", String(relatedAlerts.length), false],
@@ -505,7 +505,7 @@ export default function Accounts() {
                         >
                           <td className="px-4 py-3 font-mono text-[11px] text-[#a3e635] font-bold">{txn.txnId}</td>
                           <td className="px-4 py-3 font-mono text-[11px]" style={{ color: "rgba(19, 5, 55, 0.6)" }}>{txn.fromAccount} → {txn.toAccount}</td>
-                          <td className="px-4 py-3 text-right font-bold font-mono text-var(--foreground)">${txn.amount.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-bold font-mono text-var(--foreground)">₹{txn.amount.toLocaleString()}</td>
                           <td className="px-4 py-3" style={{ color: "rgba(19, 5, 55, 0.6)" }}>{txn.txnType}</td>
                           <td className="px-4 py-3" style={{ color: "rgba(19, 5, 55, 0.5)" }}>{new Date(txn.timestamp).toLocaleDateString()}</td>
                           <td className="px-4 py-3">
@@ -609,7 +609,7 @@ export default function Accounts() {
                           </div>
                           <div className="flex items-center gap-2 ml-2">
                             <Badge variant="outline" className={`text-[9px] rounded-none ${r?.badge}`}>{alert.severity}</Badge>
-                            <span className="text-[13px] font-mono font-bold text-var(--foreground)">${(alert.amount / 1000).toFixed(0)}K</span>
+                            <span className="text-[13px] font-mono font-bold text-var(--foreground)">₹{(alert.amount / 1000).toFixed(0)}K</span>
                           </div>
                         </div>
                       );

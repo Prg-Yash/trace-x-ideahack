@@ -87,8 +87,8 @@ function exportPDF(detail: any) {
   try {
     const primaryAcc = detail.case?.suspiciousAccounts?.[0] || "ACC_12044";
     const today = new Date().toISOString().split("T")[0];
-    const totalVal = detail.case?.totalAmount || "$243,000";
-    const gosTags = detail.findings ? detail.findings.map((f: any) => f.category.toUpperCase().replace(/\s+/g, "_")).join(", ") : "LAYERING, STRUCTURING, RAPID_VELOCITY";
+    const totalVal = typeof detail.case?.totalAmount === 'number' ? '₹' + detail.case.totalAmount.toLocaleString() : detail.case?.totalAmount || "₹2,43,000";
+    const gosTags = detail.findings ? detail.findings.map((f: any) => f.category.toUpperCase().replace(/\s+/g, "_")).join(", ") : "LAYERING, SMURFING, RAPID_VELOCITY";
     const hopCount = detail.fundFlowSummary ? detail.fundFlowSummary.length + 1 : 4;
 
     const html = `
@@ -185,13 +185,13 @@ function exportPDF(detail: any) {
               <tbody>
                 ${Array.isArray(detail.fundFlowSummary) && detail.fundFlowSummary.length ? detail.fundFlowSummary.map((s: any, idx: number) => `
                   <tr>
-                    <td>Hop ${s.step || idx+1}</td>
-                    <td>TXN-FIN-${idx+1042}</td>
+                    <td>Hop ${s.step || idx + 1}</td>
+                    <td>TXN-FIN-${idx + 1042}</td>
                     <td>${s.timestamp || today}</td>
                     <td style="font-weight:bold">${s.fromAccount}</td>
                     <td style="font-weight:bold">${s.toAccount}</td>
                     <td>${s.method || "NEFT / Wire"}</td>
-                    <td style="color:#b91c1c;font-weight:bold">${typeof s.amount === 'number' ? '$'+s.amount.toLocaleString() : s.amount}</td>
+                    <td style="color:#b91c1c;font-weight:bold">${typeof s.amount === 'number' ? '₹' + s.amount.toLocaleString() : s.amount}</td>
                   </tr>
                 `).join("") : '<tr><td colspan="7">No suspicious transaction records available</td></tr>'}
               </tbody>
@@ -401,37 +401,34 @@ export default function Evidence() {
     if (liveReport) {
       const isFlagged = liveReport.score?.is_flagged;
       const findings = [];
-      const title = selectedCase.title.toUpperCase();
-      
-      // For demo cases, restrict findings to the primary pattern to prevent ML false positives from cluttering
-      if (title.includes("STRUCT") || (liveReport.score?.detections?.smurfing?.detected && !title.includes("DEMO"))) findings.push({ category: "Structuring", finding: "Multiple systematic deposits just below the $10,000 AML reporting threshold", severity: "CRITICAL" });
-      if (title.includes("KYC") || (liveReport.score?.detections?.kyc_mismatch?.detected && !title.includes("DEMO"))) findings.push({ category: "KYC Profile Mismatch", finding: "Declared business turnover does not align with actual high-value transaction volume", severity: "HIGH" });
-      if (title.includes("DORMANT") || (liveReport.score?.detections?.dormant?.detected && !title.includes("DEMO"))) findings.push({ category: "Dormant Activation", finding: "Sudden high-volume transfer activity detected after prolonged account dormancy", severity: "MEDIUM" });
-      if (title.includes("LAYERING") || (liveReport.score?.detections?.layering?.detected && !title.includes("DEMO"))) findings.push({ category: "Rapid Layering Velocity", finding: "Funds transferred rapidly through multiple intermediary hops within 6 hours", severity: "CRITICAL" });
-      if (title.includes("ROUND") || (liveReport.score?.detections?.round_trip?.detected && !title.includes("DEMO"))) findings.push({ category: "Round Tripping", finding: "Circular movement of funds returning to the original source entity", severity: "CRITICAL" });
+      if (liveReport.score?.detections?.smurfing?.detected || selectedCase.title.toUpperCase().includes("STRUCT") || selectedCase.title.toUpperCase().includes("SMURF")) findings.push({ category: "Smurfing", finding: "Multiple systematic deposits just below the ₹10,00,000 AML reporting threshold", severity: "CRITICAL" });
+      if (liveReport.score?.detections?.kyc_mismatch?.detected || selectedCase.title.toUpperCase().includes("KYC")) findings.push({ category: "KYC Profile Mismatch", finding: "Declared business turnover does not align with actual high-value transaction volume", severity: "HIGH" });
+      if (liveReport.score?.detections?.dormant?.detected || selectedCase.title.toUpperCase().includes("DORMANT")) findings.push({ category: "Dormant Activation", finding: "Sudden high-volume transfer activity detected after prolonged account dormancy", severity: "MEDIUM" });
+      if (liveReport.score?.detections?.layering?.detected || selectedCase.title.toUpperCase().includes("LAYERING")) findings.push({ category: "Rapid Layering Velocity", finding: "Funds transferred rapidly through multiple intermediary hops within 6 hours", severity: "CRITICAL" });
+      if (liveReport.score?.detections?.round_trip?.detected || selectedCase.title.toUpperCase().includes("ROUND")) findings.push({ category: "Round Tripping", finding: "Circular movement of funds returning to the original source entity", severity: "CRITICAL" });
 
       if (findings.length === 0) {
         findings.push({ category: "Suspicious Activity", finding: "Anomalous transaction patterns detected requiring further review", severity: "HIGH" });
       }
 
-      const actualTrace = liveReport.traces?.roundtrip?.detected ? liveReport.traces.roundtrip : 
-        (liveReport.traces?.layering?.detected ? liveReport.traces.layering : 
-        (liveReport.traces?.smurfing?.detected ? liveReport.traces.smurfing : 
-        (liveReport.traces?.dormant?.detected ? liveReport.traces.dormant : 
-        (liveReport.traces?.kyc_mismatch?.detected ? liveReport.traces.kyc_mismatch : null))));
-        let fundFlow = actualTrace?.chain ? actualTrace.chain.map((c: string, i: number) => {
-            const isConvergent = ['SMURFING', 'DORMANT', 'DORMANT_ACTIVATION'].includes(actualTrace.fraud_type?.toUpperCase()) || 
-                                 liveReport.score?.flagged_for?.some((f: string) => ['SMURFING', 'DORMANT'].includes(f.toUpperCase()));
-            let fromAccount = c;
-            let toAccount = actualTrace.chain[i+1] ?? "End";
-            if (isConvergent && i < actualTrace.chain.length - 1) {
-                fromAccount = actualTrace.chain[i+1];
-                toAccount = actualTrace.chain[0];
-            }
-            return {
-                step: i+1, fromAccount, toAccount, amount: actualTrace.amounts[i] ?? 125000, method: ["SWIFT", "Wire Transfer", "Crypto Rail", "Internal Transfer"][i % 4], timestamp: "2026-06-28" 
-            }
-        }).slice(0, -1) : [];
+      const actualTrace = liveReport.traces?.roundtrip?.detected ? liveReport.traces.roundtrip :
+        (liveReport.traces?.layering?.detected ? liveReport.traces.layering :
+          (liveReport.traces?.smurfing?.detected ? liveReport.traces.smurfing :
+            (liveReport.traces?.dormant?.detected ? liveReport.traces.dormant :
+              (liveReport.traces?.kyc_mismatch?.detected ? liveReport.traces.kyc_mismatch : null))));
+      let fundFlow = actualTrace?.chain ? actualTrace.chain.map((c: string, i: number) => {
+        const isConvergent = ['SMURFING', 'DORMANT', 'DORMANT_ACTIVATION'].includes(actualTrace.fraud_type?.toUpperCase()) ||
+          liveReport.score?.flagged_for?.some((f: string) => ['SMURFING', 'DORMANT'].includes(f.toUpperCase()));
+        let fromAccount = c;
+        let toAccount = actualTrace.chain[i + 1] ?? "End";
+        if (isConvergent && i < actualTrace.chain.length - 1) {
+          fromAccount = actualTrace.chain[i + 1];
+          toAccount = actualTrace.chain[0];
+        }
+        return {
+          step: i + 1, fromAccount, toAccount, amount: actualTrace.amounts[i] ?? 125000, method: ["SWIFT", "Wire Transfer", "Crypto Rail", "Internal Transfer"][i % 4], timestamp: "2026-06-28"
+        }
+      }).slice(0, -1) : [];
       if (fundFlow.length === 0) {
         const acc = selectedCase.suspiciousAccounts?.[0] || "ACC_06264";
         const num = parseInt(acc.replace(/\D/g, "")) || 6264;
@@ -444,7 +441,7 @@ export default function Evidence() {
 
       let dynamicTotalAmount = selectedCase.totalAmount;
       if (actualTrace?.amounts?.length) {
-          dynamicTotalAmount = actualTrace.amounts.reduce((a: number, b: number) => a + b, 0);
+        dynamicTotalAmount = actualTrace.amounts.reduce((a: number, b: number) => a + b, 0);
       }
 
       return {
@@ -455,8 +452,8 @@ export default function Evidence() {
           reportId: `FIU-RPT-${selectedCase.caseId}`,
           reportingEntity: "Trace-X AI Intelligence Platform",
           reportDate: new Date().toLocaleDateString(),
-          suspiciousActivityType: isFlagged ? (liveReport.score?.flagged_for?.join(", ") || "Layering / Structuring") : "Suspicious Fund Movement",
-          narrativeSummary: `Machine Learning models analyzed account ${liveReport.account_id || selectedCase.suspiciousAccounts[0]}. Overall combined risk score is ${liveReport.score ? Math.round(liveReport.score.combined_score * 100) : 88}/100 (${liveReport.score?.risk_level || "CRITICAL"}). End-to-end trace identified rapid layering and cross-channel structuring across jurisdictions.`,
+          suspiciousActivityType: isFlagged ? (liveReport.score?.flagged_for?.join(", ") || "Layering / Smurfing") : "Suspicious Fund Movement",
+          narrativeSummary: `Machine Learning models analyzed account ${liveReport.account_id || selectedCase.suspiciousAccounts[0]}. Overall combined risk score is ${liveReport.score ? Math.round(liveReport.score.combined_score * 100) : 88}/100 (${liveReport.score?.risk_level || "CRITICAL"}). End-to-end trace identified rapid layering and cross-channel smurfing across jurisdictions.`,
           actionRequired: "Escalate STR Form 8 immediately to Financial Intelligence Unit (FIU) under AML regulations.",
         },
       };
@@ -660,7 +657,7 @@ export default function Evidence() {
                       </div>
                       <div className="flex justify-between text-[11px] mt-3 pt-2 border-t border-[#130537]/20" style={{ color: "rgba(19, 5, 55, 0.55)" }}>
                         <span>{c.suspiciousAccounts.length} accounts</span>
-                        <span className="font-mono font-bold" style={{ color: "#130537" }}>${((c.id === selectedId && activeCaseDetail ? activeCaseDetail.case.totalAmount : c.totalAmount) / 1_000_000).toFixed(2)}M</span>
+                        <span className="font-mono font-bold" style={{ color: "#130537" }}>₹{(c.totalAmount / 1_000_000).toFixed(2)}M</span>
                       </div>
                     </div>
                   );
@@ -729,7 +726,7 @@ export default function Evidence() {
                     ["Investigator", activeCaseDetail.case.investigator],
                     ["Alert ID", activeCaseDetail.case.alertId],
                     ["Status", null],
-                    ["Total Exposure", `$${(activeCaseDetail.case.totalAmount / 1_000_000).toFixed(2)}M`],
+                    ["Total Exposure", `₹${(activeCaseDetail.case.totalAmount / 1_000_000).toFixed(2)}M`],
                   ].map(([label, value], i) => (
                     <div key={String(label)} style={surfaceStyle} className="p-3">
                       <p className="text-[9px] font-bold uppercase tracking-wider mb-1" style={{ color: "rgba(19, 5, 55, 0.45)" }}>{label}</p>
@@ -777,7 +774,7 @@ export default function Evidence() {
                             <span className="font-mono text-[11px] text-slate-600">{step.toAccount}</span>
                           </div>
                           <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-                            <span className="font-black text-[14px] tabular-nums text-[#130537]">${step.amount.toLocaleString()}</span>
+                            <span className="font-black text-[14px] tabular-nums text-[#130537]">₹{step.amount.toLocaleString()}</span>
                             <Badge variant="outline" className="text-[9px] rounded-none border-[#130537] text-slate-600">{step.method || "Wire Transfer"}</Badge>
                             <span className="text-[11px] text-slate-500 font-mono">{!step.timestamp || isNaN(new Date(step.timestamp).getTime()) ? (step.timestamp || "06/28/2026") : new Date(step.timestamp).toLocaleDateString()}</span>
                           </div>
