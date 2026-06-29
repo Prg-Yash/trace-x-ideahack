@@ -34,8 +34,11 @@ const navSections = [
   },
 ];
 
+import { useAuth } from "@/context/AuthContext";
+
 export function Sidebar() {
   const [location] = useLocation();
+  const { user, logout } = useAuth();
 
   return (
     <div
@@ -152,30 +155,45 @@ export function Sidebar() {
             ● System Operational
           </span>
         </div>
-        <div className="flex items-center gap-2.5 px-1 pt-1">
-          <div
-            className="h-7 w-7 flex items-center justify-center flex-shrink-0"
-            style={{
-              border: "2px solid var(--color-primary)",
-              backgroundColor: "rgba(163,230,53,0.08)",
-            }}
+        <div className="flex items-center gap-2.5 px-1 pt-1 justify-between">
+          <div className="flex items-center gap-2.5">
+            <div
+              className="h-7 w-7 flex items-center justify-center flex-shrink-0"
+              style={{
+                border: "2px solid var(--color-primary)",
+                backgroundColor: "rgba(163,230,53,0.08)",
+              }}
+            >
+              <span className="text-[10px] font-black text-[#a3e635]">
+                {user?.username?.substring(0, 2).toUpperCase() || "FI"}
+              </span>
+            </div>
+            <div className="min-w-0">
+              <p
+                className="text-[12px] font-semibold leading-tight"
+                style={{ color: "var(--color-sidebar-foreground)" }}
+              >
+                {user?.username || "A. Investigator"}
+              </p>
+              <p
+                className="text-[10px] leading-tight"
+                style={{ color: "rgba(232,232,226,0.35)" }}
+              >
+                {user?.role === "admin" ? "System Admin" : "FIU · Analyst"}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={logout}
+            className="p-1.5 hover:bg-[rgba(255,255,255,0.05)] rounded transition-colors"
+            title="Log out"
           >
-            <span className="text-[10px] font-black text-[#a3e635]">FI</span>
-          </div>
-          <div className="min-w-0">
-            <p
-              className="text-[12px] font-semibold leading-tight"
-              style={{ color: "var(--color-sidebar-foreground)" }}
-            >
-              A. Investigator
-            </p>
-            <p
-              className="text-[10px] leading-tight"
-              style={{ color: "rgba(232,232,226,0.35)" }}
-            >
-              FIU · Senior Analyst
-            </p>
-          </div>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(232,232,226,0.45)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="hover:stroke-[#ef4444]">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+          </button>
         </div>
       </div>
     </div>
