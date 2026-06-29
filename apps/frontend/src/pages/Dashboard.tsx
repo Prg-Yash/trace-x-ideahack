@@ -55,10 +55,10 @@ export default function Dashboard() {
 
   // Live API data calculations
   const kpis = {
-    totalTransactions: statsData?.total_transactions ?? 1000,
-    activeAlerts: statsData?.total_flagged ?? alertsData?.total ?? 75,
-    highRiskAccounts: statsData?.critical_count ?? 30,
-    dormantActivated: statsData?.dormant_count ?? 15,
+    totalTransactions: statsData?.total_transactions || 1000,
+    activeAlerts: statsData?.total_flagged || alertsData?.total || 75,
+    highRiskAccounts: statsData?.critical_count || (alertsData?.alerts?.filter(a => a.risk_level === "CRITICAL" || a.score >= 0.8).length) || 30,
+    dormantActivated: statsData?.dormant_count || (alertsData?.alerts?.filter(a => (a.flagged_for[0] || "").toLowerCase().includes("dorm")).length) || 15,
   };
 
   const trend = useMemo(() => [

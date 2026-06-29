@@ -554,7 +554,28 @@ function GraphInner() {
           isLoop: false,
         });
       }
-      return { nodes, edges };
+      // If Round Trip pattern and last hop is not connected to origin, close the loop!
+      if (alertPattern.includes("ROUND") && chain.length >= 2 && chain[chain.length - 1] !== chain[0]) {
+        const lastIdx = chain.length - 1;
+        edges.push({
+          id: `e-${chain[lastIdx]}-${chain[0]}-loop`,
+          source: chain[lastIdx],
+          target: chain[0],
+          label: `$${(amounts[lastIdx] || amounts[lastIdx - 1] || 0).toLocaleString()}`,
+          amount: amounts[lastIdx] || amounts[lastIdx - 1] || 0,
+          channel: traceChannels[lastIdx] || "WIRE",
+          timestamp: timestamps[lastIdx] || new Date().toISOString(),
+          riskLevel: "CRITICAL",
+          isLoop: true,
+        });
+      }
+
+      // Deduplicate nodes in case chain had duplicate origin at end
+      const uniqueNodesMap = new Map();
+      nodes.forEach(n => {
+        if (!uniqueNodesMap.has(n.id)) uniqueNodesMap.set(n.id, n);
+      });
+      return { nodes: Array.from(uniqueNodesMap.values()), edges };
     }
     return { nodes: [], edges: [] };
   // Only re-run when account, trace data, or score risk level changes — NOT on every score update
@@ -577,11 +598,14 @@ function GraphInner() {
         ? Math.round((liveTrace.confidence as number) * 100)
         : liveScore
           ? Math.round(liveScore.combined_score * 100)
-          : 92;
-      // Description from explain, fallback to pattern + score summary
-      const desc = (liveExplain?.by_fraud_type as any)?.kyc_mismatch?.explanation_summary
+          : 0;
+      // Description from explain matching active pattern, fallback to summary
+      const pKey = pName.toLowerCase().replace("-", "_");
+      const desc = (liveExplain?.by_fraud_type as any)?.[pKey]?.explanation_summary
+        || (liveExplain?.by_fraud_type as any)?.round_trip?.explanation_summary
+        || (liveExplain?.by_fraud_type as any)?.layering?.explanation_summary
         || (liveExplain as any)?.explanation_summary
-        || `ML XAI engine detected suspicious transaction anomalies for ${routeAccountId}. Combined Risk Score: ${confidence}/100.`;
+        || `ML XAI engine detected suspicious ${pName} anomalies for ${routeAccountId}. Combined Risk Score: ${confidence}/100.`;
       return [{
         id: `pat-${routeAccountId}`,
         patternType: pName,
@@ -1166,32 +1190,40 @@ function GraphInner() {
                           </div>
 
                           {/* SHAP XAI Attribution Breakdown */}
-                          <div style={{ marginTop: 10, padding: "8px", background: "rgba(0,0,0,0.35)", borderRadius: 4, border: `1px solid ${pc}40` }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                              <span style={{ fontSize: 8.5, fontWeight: 700, color: "#e2e8f0", letterSpacing: "0.06em", textTransform: "uppercase" }}>🧠 SHAP Feature Attribution</span>
-                              <span style={{ fontSize: 8, color: pc, fontWeight: 600 }}>XAI Engine v2.4</span>
+                          {explainLoading ? (
+                            <div style={{ marginTop: 10, padding: "8px", background: "rgba(0,0,0,0.35)", borderRadius: 4, border: `1px solid ${pc}40` }}>
+                              <p style={{ color: pc, fontSize: 10, fontFamily: "monospace", textAlign: "center", margin: "10px 0" }} className="animate-pulse">Computing SHAP values...</p>
                             </div>
-                            {(liveExplain?.features ? liveExplain.features.slice(0, 4).map((f: any) => ({
-                              label: f.feature || f.name,
-                              val: `+${Math.round(Math.abs(f.contribution || f.importance || 0.25) * 100)}%`,
-                              pct: Math.min(100, Math.round(Math.abs(f.contribution || f.importance || 0.25) * 200))
-                            })) : [
-                              { label: "Rapid Layering Velocity (6h)", val: "+34%", pct: 85 },
-                              { label: "Cross-Channel SWIFT Switch", val: "+28%", pct: 70 },
-                              { label: "KYC Declared Turnover Mismatch", val: "+22%", pct: 55 },
-                              { label: "Dormant Account Activation", val: "+15%", pct: 38 },
-                            ]).map((feat: any, fi: number) => (
-                              <div key={fi} style={{ marginBottom: fi === 3 ? 0 : 6 }}>
-                                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8.5, color: "#cbd5e1", marginBottom: 2 }}>
-                                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 150 }}>{feat.label}</span>
-                                  <span style={{ fontFamily: "monospace", color: "#ef4444", fontWeight: 700 }}>{feat.val}</span>
-                                </div>
-                                <div style={{ height: 3.5, background: "#1e293b", borderRadius: 2 }}>
-                                  <div style={{ height: 3.5, width: `${feat.pct}%`, background: "linear-gradient(90deg, #f97316, #ef4444)", borderRadius: 2 }} />
-                                </div>
+                          ) : liveExplain?.top_risk_factors ? (
+                            <div style={{ marginTop: 10, padding: "8px", background: "rgba(0,0,0,0.35)", borderRadius: 4, border: `1px solid ${pc}40` }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                                <span style={{ fontSize: 8.5, fontWeight: 700, color: "#e2e8f0", letterSpacing: "0.06em", textTransform: "uppercase" }}>🧠 SHAP Feature Attribution</span>
+                                <span style={{ fontSize: 8, color: pc, fontWeight: 600 }}>XAI Engine</span>
                               </div>
-                            ))}
-                          </div>
+                              {(() => {
+                                const pKey = p.patternType.toLowerCase().replace("-", "_");
+                                const activeFactors = (liveExplain?.by_fraud_type as any)?.[pKey]?.top_factors
+                                  || (liveExplain?.by_fraud_type as any)?.round_trip?.top_factors
+                                  || (liveExplain?.by_fraud_type as any)?.layering?.top_factors
+                                  || liveExplain.top_risk_factors;
+                                return (activeFactors || []).slice(0, 4).map((f: any, fi: number) => {
+                                  const valStr = `${f.shap_value > 0 ? "+" : ""}${f.shap_value.toFixed(4)}`;
+                                const pct = Math.min(100, Math.round(Math.abs(f.shap_value) * 200));
+                                return (
+                                  <div key={fi} style={{ marginBottom: fi === 3 ? 0 : 6 }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8.5, color: "#cbd5e1", marginBottom: 2 }}>
+                                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 150 }}>{f.label}</span>
+                                      <span style={{ fontFamily: "monospace", color: f.direction === "RISK" ? "#ef4444" : "#10b981", fontWeight: 700 }}>{valStr}</span>
+                                    </div>
+                                    <div style={{ height: 3.5, background: "#1e293b", borderRadius: 2 }}>
+                                      <div style={{ height: 3.5, width: `${pct}%`, background: f.direction === "RISK" ? "linear-gradient(90deg, #f97316, #ef4444)" : "#10b981", borderRadius: 2 }} />
+                                    </div>
+                                  </div>
+                                );
+                              });
+                              })()}
+                            </div>
+                          ) : null}
                         </button>
                       );
                     })}
