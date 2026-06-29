@@ -2,6 +2,7 @@ import argparse
 import os
 import random
 from datetime import datetime, timedelta
+from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
@@ -14,22 +15,22 @@ LABELS_DIR = DATA_DIR / "labels"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate synthetic TRACE-X data.")
+    parser = argparse.ArgumentParser(description="Generate synthetic TRACE-X data for Production ML Training.")
     parser.add_argument("--accounts", type=int, default=20000, help="Total accounts to create")
     parser.add_argument("--normal-txns", type=int, default=400000, help="Normal transactions to create")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    
+    # Auto-calculated if 0
+    parser.add_argument("--layering-chains", type=int, default=0)
+    parser.add_argument("--round-trips", type=int, default=0)
+    parser.add_argument("--smurf-clusters", type=int, default=0)
+    parser.add_argument("--dormant-activations", type=int, default=0)
+    parser.add_argument("--profile-mismatches", type=int, default=0)
 
-    parser.add_argument("--layering-chains", type=int, default=0, help="Layering chains (0 = auto)")
-    parser.add_argument("--round-trips", type=int, default=0, help="Round-trip rings (0 = auto)")
-    parser.add_argument("--smurf-clusters", type=int, default=0, help="Smurfing clusters (0 = auto)")
-    parser.add_argument("--dormant-activations", type=int, default=0, help="Dormant activation events (0 = auto)")
-    parser.add_argument("--smurf-receivers-min", type=int, default=15, help="Min receivers per smurf cluster")
-    parser.add_argument("--smurf-receivers-max", type=int, default=25, help="Max receivers per smurf cluster")
-
-    parser.add_argument("--neo4j-accounts", type=int, default=5000, help="Accounts in Neo4j sample")
-    parser.add_argument("--neo4j-transactions", type=int, default=100000, help="Transactions in Neo4j sample")
-    parser.add_argument("--neo4j-dir", type=str, default="neo4j", help="Subfolder for Neo4j CSVs")
-    parser.add_argument("--no-neo4j-sample", action="store_true", help="Skip Neo4j sample output")
+    parser.add_argument("--neo4j-accounts", type=int, default=5000)
+    parser.add_argument("--neo4j-transactions", type=int, default=100000)
+    parser.add_argument("--neo4j-dir", type=str, default="neo4j")
+    parser.add_argument("--no-neo4j-sample", action="store_true")
 
     return parser.parse_args()
 
@@ -39,8 +40,7 @@ def next_txn_id(counter: Dict[str, int], width: int) -> str:
     return f"TXN_{counter['value']:0{width}d}"
 
 
-def make_txn(counter: Dict[str, int], width: int, sender_id: str, receiver_id: str, amount: float,
-             channel: str, txn_ts: datetime, status: str, narration: str) -> Dict:
+def make_txn(counter, width, sender_id, receiver_id, amount, channel, txn_ts, status, narration, is_fraud=False, pattern_type="NONE"):
     return {
         "txn_id": next_txn_id(counter, width),
         "sender_id": sender_id,
@@ -50,6 +50,8 @@ def make_txn(counter: Dict[str, int], width: int, sender_id: str, receiver_id: s
         "txn_ts": txn_ts,
         "status": status,
         "narration": narration,
+        "is_fraud": is_fraud,
+        "pattern_type": pattern_type,
     }
 
 
@@ -59,6 +61,7 @@ def compute_auto_counts(total_accounts: int) -> Dict[str, int]:
         "round_trips": max(50, total_accounts // 200),
         "smurf_clusters": max(200, total_accounts // 50),
         "dormant_activations": max(60, total_accounts // 150),
+        "profile_mismatches": max(50, total_accounts // 200),
     }
 
 
@@ -77,7 +80,6 @@ def build_neo4j_sample(
         return pd.DataFrame(), pd.DataFrame()
 
     target_accounts = min(target_accounts, len(acc_ids))
-
     fraud_list = list(fraud_accounts)
     target_fraud = min(len(fraud_list), max(100, target_accounts // 10))
     selected = set(rng.sample(fraud_list, target_fraud)) if fraud_list else set()
@@ -87,17 +89,13 @@ def build_neo4j_sample(
         non_fraud = [a for a in acc_ids if a not in selected]
         selected.update(rng.sample(non_fraud, min(remaining, len(non_fraud))))
 
-    filtered = df_txn[
-        df_txn["sender_id"].isin(selected) & df_txn["receiver_id"].isin(selected)
-    ]
+    filtered = df_txn[df_txn["sender_id"].isin(selected) & df_txn["receiver_id"].isin(selected)]
 
     while len(filtered) < target_txns and len(selected) < len(acc_ids):
         add_count = min(500, len(acc_ids) - len(selected))
         candidates = [a for a in acc_ids if a not in selected]
         selected.update(rng.sample(candidates, add_count))
-        filtered = df_txn[
-            df_txn["sender_id"].isin(selected) & df_txn["receiver_id"].isin(selected)
-        ]
+        filtered = df_txn[df_txn["sender_id"].isin(selected) & df_txn["receiver_id"].isin(selected)]
 
     if len(filtered) > target_txns:
         filtered = filtered.sample(n=target_txns, random_state=seed).reset_index(drop=True)
@@ -110,7 +108,6 @@ def build_neo4j_sample(
 
 def main() -> None:
     args = parse_args()
-
     random.seed(args.seed)
     np.random.seed(args.seed)
     fake = Faker("en_IN")
@@ -124,47 +121,70 @@ def main() -> None:
     round_trips = args.round_trips or auto_counts["round_trips"]
     smurf_clusters = args.smurf_clusters or auto_counts["smurf_clusters"]
     dormant_activations = args.dormant_activations or auto_counts["dormant_activations"]
-
-    smurf_min = min(args.smurf_receivers_min, args.smurf_receivers_max)
-    smurf_max = max(args.smurf_receivers_min, args.smurf_receivers_max)
+    profile_mismatches = args.profile_mismatches or auto_counts["profile_mismatches"]
 
     acc_width = max(4, len(str(args.accounts)))
     txn_width = max(7, len(str(args.normal_txns + 100000)))
 
-    print("Generating accounts...")
+    print("Generating entities and accounts...")
+    
+    num_entities = int(args.accounts * 0.7)
+    entities = []
+    
+    for i in range(num_entities):
+        ent_type = random.choices(["INDIVIDUAL", "BUSINESS", "TRUST"], weights=[80, 15, 5])[0]
+        kyc_tier = random.choices([0, 1, 2, 3], weights=[10, 40, 40, 10])[0]
+        if ent_type != "INDIVIDUAL":
+            kyc_tier = random.choice([2, 3])
+            
+        income = 0
+        if kyc_tier == 1: income = random.randint(3, 15) * 100000
+        elif kyc_tier == 2: income = random.randint(10, 100) * 100000
+        elif kyc_tier == 3: income = random.randint(100, 1000) * 100000
+        
+        entities.append({
+            "entity_id": f"ENT_{i:0{acc_width}d}",
+            "entity_type": ent_type,
+            "kyc_tier": kyc_tier,
+            "declared_annual_income": income,
+            "kyc_status": "VERIFIED",
+            "age": random.randint(18, 65) if ent_type == "INDIVIDUAL" else None,
+            "geography_tier": random.choices(["metro", "tier2", "rural"], weights=[50, 30, 20])[0]
+        })
 
-    entity_ids = [f"ENT_{i:0{acc_width}d}" for i in range(int(args.accounts * 0.7))]
-    accounts: List[Dict] = []
+    df_ent = pd.DataFrame(entities)
+    
+    accounts = []
     for i in range(args.accounts):
-        accounts.append(
-            {
-                "account_id": f"ACC_{i:0{acc_width}d}",
-                "entity_id": random.choice(entity_ids),
-                "account_type": random.choice(["SAVINGS", "CURRENT", "WALLET"]),
-                "kyc_tier": random.choices([0, 1, 2], weights=[10, 45, 45])[0],
-                "status": "ACTIVE",
-                "opened_on": fake.date_between(start_date="-5y", end_date="today"),
-                "risk_category": random.choices(
-                    ["LOW", "MEDIUM", "HIGH"], weights=[70, 20, 10]
-                )[0],
-                "declared_annual_income": int(
-                    random.choice([150000, 300000, 600000, 1200000, 2500000])
-                    * random.uniform(0.7, 1.4)
-                ),
-            }
-        )
+        ent = random.choice(entities)
+        accounts.append({
+            "account_id": f"ACC_{i:0{acc_width}d}",
+            "entity_id": ent["entity_id"],
+            "account_type": "CURRENT" if ent["entity_type"] != "INDIVIDUAL" else random.choice(["SAVINGS", "SALARY"]),
+            "kyc_tier": ent["kyc_tier"],
+            "status": "ACTIVE",
+            "opened_on": fake.date_between(start_date="-5y", end_date="today").isoformat(),
+            "risk_category": random.choices(["LOW", "MEDIUM", "HIGH"], weights=[70, 20, 10])[0],
+            "is_fraud": False,
+            "pattern_type": "NONE"
+        })
 
     df_acc = pd.DataFrame(accounts)
     acc_ids = df_acc["account_id"].tolist()
 
+    # Make sure dormant accounts are actually marked dormant
+    dormant_candidates = set(random.sample(acc_ids, int(args.accounts * 0.08)))
+    df_acc.loc[df_acc['account_id'].isin(dormant_candidates), 'status'] = 'DORMANT'
+
     print("Generating normal transactions...")
+
+    account_balances = {acc["account_id"]: random.uniform(50000, 500000) for acc in accounts}
+    account_opened = {acc["account_id"]: datetime.fromisoformat(acc["opened_on"]) for acc in accounts}
 
     transactions: List[Dict] = []
     fraud_accounts: Set[str] = set()
-    smurf_masters: Set[str] = set()
     counter = {"value": 0}
 
-    dormant_candidates = set(random.sample(acc_ids, int(args.accounts * 0.08)))
     active_accounts = [acc for acc in acc_ids if acc not in dormant_candidates]
 
     for _ in range(args.normal_txns):
@@ -173,300 +193,365 @@ def main() -> None:
         while receiver == sender:
             receiver = random.choice(active_accounts)
 
-        amount = min(np.random.lognormal(mean=9.5, sigma=1.8), 200000)
-        txn_ts = fake.date_time_between("-120d", "now")
+        amount = min(np.random.lognormal(mean=9.5, sigma=1.8), 2000000)
+        
+        if amount >= 200000:
+            channel = random.choices(["RTGS", "NEFT", "IMPS"], weights=[60, 30, 10])[0]
+        else:
+            channel = random.choices(["UPI", "IMPS", "NEFT"], weights=[60, 25, 15])[0]
+            if channel == "UPI":
+                amount = min(amount, 100000)
+
+        if account_balances[sender] < amount:
+            account_balances[sender] += random.uniform(50000, 200000)
+
+        account_balances[sender] -= amount
+        account_balances[receiver] += amount
+
+        start_date = max(account_opened[sender], account_opened[receiver])
+        if start_date > datetime.now(): start_date = datetime.now() - timedelta(days=1)
+        min_date = datetime.now() - timedelta(days=120)
+        if start_date < min_date: start_date = min_date
+            
+        txn_ts = fake.date_time_between(start_date, "now")
         status = random.choices(["SUCCESS", "FAILED", "PENDING"], weights=[92, 4, 4])[0]
-        narration = fake.sentence(nb_words=4)
+
+        if channel in ["UPI", "IMPS"] and amount < 10000:
+            narration = random.choice(["grocery shopping", "cab fare", "mobile recharge", "restaurant payment"])
+        else:
+            narration = random.choice(["salary credit", "rent payment", "investment transfer", "business settlement"])
 
         transactions.append(
-            make_txn(
-                counter,
-                txn_width,
-                sender,
-                receiver,
-                amount,
-                random.choices(["UPI", "NEFT", "RTGS", "IMPS", "CASH"], weights=[50, 20, 10, 15, 5])[0],
-                txn_ts,
-                status,
-                narration,
-            )
+            make_txn(counter, txn_width, sender, receiver, amount, channel, txn_ts, status, narration)
         )
 
-    print("Planting fraud patterns...")
+    print("Planting distinct behavioral fraud patterns...")
 
-    for _ in range(layering_chains):
-        chain = random.sample(acc_ids, random.randint(6, 10))
+    pattern_labels = defaultdict(set)
+
+    def generate_legitimate_chain(base_amount_range=None, is_roundtrip=False):
+        length = random.randint(6, 10) if not is_roundtrip else random.randint(3, 6)
+        chain_accs = random.sample(acc_ids, length)
+        if is_roundtrip:
+            chain_accs.append(chain_accs[0])
+            
         base_time = datetime.now() - timedelta(days=random.randint(1, 60))
-        amount = random.uniform(800000, 2000000)
-        for i in range(len(chain) - 1):
-            fraud_accounts.update([chain[i], chain[i + 1]])
+        max_opened = max([account_opened[a] for a in chain_accs])
+        if base_time < max_opened: base_time = max_opened + timedelta(days=1)
+        if base_time > datetime.now(): base_time = datetime.now() - timedelta(hours=72)
+        
+        profile_type = random.choice(["RETAIL", "SME_PAYMENT", "CORP_TREASURY", "HFT_EXPRESS"])
+        if profile_type == "HFT_EXPRESS":
+            base_amount = random.uniform(10000, 75000)
+            decay_range = (0.99, 1.01)
+            time_gap_hours = random.uniform(0.001, 0.03) 
+        elif profile_type == "CORP_TREASURY":
+            base_amount = random.uniform(500000, 2500000) 
+            decay_range = (0.95, 1.01) 
+            time_gap_hours = random.uniform(0.5, 4.0) 
+        elif profile_type == "SME_PAYMENT":
+            base_amount = random.uniform(60000, 300000)
+            decay_range = (0.90, 1.05)
+            time_gap_hours = random.uniform(2.0, 12.0)
+        else:
+            base_amount = random.uniform(1000, 20000)
+            decay_range = (0.50, 0.95)
+            time_gap_hours = random.uniform(12.0, 72.0)
+            
+        amount = base_amount
+        account_balances[chain_accs[0]] += amount
+        
+        running_amount = amount
+        for i in range(len(chain_accs) - 1):
+            decay = random.uniform(*decay_range)
+            running_amount = round(running_amount * decay, 2)
+            account_balances[chain_accs[i]] -= running_amount
+            account_balances[chain_accs[i + 1]] += running_amount
+            
+            hop_delay = time_gap_hours + random.gauss(0, time_gap_hours * 0.1)
+            hop_delay = max(0.1, hop_delay)
+            base_time += timedelta(hours=hop_delay)
+            
             transactions.append(
                 make_txn(
-                    counter,
-                    txn_width,
-                    chain[i],
-                    chain[i + 1],
-                    amount * (0.97**i),
-                    "NEFT",
-                    base_time + timedelta(minutes=i * 15),
-                    "SUCCESS",
-                    "fund transfer",
+                    counter, txn_width, chain_accs[i], chain_accs[i + 1], running_amount,
+                    random.choice(["NEFT", "RTGS", "IMPS"]), 
+                    base_time,
+                    "SUCCESS", "transfer", False, "LEGITIMATE_ROUNDTRIP" if is_roundtrip else "LEGITIMATE_CHAIN"
                 )
             )
 
+    # Pattern 1: Rapid Layering
+    for _ in range(layering_chains):
+        chain = random.sample(acc_ids, random.randint(6, 10))
+        base_time = datetime.now() - timedelta(days=random.randint(1, 60))
+        max_opened = max([account_opened[a] for a in chain])
+        if base_time < max_opened: base_time = max_opened + timedelta(days=1)
+        if base_time > datetime.now(): base_time = datetime.now() - timedelta(minutes=60)
+        
+        amount = random.uniform(100000, 400000) # Keep under 5L to realistically use IMPS
+        account_balances[chain[0]] += amount
+        
+        running_amount = amount
+        for i in range(len(chain) - 1):
+            decay = random.uniform(0.92, 0.99)  # Random jitter to prevent data leakage
+            running_amount *= decay
+            account_balances[chain[i]] -= running_amount
+            account_balances[chain[i + 1]] += running_amount
+            fraud_accounts.update([chain[i], chain[i + 1]])
+            pattern_labels[chain[i]].add("LAYERING")
+            pattern_labels[chain[i + 1]].add("LAYERING") # Fix Receiver Blindspot
+            time_jitter = random.randint(2, 12)  # Variable hop timing
+            transactions.append(
+                make_txn(
+                    counter, txn_width, chain[i], chain[i + 1], running_amount,
+                    random.choice(["IMPS", "NEFT", "RTGS"]),  # Vary channels
+                    base_time + timedelta(minutes=i * time_jitter + random.randint(0, 5)),
+                    "SUCCESS", "transfer", True, "LAYERING"
+                )
+            )
+            
+        # Add 3 legitimate chains for every 1 fraud chain
+        generate_legitimate_chain((5000, 50000))
+        generate_legitimate_chain((50000, 500000))
+        generate_legitimate_chain((100000, 2000000))
+
+    # Pattern 2: Round-Tripping
     for _ in range(round_trips):
         ring = random.sample(acc_ids, random.randint(3, 6))
         ring.append(ring[0])
         base_time = datetime.now() - timedelta(days=random.randint(1, 45))
-        amount = random.uniform(300000, 1500000)
+        max_opened = max([account_opened[a] for a in ring])
+        if base_time < max_opened: base_time = max_opened + timedelta(days=1)
+        if base_time > datetime.now(): base_time = datetime.now() - timedelta(minutes=60)
+        
+        amount = random.uniform(500000, 5000000)
+        account_balances[ring[0]] += amount
+        
+        running_amount = amount
         for i in range(len(ring) - 1):
+            decay = random.uniform(0.93, 0.99)  # Random jitter to prevent data leakage
+            running_amount *= decay
+            account_balances[ring[i]] -= running_amount
+            account_balances[ring[i + 1]] += running_amount
             fraud_accounts.update([ring[i], ring[i + 1]])
+            pattern_labels[ring[i]].add("ROUND_TRIP")
+            pattern_labels[ring[i + 1]].add("ROUND_TRIP") # Fix Receiver Blindspot
+            time_jitter = random.uniform(1.0, 4.0)  # Variable hop timing in hours
             transactions.append(
                 make_txn(
-                    counter,
-                    txn_width,
-                    ring[i],
-                    ring[i + 1],
-                    amount * (0.98**i),
-                    "IMPS",
-                    base_time + timedelta(minutes=i * 30),
-                    "SUCCESS",
-                    "settlement",
+                    counter, txn_width, ring[i], ring[i + 1], running_amount,
+                    random.choice(["RTGS", "NEFT"]),  # Vary channels
+                    base_time + timedelta(hours=i * time_jitter + random.uniform(0, 1)),
+                    "SUCCESS", "settlement", True, "ROUND_TRIP"
                 )
             )
 
+        # Add 3 legitimate round-trips for every 1 fraud roundtrip
+        generate_legitimate_chain((5000, 50000), True)
+        generate_legitimate_chain((50000, 500000), True)
+        generate_legitimate_chain((100000, 2000000), True)
+
+    # Pattern 3: Smurfing (Proper amounts just below 10L threshold)
     for _ in range(smurf_clusters):
         master = random.choice(acc_ids)
-        receivers = random.sample(
-            [a for a in acc_ids if a != master], random.randint(smurf_min, smurf_max)
-        )
+        receivers = random.sample([a for a in acc_ids if a != master], random.randint(15, 25))
         base_time = datetime.now() - timedelta(days=random.randint(1, 30))
+        all_accs = [master] + receivers
+        max_opened = max([account_opened[a] for a in all_accs])
+        if base_time < max_opened: base_time = max_opened + timedelta(days=1)
+        if base_time > datetime.now(): base_time = datetime.now() - timedelta(minutes=60)
+        
         fraud_accounts.add(master)
-        smurf_masters.add(master)
+        account_balances[master] += sum([99000 for _ in receivers])
+        pattern_labels[master].add("SMURFING")
         for recv in receivers:
             fraud_accounts.add(recv)
+            pattern_labels[recv].add("SMURFING")
+            # Amount between 70k-99k (just below 1L UPI threshold, inside detector window 60k-120k)
+            smurf_amount = random.gauss(85000, 8000)
+            smurf_amount = max(65000, min(smurf_amount, 99000))
             transactions.append(
                 make_txn(
-                    counter,
-                    txn_width,
-                    master,
-                    recv,
-                    random.uniform(70000, 100000),
-                    "UPI",
-                    base_time + timedelta(minutes=random.randint(1, 120)),
-                    "SUCCESS",
-                    "split transfer",
+                    counter, txn_width, master, recv, smurf_amount,
+                    "UPI",  # Smurfing uses UPI — detector requires min_upi_ratio >= 0.7
+                    base_time + timedelta(minutes=random.randint(1, 90)),
+                    "SUCCESS", "split transfer", True, "SMURFING"
                 )
             )
 
+    # Pattern 4: Dormant Activation
     dormant_targets = list(dormant_candidates)[:dormant_activations]
     for acc in dormant_targets:
         spike_time = datetime.now() - timedelta(hours=random.randint(2, 48))
-        amount = random.uniform(500000, 3000000)
-        fraud_accounts.add(acc)
+        amount = np.random.lognormal(mean=14.5, sigma=1.0) # Blur the Lines: overlaps with legitimate high salary territory
+        
+        interacting_acc = random.choice(acc_ids)
+        max_opened = max(account_opened[acc], account_opened[interacting_acc])
+        if spike_time < max_opened: spike_time = max_opened + timedelta(minutes=30)
+        if spike_time > datetime.now(): spike_time = datetime.now() - timedelta(minutes=60)
+        account_balances[interacting_acc] += amount
+        
+        fraud_accounts.update([acc, interacting_acc])
+        pattern_labels[acc].add("DORMANT_ACTIVATION")
+        pattern_labels[interacting_acc].add("DORMANT_ACTIVATION") # Fix Receiver Blindspot
 
         transactions.append(
             make_txn(
-                counter,
-                txn_width,
-                random.choice(acc_ids),
-                acc,
-                amount,
-                "RTGS",
-                spike_time,
-                "SUCCESS",
-                "urgent credit",
+                counter, txn_width, interacting_acc, acc, amount, "RTGS", spike_time, "SUCCESS", "urgent credit", True, "DORMANT_ACTIVATION"
+            )
+        )
+        
+        interacting_acc2 = random.choice(acc_ids)
+        fraud_accounts.update([interacting_acc2])
+        pattern_labels[interacting_acc2].add("DORMANT_ACTIVATION")
+        
+        transactions.append(
+            make_txn(
+                counter, txn_width, acc, interacting_acc2, amount * 0.99, "RTGS", spike_time + timedelta(hours=random.randint(1, 6)), "SUCCESS", "urgent payout", True, "DORMANT_ACTIVATION"
             )
         )
 
-        transactions.append(
-            make_txn(
-                counter,
-                txn_width,
-                acc,
-                random.choice(acc_ids),
-                amount * 0.99,
-                "RTGS",
-                spike_time + timedelta(hours=random.randint(1, 6)),
-                "SUCCESS",
-                "urgent payout",
-            )
-        )
+    # Pattern 5: Profile Mismatch (Students receiving corporate wires)
+    student_accs = df_acc[df_acc['kyc_tier'] == 0]['account_id'].tolist()
+    corp_accs = df_acc[df_acc['kyc_tier'] >= 2]['account_id'].tolist()
+    if student_accs and corp_accs:
+        for _ in range(profile_mismatches):
+            student = random.choice(student_accs)
+            fraud_accounts.add(student)
+            pattern_labels[student].add("PROFILE_MISMATCH")
+            
+            for _ in range(random.randint(3, 8)):
+                corp = random.choice(corp_accs)
+                fraud_accounts.add(corp)
+                pattern_labels[corp].add("PROFILE_MISMATCH") # Fix Asymmetric label
+                amount = np.random.lognormal(mean=14.2, sigma=1.2) # Blur the Lines: overlap with normal business transfers
+                t = datetime.now() - timedelta(days=random.randint(1, 30))
+                max_opened = max(account_opened[student], account_opened[corp])
+                if t < max_opened: t = max_opened + timedelta(days=1)
+                if t > datetime.now(): t = datetime.now() - timedelta(minutes=60)
+                account_balances[corp] += amount
+                
+                transactions.append(
+                    make_txn(
+                        counter, txn_width, corp, student, amount, "RTGS", t, "SUCCESS", "corporate settlement", True, "PROFILE_MISMATCH"
+                    )
+                )
+
+    # Finalize labels without overwriting
+    def get_pattern(acc_id):
+        if acc_id in pattern_labels:
+            return "|".join(sorted(list(pattern_labels[acc_id])))
+        return "NONE"
+
+    df_acc['is_fraud'] = df_acc['account_id'].isin(fraud_accounts)
+    df_acc['pattern_type'] = df_acc['account_id'].apply(get_pattern)
 
     df_txn = pd.DataFrame(transactions).sample(frac=1, random_state=args.seed).reset_index(drop=True)
     df_txn["txn_ts"] = pd.to_datetime(df_txn["txn_ts"])
 
+    # --- Generate Account Stats (Feature Store / Aggregations) ---
+    print("Aggregating historical features into account_stats.csv...")
+    # --- Fix Point-In-Time Lookahead Bias ---
+    now = datetime.now()
+    fraud_txns = df_txn[df_txn["is_fraud"] == True]
+    first_fraud = pd.concat([
+        fraud_txns.groupby("sender_id")["txn_ts"].min(),
+        fraud_txns.groupby("receiver_id")["txn_ts"].min()
+    ]).groupby(level=0).min().to_dict()
+    
+    cutoff_series = pd.Series(df_acc["account_id"].apply(lambda x: first_fraud.get(x, now)).values, index=df_acc["account_id"])
+
     ledger = pd.concat(
         [
-            df_txn[["sender_id", "receiver_id", "amount", "txn_ts"]].rename(
+            df_txn[["sender_id", "receiver_id", "amount", "txn_ts", "pattern_type"]].rename(
                 columns={"sender_id": "account_id", "receiver_id": "counterparty_id"}
             ),
-            df_txn[["receiver_id", "sender_id", "amount", "txn_ts"]].rename(
+            df_txn[["receiver_id", "sender_id", "amount", "txn_ts", "pattern_type"]].rename(
                 columns={"receiver_id": "account_id", "sender_id": "counterparty_id"}
             ),
         ],
         ignore_index=True,
     )
 
-    now = datetime.now()
+    # Filter ledger to STRICTLY before cutoff time for each account
+    ledger["cutoff_time"] = ledger["account_id"].map(cutoff_series)
+    ledger = ledger[ledger["txn_ts"] < ledger["cutoff_time"]]
 
     def window_stats(days):
-        cutoff = now - timedelta(days=days)
-        window = ledger[ledger["txn_ts"] >= cutoff]
-        grouped = window.groupby("account_id").agg(
-            **{
-                f"txn_count_{days}d": ("amount", "size"),
-                f"volume_{days}d": ("amount", "sum"),
-            }
-        )
-        return grouped
+        window = ledger[ledger["txn_ts"] >= (ledger["cutoff_time"] - timedelta(days=days))]
+        return window.groupby("account_id").agg(**{f"txn_count_{days}d": ("amount", "size"), f"volume_{days}d": ("amount", "sum")})
 
     stats_7d = window_stats(7)
     stats_30d = window_stats(30)
+    
+    window_180 = ledger[ledger["txn_ts"] >= (ledger["cutoff_time"] - timedelta(days=180))]
+    stats_180 = window_180.groupby("account_id").agg(total_count_180d=("amount", "size"), total_volume_180d=("amount", "sum"))
+    
+    unique_30d = ledger[ledger["txn_ts"] >= (ledger["cutoff_time"] - timedelta(days=30))].groupby("account_id")["counterparty_id"].nunique().rename("unique_counterparties_30d")
+    last_active = ledger[ledger["pattern_type"] != "DORMANT_ACTIVATION"].groupby("account_id")["txn_ts"].max().rename("last_active_ts")
 
-    cutoff_180 = now - timedelta(days=180)
-    window_180 = ledger[ledger["txn_ts"] >= cutoff_180]
-    stats_180 = window_180.groupby("account_id").agg(
-        total_count=("amount", "size"),
-        total_volume=("amount", "sum"),
-    )
-
-    unique_30d = (
-        ledger[ledger["txn_ts"] >= now - timedelta(days=30)]
-        .groupby("account_id")["counterparty_id"]
-        .nunique()
-    )
-
-    last_active = ledger.groupby("account_id")["txn_ts"].max()
-
-    df_acc = df_acc.set_index("account_id")
-    df_acc = df_acc.join(stats_7d).join(stats_30d).join(stats_180).join(unique_30d).join(last_active)
-
-    df_acc = df_acc.rename(
-        columns={
-            "txn_count_7d": "txn_count_7d",
-            "volume_7d": "volume_7d",
-            "txn_count_30d": "txn_count_30d",
-            "volume_30d": "volume_30d",
-            "total_count": "total_count_180d",
-            "total_volume": "total_volume_180d",
-            "counterparty_id": "unique_counterparties_30d",
-            "txn_ts": "last_active_ts",
-        }
-    )
-
-    df_acc["txn_count_7d"] = df_acc["txn_count_7d"].fillna(0).astype(int)
-    df_acc["txn_count_30d"] = df_acc["txn_count_30d"].fillna(0).astype(int)
-    df_acc["volume_7d"] = df_acc["volume_7d"].fillna(0.0)
-    df_acc["volume_30d"] = df_acc["volume_30d"].fillna(0.0)
-    df_acc["total_count_180d"] = df_acc["total_count_180d"].fillna(0).astype(int)
-    df_acc["total_volume_180d"] = df_acc["total_volume_180d"].fillna(0.0)
-    df_acc["unique_counterparties_30d"] = df_acc["unique_counterparties_30d"].fillna(0).astype(int)
-
-    df_acc["avg_monthly_count"] = (df_acc["total_count_180d"] / 6).round(2)
-    df_acc["avg_monthly_volume"] = (df_acc["total_volume_180d"] / 6).round(2)
-
-    df_acc["last_active_ts"] = df_acc["last_active_ts"].where(pd.notna(df_acc["last_active_ts"]), None)
-    df_acc["dormancy_days"] = df_acc.apply(
-        lambda row: int(
-            (now - row["last_active_ts"]).days
-            if pd.notna(row["last_active_ts"])
-            else (now.date() - row["opened_on"]).days
-        ),
+    df_stats = pd.DataFrame(index=df_acc["account_id"]).join(stats_7d).join(stats_30d).join(stats_180).join(unique_30d).join(last_active)
+    
+    df_stats["txn_count_7d"] = df_stats["txn_count_7d"].fillna(0).astype(int)
+    df_stats["txn_count_30d"] = df_stats["txn_count_30d"].fillna(0).astype(int)
+    df_stats["volume_7d"] = df_stats["volume_7d"].fillna(0.0)
+    df_stats["volume_30d"] = df_stats["volume_30d"].fillna(0.0)
+    df_stats["total_count_180d"] = df_stats["total_count_180d"].fillna(0).astype(int)
+    df_stats["total_volume_180d"] = df_stats["total_volume_180d"].fillna(0.0)
+    df_stats["unique_counterparties_30d"] = df_stats["unique_counterparties_30d"].fillna(0).astype(int)
+    df_stats["avg_monthly_count"] = (df_stats["total_count_180d"] / 6).round(2)
+    df_stats["avg_monthly_volume"] = (df_stats["total_volume_180d"] / 6).round(2)
+    
+    # Calculate dormancy accurately based on point-in-time
+    df_acc_dates = df_acc.set_index("account_id")[["opened_on"]]
+    df_stats = df_stats.join(df_acc_dates)
+    df_stats["cutoff_time"] = cutoff_series
+    
+    df_stats["dormancy_days"] = df_stats.apply(
+        lambda row: int((row["cutoff_time"] - row["last_active_ts"]).days if pd.notna(row["last_active_ts"]) else (row["cutoff_time"].date() - pd.to_datetime(row["opened_on"]).date()).days),
         axis=1,
     )
+    df_stats = df_stats.drop(columns=["opened_on", "cutoff_time"])
+    df_stats = df_stats.reset_index()
+    df_stats["last_active_ts"] = df_stats["last_active_ts"].apply(lambda v: v.isoformat() if pd.notna(v) else None)
 
-    df_acc["status"] = np.where(df_acc["dormancy_days"] >= 365, "DORMANT", "ACTIVE")
-    frozen_mask = np.random.rand(len(df_acc)) < 0.01
-    df_acc.loc[frozen_mask, "status"] = "FROZEN"
-
-    df_acc["is_fraud"] = df_acc.index.to_series().isin(fraud_accounts)
-    df_acc["fraud_score"] = df_acc["is_fraud"].apply(
-        lambda flag: round(random.uniform(0.7, 0.98), 3) if flag else round(random.uniform(0.0, 0.3), 3)
-    )
-    df_acc["last_scored_ts"] = now
-
-    df_acc = df_acc.reset_index()
-
-    df_acc["opened_on"] = df_acc["opened_on"].astype(str)
-    df_acc["last_active_ts"] = df_acc["last_active_ts"].apply(
-        lambda value: value.isoformat() if pd.notna(value) else None
-    )
-    df_acc["last_scored_ts"] = df_acc["last_scored_ts"].apply(lambda value: value.isoformat())
-
+    # --- Format Outputs ---
     df_txn["txn_ts"] = df_txn["txn_ts"].apply(lambda value: value.isoformat())
-
-    account_columns = [
-        "account_id",
-        "entity_id",
-        "account_type",
-        "kyc_tier",
-        "status",
-        "opened_on",
-        "risk_category",
-        "declared_annual_income",
-        "txn_count_7d",
-        "txn_count_30d",
-        "volume_7d",
-        "volume_30d",
-        "avg_monthly_volume",
-        "avg_monthly_count",
-        "unique_counterparties_30d",
-        "last_active_ts",
-        "dormancy_days",
-        "is_fraud",
-        "fraud_score",
-        "last_scored_ts",
-    ]
-
-    transaction_columns = [
-        "txn_id",
-        "sender_id",
-        "receiver_id",
-        "amount",
-        "channel",
-        "txn_ts",
-        "status",
-        "narration",
-    ]
-
-    df_txn.to_csv(DATA_DIR / "transactions.csv", index=False, columns=transaction_columns)
-    df_acc.to_csv(DATA_DIR / "accounts.csv", index=False, columns=account_columns)
-
-    pd.DataFrame({"account_id": sorted(smurf_masters)}).to_csv(
-        LABELS_DIR / "smurf_accounts.csv", index=False
-    )
-    pd.DataFrame({"account_id": sorted(fraud_accounts)}).to_csv(
-        LABELS_DIR / "fraud_accounts.csv", index=False
-    )
+    df_ent = df_ent[["entity_id", "entity_type", "declared_annual_income", "kyc_status", "age", "geography_tier"]]
+    
+    # NO FRAUD SCORE LEAKAGE! The ML model must learn from the account stats and graph topology!
+    df_acc = df_acc[["account_id", "entity_id", "account_type", "kyc_tier", "status", "opened_on", "risk_category", "is_fraud", "pattern_type"]]
+    
+    print("Writing files to Polyglot schema architecture...")
+    df_ent.to_csv(DATA_DIR / "entities.csv", index=False)
+    df_acc.to_csv(DATA_DIR / "accounts.csv", index=False)
+    df_stats.to_csv(DATA_DIR / "account_stats.csv", index=False)
+    df_txn.to_csv(DATA_DIR / "transactions.csv", index=False)
 
     print("\nDone.")
+    print(f"Entities:     {len(df_ent)}")
     print(f"Accounts:     {len(df_acc)}")
     print(f"Transactions: {len(df_txn)}")
     print(f"Fraud accounts: {df_acc['is_fraud'].sum()} ({df_acc['is_fraud'].mean()*100:.1f}%)")
-    print(f"Smurf masters: {len(smurf_masters)}")
 
+    # --- Neo4j Sample Update ---
     if not args.no_neo4j_sample:
         neo4j_dir = DATA_DIR / args.neo4j_dir
         neo4j_dir.mkdir(parents=True, exist_ok=True)
 
         df_acc_sample, df_txn_sample = build_neo4j_sample(
-            df_acc,
-            df_txn,
-            fraud_accounts,
-            args.neo4j_accounts,
-            args.neo4j_transactions,
-            args.seed,
+            df_acc, df_txn, fraud_accounts, args.neo4j_accounts, args.neo4j_transactions, args.seed
         )
 
         if not df_acc_sample.empty and not df_txn_sample.empty:
-            df_acc_sample.to_csv(neo4j_dir / "accounts.csv", index=False, columns=account_columns)
-            df_txn_sample.to_csv(neo4j_dir / "transactions.csv", index=False, columns=transaction_columns)
-            print("\nNeo4j sample written:")
-            print(f"  Accounts: {len(df_acc_sample)}")
+            # We must only load topological data into Neo4j
+            df_neo4j_acc = df_acc_sample[["account_id", "entity_id"]] # Strict Polyglot Persistence!
+            df_neo4j_acc.to_csv(neo4j_dir / "accounts.csv", index=False)
+            df_txn_sample.to_csv(neo4j_dir / "transactions.csv", index=False)
+            print("\nNeo4j sample written (Strict Topology Format):")
+            print(f"  Accounts: {len(df_neo4j_acc)}")
             print(f"  Transactions: {len(df_txn_sample)}")
-        else:
-            print("\nNeo4j sample skipped (no data).")
 
 
 if __name__ == "__main__":
