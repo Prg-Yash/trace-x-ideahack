@@ -95,6 +95,10 @@ function exportPDF(detail: any) {
     const customerName = detail.customerName || primaryAcc;
     const ifscBase = detail.ifscBase || "UBIN0554678";
     const branchCode = detail.branchCode || "MH042";
+    const branchName = detail.branchName || "Kalyan East Branch";
+    const panNumber = detail.panNumber || "ABCPS7912F";
+    const declaredLimit = Math.round((detail.declaredIncome || 1200000) / 12).toLocaleString("en-IN");
+    const accountType = detail.accountType || "CURRENT";
     const riskScore = detail.riskScore || 88;
     const totalVal = typeof detail.case?.totalAmount === 'number' ? '\u20b9' + detail.case.totalAmount.toLocaleString('en-IN') : detail.case?.totalAmount || "\u20b92,43,000";
     const typologyCodes = detail.typologyCodes || detail.fiuReportData?.suspiciousActivityType || "ML";
@@ -185,19 +189,19 @@ function exportPDF(detail: any) {
             <div class="grid-4">
               <div class="field"><div class="label">Account Number (CBS ID)</div><div class="value">${primaryAcc}</div></div>
               <div class="field"><div class="label">Account Holder Full Name</div><div class="value-normal">${customerName}</div></div>
-              <div class="field"><div class="label">Account Type</div><div class="value">Savings Bank (SB) / INR</div></div>
+              <div class="field"><div class="label">Account Type</div><div class="value">${accountType} / INR</div></div>
               <div class="field"><div class="label">Risk Category (CDD)</div><div class="value" style="color:#b91c1c">HIGH RISK &#8212; ${riskScore}/100</div></div>
             </div>
             <div class="divider"></div>
             <div class="grid-4">
               <div class="field"><div class="label">Masked Aadhaar</div><div class="value">XXXX-XXXX-${String(Math.abs(parseInt(primaryAcc.replace(/\D/g,''))||9) % 10000).padStart(4,'0')}</div></div>
-              <div class="field"><div class="label">Masked PAN</div><div class="value">XXXXX${String(parseInt(primaryAcc.replace(/\D/g,''))||1234).slice(-4)}X</div></div>
-              <div class="field"><div class="label">Branch Name &amp; Code</div><div class="value">Kalyan East Branch (${branchCode})</div></div>
+              <div class="field"><div class="label">PAN Number</div><div class="value">${panNumber}</div></div>
+              <div class="field"><div class="label">Branch Name &amp; Code</div><div class="value">${branchName} (${branchCode})</div></div>
               <div class="field"><div class="label">Customer Segment</div><div class="value">Individual &#8212; Tier 2</div></div>
             </div>
             <div class="divider"></div>
             <div class="grid-4">
-              <div class="field"><div class="label">Declared Monthly Txn Limit</div><div class="value">&#8377;1,00,000</div></div>
+              <div class="field"><div class="label">Declared Monthly Txn Limit</div><div class="value">&#8377;${declaredLimit}</div></div>
               <div class="field"><div class="label">Actual Volume (30d)</div><div class="value" style="color:#b91c1c">${totalVal}</div></div>
               <div class="field"><div class="label">KYC Status</div><div class="value" style="color:#d97706">MISMATCH &#8212; Review Required</div></div>
               <div class="field"><div class="label">Last KYC Update</div><div class="value">2024-11-15</div></div>
@@ -456,19 +460,32 @@ export default function Evidence() {
 
     if (currentCases.length > 0) {
       const params = new URLSearchParams(window.location.search);
-      const acc = params.get("account");
+      let acc = params.get("account");
       if (acc) {
-        const match = currentCases.find(c => c.suspiciousAccounts.includes(acc) || c.alertId.includes(acc) || c.title.includes(acc));
+        if (!acc.startsWith("ACC_")) {
+          const matchedAlert = liveAlertsData?.alerts?.find(a => 
+            a.account_id === acc || 
+            a.customer_name === acc || 
+            (a.customer_name && a.customer_name.replace(/\s*\(\d+\)$/, "") === acc!.replace(/\s*\(\d+\)$/, ""))
+          );
+          if (matchedAlert) {
+            acc = matchedAlert.account_id;
+          } else {
+            acc = "ACC_00115";
+          }
+        }
+        const match = currentCases.find(c => c.suspiciousAccounts.includes(acc!) || c.alertId.includes(acc!) || c.title.includes(acc!));
         if (match) {
           setSelectedId(match.id);
         } else {
+          const cleanName = acc.replace(/\s*\(\d+\)$/, "");
           const newId = currentCases.length + 99;
           const newCase: EvidenceCase = {
             id: newId,
             caseId: `CASE-2026-${String(currentCases.length + 1).padStart(3, "0")}`,
-            title: `FIU Investigation: Escalated Alert (${acc})`,
+            title: `FIU Investigation: Escalated Alert (${cleanName})`,
             investigator: "Agent Investigator",
-            alertId: `ALT-${acc}`,
+            alertId: `ALT-${cleanName}`,
             status: "IN_PROGRESS",
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
@@ -507,15 +524,37 @@ export default function Evidence() {
       if (findings.length < 3) {
         if (!findings.some(f => f.category.includes("Layering"))) findings.push({ category: "Rapid Layering Velocity", finding: "Rapid sequential transfers detected across multiple accounts to obscure origin", severity: "CRITICAL" });
         if (!findings.some(f => f.category.includes("KYC"))) findings.push({ category: "KYC Profile Mismatch", finding: "Transaction velocity exceeds declared customer risk profile expectations by over 400%", severity: "HIGH" });
-        if (!findings.some(f => f.category.includes("Cross"))) findings.push({ category: "Cross-Channel Switch", finding: "Funds abruptly converted from traditional wire transfer to decentralized Crypto Settlement rail", severity: "HIGH" });
+        if (!findings.some(f => f.category.includes("Cross"))) findings.push({ category: "Cross-Channel Switch", finding: "Funds abruptly switched across domestic Indian payment rails (RTGS to IMPS/NEFT) to evade single-channel velocity checks", severity: "HIGH" });
       }
 
       const suspDate = new Date(); suspDate.setDate(suspDate.getDate() - 1);
       const txnDateStr = suspDate.toISOString().split("T")[0];
       const INDIAN_RAILS = ["RTGS", "NEFT", "IMPS", "UPI"];
-      let fundFlow = liveReport.trace?.chain ? liveReport.trace.chain.map((c: string, i: number) => ({ step: i+1, fromAccount: c, toAccount: liveReport.trace.chain[i+1] ?? "End", amount: liveReport.trace.amounts[i] ?? 125000, utr: `UTR${txnDateStr.replace(/-/g,"")}${String(1000+i).padStart(6,"0")}`, ifsc: `UBIN0${(550000+i*113).toString().slice(0,5)}`, method: INDIAN_RAILS[i % 4], timestamp: txnDateStr })).slice(0, -1) : [];
+      let fundFlow = liveReport.trace?.chain && liveReport.trace.chain.length > 1 ? liveReport.trace.chain.map((c: string, i: number) => ({ step: i+1, fromAccount: c, toAccount: liveReport.trace.chain[i+1] ?? "End", amount: liveReport.trace.amounts[i] ?? 125000, utr: `UTR${txnDateStr.replace(/-/g,"")}${String(1000+i).padStart(6,"0")}`, ifsc: `UBIN0${(550000+i*113).toString().slice(0,5)}`, method: INDIAN_RAILS[i % 4], timestamp: txnDateStr })).slice(0, -1) : [];
+      
+      let primaryAccId = selectedCase.suspiciousAccounts?.[0] || liveReport.account_id || "ACC_00001";
+      if (!primaryAccId.startsWith("ACC_")) primaryAccId = "ACC_00115";
+      const accNum = parseInt(primaryAccId.replace(/\D/g, "")) || 1;
+
+      if (fundFlow.length === 0 && liveReport.transactions && liveReport.transactions.length > 0) {
+        fundFlow = liveReport.transactions.slice(0, 5).map((t: any, idx: number) => {
+          const rawAmt = Number(t.amount) || Math.round((selectedCase.totalAmount || 500000) / (liveReport.transactions.length || 1));
+          return {
+            step: idx + 1,
+            fromAccount: t.sender_id || primaryAccId,
+            toAccount: t.receiver_id || "External Account",
+            amount: rawAmt,
+            utr: t.txn_id && t.txn_id.startsWith("UTR") ? t.txn_id : `UTR${txnDateStr.replace(/-/g,"")}${String(100142 + idx)}`,
+            ifsc: `UBIN0${String(550000 + (accNum % 50000) + idx * 11).slice(0, 5)}`,
+            method: INDIAN_RAILS[idx % 4],
+            timestamp: t.txn_ts ? t.txn_ts.split("T")[0] : txnDateStr
+          };
+        });
+      }
+
       if (fundFlow.length === 0) {
-        const acc = selectedCase.suspiciousAccounts?.[0] || "ACC_06264";
+        let acc = selectedCase.suspiciousAccounts?.[0] || "ACC_06264";
+        if (!acc.startsWith("ACC_")) acc = "ACC_00115";
         const num = parseInt(acc.replace(/\D/g, "")) || 6264;
         fundFlow = [
           { step: 1, fromAccount: `ACC_${(num + 112).toString().padStart(5, "0")}`, toAccount: acc, amount: Math.round((selectedCase.totalAmount || 500000) * 0.42), utr: `UTR${txnDateStr.replace(/-/g,"")}100142`, ifsc: "UBIN0554678", method: "RTGS", timestamp: txnDateStr },
@@ -524,14 +563,19 @@ export default function Evidence() {
         ];
       }
 
-      const primaryAccId = selectedCase.suspiciousAccounts?.[0] || liveReport.account_id || "ACC_00001";
-      const accNum = parseInt(primaryAccId.replace(/\D/g, "")) || 1;
       const suspicionDate = new Date(); suspicionDate.setDate(suspicionDate.getDate() - 1);
       const filingDeadline = new Date(suspicionDate); filingDeadline.setDate(filingDeadline.getDate() + 7);
       const suspDateFormatted = suspicionDate.toLocaleDateString("en-IN");
       const filingDateFormatted = filingDeadline.toLocaleDateString("en-IN");
-      const customerName = liveReport.account?.customer_name || liveReport.customer_name || `Customer ${primaryAccId}`;
-      const branchCode = `MH${String(Math.abs(accNum % 999)).padStart(3, "0")}`;
+      const rawCustomerName = liveReport.account?.customer_name || liveReport.customer_name || `Customer ${primaryAccId}`;
+      const customerName = rawCustomerName.replace(/\s*\(\d+\)$/, "");
+      const branchCode = liveReport.account?.branch_code || `MH${String(Math.abs(accNum % 999)).padStart(3, "0")}`;
+      const branchName = liveReport.account?.branch_name || "Kalyan East Branch";
+      const panNumber = liveReport.account?.pan_number || "ABCPS7912F";
+      const dob = liveReport.account?.dob || "1976-01-03";
+      const address = liveReport.account?.address || "Connaught Place, Outer Circle, New Delhi, DL - 110001";
+      const declaredIncome = liveReport.account?.declared_annual_income || 1200000;
+      const accountType = liveReport.account?.account_type || "CURRENT";
       const ifscBase = `UBIN0${String(550000 + (accNum % 50000)).slice(0, 5)}`;
       const typologyCodes = findings.map(f => {
         if (f.category.toLowerCase().includes("layer")) return "ML";
@@ -561,6 +605,12 @@ All transactions settled via regulated Indian payment rails (RTGS/NEFT/IMPS) and
         customerName,
         ifscBase,
         branchCode,
+        branchName,
+        panNumber,
+        dob,
+        address,
+        declaredIncome,
+        accountType,
         suspDateFormatted,
         filingDateFormatted,
         typologyCodes,

@@ -126,8 +126,9 @@ export default function Alerts() {
         description: `Fraud pattern detected: ${a.flagged_for.join(", ")}`,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        accountName: a.customer_name || a.account_id,
+        accountName: (a.customer_name || a.account_id).replace(/\s*\(\d+\)$/, ""),
         accountNumber: `${a.account_id} (${a.branch_name || "Main Branch"})`,
+        rawAccountId: a.account_id,
       }))
     : [];
 
@@ -135,7 +136,7 @@ export default function Alerts() {
     const alert = mergedAlerts.find(a => a.id === alertId);
     if (alert) {
       setDrawerOpen(false);
-      navigate(`/graph/${alert.alertId}`);
+      navigate(`/graph/${alert.rawAccountId || alert.alertId}`);
     }
   };
 
@@ -475,7 +476,7 @@ export default function Alerts() {
                       </Button>
 
                       <Button
-                        onClick={() => { setDrawerOpen(false); navigate(`/evidence?account=${alertDetail.accountName}`); }}
+                        onClick={() => { setDrawerOpen(false); navigate(`/evidence?account=${alertDetail.rawAccountId || alertDetail.accountNumber.split(" ")[0]}`); }}
                         className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105 mt-3"
                         style={{
                           backgroundColor: "#130537",

@@ -167,7 +167,11 @@ SMURFING_FEATURES = [
 ]
 
 try:
-    SMURF_MODEL = joblib.load(str(MODELS_DIR / "smurf_model.pkl"))
+    _smurf_raw = joblib.load(str(MODELS_DIR / "smurf_model.pkl"))
+    if isinstance(_smurf_raw, dict) and "model" in _smurf_raw:
+        SMURF_MODEL = _smurf_raw["model"]
+    else:
+        SMURF_MODEL = _smurf_raw
 except Exception:
     SMURF_MODEL = None # Smurf model missing
 
@@ -760,7 +764,7 @@ async def explain_dormant(account_id: str) -> Dict:
             iso_score = DORMANCY_HYBRID["iso"].decision_function(X_scaled)[0]
             X["iso_anomaly_score"] = iso_score
             feature_values = X.iloc[0].tolist()
-            feature_cols_used = DORMANCY_HYBRID["enhanced_features"]
+            feature_cols_used = DORMANCY_HYBRID.get("enhanced_features", list(X.columns))
             
             proba = DORMANCY_HYBRID["xgb"].predict_proba(X)[0][1]
             detected = bool(proba >= 0.50)
@@ -1594,11 +1598,60 @@ async def trace_account(account_id: str, hint: str = "") -> Dict:
 
 
 
+def _fetch_db_account_and_txns(account_id: str) -> Dict:
+    acc_info = {}
+    txns = []
+    if not DATABASE_URL:
+        return {"account": acc_info, "transactions": txns}
+    try:
+        with psycopg2.connect(DATABASE_URL) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT a.*, e.customer_name, e.pan_number, e.dob, e.address, e.declared_annual_income
+                    FROM accounts a
+                    LEFT JOIN entities e ON a.entity_id = e.entity_id
+                    WHERE a.account_id = %s
+                """, (account_id,))
+                row = cur.fetchone()
+                if row:
+                    acc_info = dict(row)
+                    cname = acc_info.get("customer_name") or ""
+                    clean_name = re.sub(r'\s*\(\d+\)$', '', str(cname)).strip()
+                    acc_info["customer_name"] = clean_name or f"Account Holder ({account_id})"
+                else:
+                    acc_info = {"account_id": account_id, "customer_name": f"Account Holder ({account_id})"}
+                
+                if not acc_info.get("branch_name") or not acc_info.get("customer_name"):
+                    cur.execute("SELECT branch_name, branch_code, customer_name, pan_number, address, declared_annual_income FROM account_ml_features WHERE account_id = %s", (account_id,))
+                    f_row = cur.fetchone()
+                    if f_row:
+                        for k, v in dict(f_row).items():
+                            if v and not acc_info.get(k):
+                                if k == "customer_name":
+                                    acc_info[k] = re.sub(r'\s*\(\d+\)$', '', str(v)).strip()
+                                else:
+                                    acc_info[k] = v
+
+                cur.execute("""
+                    SELECT * FROM transactions
+                    WHERE sender_id = %s OR receiver_id = %s
+                    ORDER BY txn_ts DESC LIMIT 25
+                """, (account_id, account_id))
+                txns = [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        print(f"[WARN] _fetch_db_account_and_txns error: {e}")
+    return {"account": acc_info, "transactions": txns}
+
+
 # ── Evidence Package ────────────────────────────────────────────────────────────
 async def build_evidence_package(account_id: str) -> Dict:
     score = await score_account(account_id)
+    db_data = await asyncio.to_thread(_fetch_db_account_and_txns, account_id)
     return _coerce({
         "account_id":    account_id,
+        "customer_name": db_data["account"].get("customer_name", f"Account Holder ({account_id})"),
+        "account":       db_data["account"],
+        "transactions":  db_data["transactions"],
         "generated_at":  datetime.utcnow().isoformat(),
         "score":         score,
         "traces": {

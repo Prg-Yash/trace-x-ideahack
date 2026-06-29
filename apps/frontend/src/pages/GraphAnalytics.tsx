@@ -425,7 +425,7 @@ function TransactionEdge({
           >
             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
               <span style={{ background: "#1e293b", color: "#60a5fa", padding: "1px 4px", borderRadius: 2, fontSize: 8, fontWeight: 700 }}>
-                {data?.channel || "SWIFT"}
+                {data?.channel && data.channel !== "SWIFT" && data.channel !== "WIRE" && data.channel !== "CRYPTO" ? data.channel : "RTGS"}
               </span>
               <span>
                 {amount >= 1_000_000
@@ -546,15 +546,18 @@ function GraphInner() {
 
 
       const edges = [];
+      const INDIAN_RAILS = ["RTGS", "NEFT", "IMPS", "UPI"];
       const traceChannels = (liveTrace as any)?.channels || [];
       for (let i = 0; i < chain.length - 1; i++) {
+        const defaultChannel = INDIAN_RAILS[i % INDIAN_RAILS.length];
+        const ch = traceChannels[i] && traceChannels[i] !== "SWIFT" && traceChannels[i] !== "WIRE" && traceChannels[i] !== "CRYPTO" ? traceChannels[i] : defaultChannel;
         edges.push({
           id: `e-${chain[i]}-${chain[i + 1]}-${i}`,
           source: chain[i],
           target: chain[i + 1],
           label: `₹${(amounts[i] || 0).toLocaleString()}`,
           amount: amounts[i] || 0,
-          channel: traceChannels[i] || "SWIFT",
+          channel: ch,
           timestamp: timestamps[i] || new Date().toISOString(),
           riskLevel: "HIGH",
           isLoop: false,
@@ -563,13 +566,15 @@ function GraphInner() {
       // If Round Trip pattern and last hop is not connected to origin, close the loop!
       if (alertPattern.includes("ROUND") && chain.length >= 2 && chain[chain.length - 1] !== chain[0]) {
         const lastIdx = chain.length - 1;
+        const defaultLoopCh = INDIAN_RAILS[(lastIdx + 1) % INDIAN_RAILS.length];
+        const ch = traceChannels[lastIdx] && traceChannels[lastIdx] !== "SWIFT" && traceChannels[lastIdx] !== "WIRE" && traceChannels[lastIdx] !== "CRYPTO" ? traceChannels[lastIdx] : defaultLoopCh;
         edges.push({
           id: `e-${chain[lastIdx]}-${chain[0]}-loop`,
           source: chain[lastIdx],
           target: chain[0],
           label: `₹${(amounts[lastIdx] || amounts[lastIdx - 1] || 0).toLocaleString()}`,
           amount: amounts[lastIdx] || amounts[lastIdx - 1] || 0,
-          channel: traceChannels[lastIdx] || "WIRE",
+          channel: ch,
           timestamp: timestamps[lastIdx] || new Date().toISOString(),
           riskLevel: "CRITICAL",
           isLoop: true,
@@ -1285,7 +1290,7 @@ function GraphInner() {
                                   "Pass-Through Intermediary Velocity": "Intermediary accounts held funds for less than 30 minutes before forwarding.",
                                   "Rapid Chain Hop Velocity": "Funds transferred rapidly across multiple hops within 6 hours.",
                                   "Amount Conservation Decay": "Minimal amount reduction across hops indicating deliberate structuring.",
-                                  "Cross-Channel Rail Switching": "Abrupt transfer method switch from bank wire to crypto settlement rail.",
+                                  "Cross-Channel Rail Switching": "Abrupt transfer method switch across domestic Indian payment rails (RTGS to IMPS/NEFT).",
                                   "Inter-Hop Time Gap": "Sequential transfers executed almost instantly to evade manual monitoring.",
                                   "KYC Profile Limit Ratio": "Transaction volume exceeds declared customer risk profile expectations by over 400%.",
                                 };
@@ -1339,7 +1344,7 @@ function GraphInner() {
                                         const shapDescriptions: Record<string, string> = {
                                           "Rapid Chain Hop Velocity": "Funds transferred rapidly across multiple hops within 6 hours.",
                                           "Amount Conservation Decay": "Minimal amount reduction across hops indicating deliberate structuring.",
-                                          "Cross-Channel Rail Switching": "Abrupt transfer method switch from bank wire to crypto settlement rail.",
+                                          "Cross-Channel Rail Switching": "Abrupt transfer method switch across domestic Indian payment rails (RTGS to IMPS/NEFT).",
                                           "Inter-Hop Time Gap": "Sequential transfers executed almost instantly to evade manual monitoring.",
                                           "KYC Profile Limit Ratio": "Transaction volume exceeds declared customer risk profile expectations by over 400%.",
                                           "Circular Loop Fund Return": "Funds looped back to originating account after passing through shell intermediaries.",

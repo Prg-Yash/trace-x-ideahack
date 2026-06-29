@@ -5,6 +5,7 @@ All endpoints connect directly to Neo4j (via AsyncGraphDatabase) and
 PostgreSQL (via psycopg2) — no global driver state needed.
 """
 import sys
+import re
 import asyncio
 from datetime import datetime
 from pathlib import Path
@@ -210,7 +211,8 @@ async def get_alerts_quick(limit: int = 200):
         # Use real volume_30d from Postgres, not missing Neo4j property
         amount  = amounts_map.get(acc_id, 0.0)
         status  = str(rec.get("status") or "OPEN")
-        cust_name = rec.get("customer_name") or f"Entity ({acc_id})"
+        raw_cname = rec.get("customer_name") or f"Entity ({acc_id})"
+        cust_name = re.sub(r"\s*\(\d+\)$", "", str(raw_cname)).strip()
         branch  = rec.get("branch_name") or "Main Branch"
         b_code  = rec.get("branch_code") or "MH001"
 
