@@ -126,9 +126,9 @@ async def process_account(account_id: str, pattern_type: str, idx: int, total: i
     result = None
 
     if pattern_upper == "LAYERING":
-        result = await detect_layering(account_id)
+        result = await detect_layering(account_id, recompute=True)
     elif pattern_upper in ("ROUND_TRIP", "ROUNDTRIP", "ROUND-TRIP"):
-        result = await detect_roundtrip(account_id)
+        result = await detect_roundtrip(account_id, recompute=True)
     elif pattern_upper in ("SMURFING", "STRUCTURING"):
         result = await detect_smurfing(account_id)
     elif pattern_upper in ("KYC_MISMATCH", "KYC"):
@@ -137,9 +137,9 @@ async def process_account(account_id: str, pattern_type: str, idx: int, total: i
         result = await detect_dormant(account_id)
     else:
         # For unknown patterns, try layering first then roundtrip
-        result = await detect_layering(account_id)
+        result = await detect_layering(account_id, recompute=True)
         if not result.get("detected"):
-            result = await detect_roundtrip(account_id)
+            result = await detect_roundtrip(account_id, recompute=True)
 
     if result and result.get("detected"):
         confidence = result.get("confidence", 0.0)

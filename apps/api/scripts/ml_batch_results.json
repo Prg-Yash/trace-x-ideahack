@@ -1,97 +1,97 @@
 {
-  "run_at": "2026-06-29T12:06:17.806557",
-  "total": 75,
-  "detected": 60,
+  "run_at": "2026-06-29T12:53:06.424352",
+  "total": 78,
+  "detected": 78,
   "results": [
     {
       "account_id": "ACC_00001",
       "status": "detected",
-      "confidence": 0.92,
-      "model": "cypher_fallback"
+      "confidence": 0.8782,
+      "model": "xgboost_ensemble"
     },
     {
       "account_id": "ACC_00002",
       "status": "detected",
-      "confidence": 0.92,
-      "model": "cypher_fallback"
+      "confidence": 0.8718,
+      "model": "xgboost_ensemble"
     },
     {
       "account_id": "ACC_00003",
       "status": "detected",
-      "confidence": 0.92,
-      "model": "cypher_fallback"
+      "confidence": 0.8888,
+      "model": "xgboost_ensemble"
     },
     {
       "account_id": "ACC_00004",
       "status": "detected",
-      "confidence": 0.92,
-      "model": "cypher_fallback"
+      "confidence": 0.8573,
+      "model": "xgboost_ensemble"
     },
     {
       "account_id": "ACC_00005",
       "status": "detected",
-      "confidence": 0.92,
-      "model": "cypher_fallback"
+      "confidence": 0.8717,
+      "model": "xgboost_ensemble"
     },
     {
       "account_id": "ACC_00006",
       "status": "detected",
-      "confidence": 0.92,
-      "model": "cypher_fallback"
+      "confidence": 0.8925,
+      "model": "xgboost_ensemble"
     },
     {
       "account_id": "ACC_00007",
       "status": "detected",
-      "confidence": 0.92,
-      "model": "cypher_fallback"
+      "confidence": 0.9131,
+      "model": "xgboost_ensemble"
     },
     {
       "account_id": "ACC_00008",
       "status": "detected",
-      "confidence": 0.92,
-      "model": "cypher_fallback"
+      "confidence": 0.8718,
+      "model": "xgboost_ensemble"
     },
     {
       "account_id": "ACC_00009",
       "status": "detected",
-      "confidence": 0.92,
-      "model": "cypher_fallback"
+      "confidence": 0.8927,
+      "model": "xgboost_ensemble"
     },
     {
       "account_id": "ACC_00010",
       "status": "detected",
-      "confidence": 0.92,
-      "model": "cypher_fallback"
+      "confidence": 0.921,
+      "model": "xgboost_ensemble"
     },
     {
       "account_id": "ACC_00011",
       "status": "detected",
-      "confidence": 0.92,
-      "model": "cypher_fallback"
+      "confidence": 0.8717,
+      "model": "xgboost_ensemble"
     },
     {
       "account_id": "ACC_00012",
       "status": "detected",
-      "confidence": 0.92,
-      "model": "cypher_fallback"
+      "confidence": 0.8929,
+      "model": "xgboost_ensemble"
     },
     {
       "account_id": "ACC_00013",
       "status": "detected",
-      "confidence": 0.92,
-      "model": "cypher_fallback"
+      "confidence": 0.8823,
+      "model": "xgboost_ensemble"
     },
     {
       "account_id": "ACC_00014",
       "status": "detected",
-      "confidence": 0.92,
-      "model": "cypher_fallback"
+      "confidence": 0.8719,
+      "model": "xgboost_ensemble"
     },
     {
       "account_id": "ACC_00015",
       "status": "detected",
-      "confidence": 0.92,
-      "model": "cypher_fallback"
+      "confidence": 0.8723,
+      "model": "xgboost_ensemble"
     },
     {
       "account_id": "ACC_00016",
@@ -275,78 +275,93 @@
     },
     {
       "account_id": "ACC_00046",
-      "status": "error",
-      "error": "[17:35:50] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+      "status": "detected",
+      "confidence": 0.971,
+      "model": "unknown"
     },
     {
       "account_id": "ACC_00047",
-      "status": "error",
-      "error": "[17:35:50] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+      "status": "detected",
+      "confidence": 0.8228,
+      "model": "unknown"
     },
     {
       "account_id": "ACC_00048",
-      "status": "error",
-      "error": "[17:35:51] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+      "status": "detected",
+      "confidence": 0.8352,
+      "model": "unknown"
     },
     {
       "account_id": "ACC_00049",
-      "status": "error",
-      "error": "[17:35:51] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+      "status": "detected",
+      "confidence": 0.8822,
+      "model": "unknown"
     },
     {
       "account_id": "ACC_00050",
-      "status": "error",
-      "error": "[17:35:52] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+      "status": "detected",
+      "confidence": 0.9656,
+      "model": "unknown"
     },
     {
       "account_id": "ACC_00051",
-      "status": "error",
-      "error": "[17:35:53] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+      "status": "detected",
+      "confidence": 0.823,
+      "model": "unknown"
     },
     {
       "account_id": "ACC_00052",
-      "status": "error",
-      "error": "[17:35:53] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+      "status": "detected",
+      "confidence": 0.8608,
+      "model": "unknown"
     },
     {
       "account_id": "ACC_00053",
-      "status": "error",
-      "error": "[17:35:54] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+      "status": "detected",
+      "confidence": 0.8956,
+      "model": "unknown"
     },
     {
       "account_id": "ACC_00054",
-      "status": "error",
-      "error": "[17:35:54] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+      "status": "detected",
+      "confidence": 0.8378,
+      "model": "unknown"
     },
     {
       "account_id": "ACC_00055",
-      "status": "error",
-      "error": "[17:35:55] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+      "status": "detected",
+      "confidence": 0.8285,
+      "model": "unknown"
     },
     {
       "account_id": "ACC_00056",
-      "status": "error",
-      "error": "[17:35:56] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+      "status": "detected",
+      "confidence": 0.849,
+      "model": "unknown"
     },
     {
       "account_id": "ACC_00057",
-      "status": "error",
-      "error": "[17:35:57] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+      "status": "detected",
+      "confidence": 0.8587,
+      "model": "unknown"
     },
     {
       "account_id": "ACC_00058",
-      "status": "error",
-      "error": "[17:35:57] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+      "status": "detected",
+      "confidence": 0.8535,
+      "model": "unknown"
     },
     {
       "account_id": "ACC_00059",
-      "status": "error",
-      "error": "[17:35:58] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+      "status": "detected",
+      "confidence": 0.826,
+      "model": "unknown"
     },
     {
       "account_id": "ACC_00060",
-      "status": "error",
-      "error": "[17:35:59] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+      "status": "detected",
+      "confidence": 0.9719,
+      "model": "unknown"
     },
     {
       "account_id": "ACC_00061",
@@ -437,6 +452,24 @@
       "status": "detected",
       "confidence": 0.902351242,
       "model": "unknown"
+    },
+    {
+      "account_id": "ACC_DEMO_ROUND_TRIP_203265",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_DEMO_ROUND_TRIP_267095",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_DEMO_ROUND_TRIP_610193",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
     }
   ]
 }

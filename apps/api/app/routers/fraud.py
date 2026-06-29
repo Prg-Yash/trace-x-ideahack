@@ -121,8 +121,8 @@ async def get_stats():
             MATCH (a:Account)-[:FLAGGED_IN]->(al:Alert)
             RETURN
                 count(DISTINCT a)                                               AS total_flagged,
-                count(DISTINCT CASE WHEN al.tier = 'CRITICAL' THEN a END)      AS critical_count,
-                count(DISTINCT CASE WHEN toLower(al.pattern) IN ['dormant', 'dormancy', 'dormant_activation'] THEN a END) AS dormant_count
+                count(DISTINCT CASE WHEN coalesce(al.severity, al.tier, 'HIGH') = 'CRITICAL' OR coalesce(al.fraud_probability, al.fraud_prob, 0) >= 0.8 THEN a END) AS critical_count,
+                count(DISTINCT CASE WHEN toLower(coalesce(al.pattern_type, al.pattern, 'none')) IN ['dormant', 'dormancy', 'dormant_activation'] THEN a END) AS dormant_count
         """, limit=1)
         if rows:
             stats["total_flagged"]  = int(rows[0].get("total_flagged", 0) or 0)
