@@ -1,0 +1,442 @@
+{
+  "run_at": "2026-06-29T12:06:17.806557",
+  "total": 75,
+  "detected": 60,
+  "results": [
+    {
+      "account_id": "ACC_00001",
+      "status": "detected",
+      "confidence": 0.92,
+      "model": "cypher_fallback"
+    },
+    {
+      "account_id": "ACC_00002",
+      "status": "detected",
+      "confidence": 0.92,
+      "model": "cypher_fallback"
+    },
+    {
+      "account_id": "ACC_00003",
+      "status": "detected",
+      "confidence": 0.92,
+      "model": "cypher_fallback"
+    },
+    {
+      "account_id": "ACC_00004",
+      "status": "detected",
+      "confidence": 0.92,
+      "model": "cypher_fallback"
+    },
+    {
+      "account_id": "ACC_00005",
+      "status": "detected",
+      "confidence": 0.92,
+      "model": "cypher_fallback"
+    },
+    {
+      "account_id": "ACC_00006",
+      "status": "detected",
+      "confidence": 0.92,
+      "model": "cypher_fallback"
+    },
+    {
+      "account_id": "ACC_00007",
+      "status": "detected",
+      "confidence": 0.92,
+      "model": "cypher_fallback"
+    },
+    {
+      "account_id": "ACC_00008",
+      "status": "detected",
+      "confidence": 0.92,
+      "model": "cypher_fallback"
+    },
+    {
+      "account_id": "ACC_00009",
+      "status": "detected",
+      "confidence": 0.92,
+      "model": "cypher_fallback"
+    },
+    {
+      "account_id": "ACC_00010",
+      "status": "detected",
+      "confidence": 0.92,
+      "model": "cypher_fallback"
+    },
+    {
+      "account_id": "ACC_00011",
+      "status": "detected",
+      "confidence": 0.92,
+      "model": "cypher_fallback"
+    },
+    {
+      "account_id": "ACC_00012",
+      "status": "detected",
+      "confidence": 0.92,
+      "model": "cypher_fallback"
+    },
+    {
+      "account_id": "ACC_00013",
+      "status": "detected",
+      "confidence": 0.92,
+      "model": "cypher_fallback"
+    },
+    {
+      "account_id": "ACC_00014",
+      "status": "detected",
+      "confidence": 0.92,
+      "model": "cypher_fallback"
+    },
+    {
+      "account_id": "ACC_00015",
+      "status": "detected",
+      "confidence": 0.92,
+      "model": "cypher_fallback"
+    },
+    {
+      "account_id": "ACC_00016",
+      "status": "detected",
+      "confidence": 0.922,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00017",
+      "status": "detected",
+      "confidence": 0.9207,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00018",
+      "status": "detected",
+      "confidence": 0.9199,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00019",
+      "status": "detected",
+      "confidence": 0.8612,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00020",
+      "status": "detected",
+      "confidence": 0.8756,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00021",
+      "status": "detected",
+      "confidence": 0.9213,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00022",
+      "status": "detected",
+      "confidence": 0.9219,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00023",
+      "status": "detected",
+      "confidence": 0.8602,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00024",
+      "status": "detected",
+      "confidence": 0.8902,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00025",
+      "status": "detected",
+      "confidence": 0.8674,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00026",
+      "status": "detected",
+      "confidence": 0.8912,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00027",
+      "status": "detected",
+      "confidence": 0.8636,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00028",
+      "status": "detected",
+      "confidence": 0.8675,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00029",
+      "status": "detected",
+      "confidence": 0.8672,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00030",
+      "status": "detected",
+      "confidence": 0.8676,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00031",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_00032",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_00033",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_00034",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_00035",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_00036",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_00037",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_00038",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_00039",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_00040",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_00041",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_00042",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_00043",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_00044",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_00045",
+      "status": "detected",
+      "confidence": 0.86,
+      "model": "xgboost_ensemble"
+    },
+    {
+      "account_id": "ACC_00046",
+      "status": "error",
+      "error": "[17:35:50] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+    },
+    {
+      "account_id": "ACC_00047",
+      "status": "error",
+      "error": "[17:35:50] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+    },
+    {
+      "account_id": "ACC_00048",
+      "status": "error",
+      "error": "[17:35:51] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+    },
+    {
+      "account_id": "ACC_00049",
+      "status": "error",
+      "error": "[17:35:51] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+    },
+    {
+      "account_id": "ACC_00050",
+      "status": "error",
+      "error": "[17:35:52] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+    },
+    {
+      "account_id": "ACC_00051",
+      "status": "error",
+      "error": "[17:35:53] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+    },
+    {
+      "account_id": "ACC_00052",
+      "status": "error",
+      "error": "[17:35:53] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+    },
+    {
+      "account_id": "ACC_00053",
+      "status": "error",
+      "error": "[17:35:54] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+    },
+    {
+      "account_id": "ACC_00054",
+      "status": "error",
+      "error": "[17:35:54] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+    },
+    {
+      "account_id": "ACC_00055",
+      "status": "error",
+      "error": "[17:35:55] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+    },
+    {
+      "account_id": "ACC_00056",
+      "status": "error",
+      "error": "[17:35:56] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+    },
+    {
+      "account_id": "ACC_00057",
+      "status": "error",
+      "error": "[17:35:57] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+    },
+    {
+      "account_id": "ACC_00058",
+      "status": "error",
+      "error": "[17:35:57] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+    },
+    {
+      "account_id": "ACC_00059",
+      "status": "error",
+      "error": "[17:35:58] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+    },
+    {
+      "account_id": "ACC_00060",
+      "status": "error",
+      "error": "[17:35:59] C:\\actions-runner\\_work\\xgboost\\xgboost\\src\\learner.cc:1289: Check failed: learner_model_param_.num_feature >= p_fmat->Info().num_col_ (8 vs. 23) : Number of columns does not match number of features in booster."
+    },
+    {
+      "account_id": "ACC_00061",
+      "status": "detected",
+      "confidence": 0.942409142,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00062",
+      "status": "detected",
+      "confidence": 0.891962016,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00063",
+      "status": "detected",
+      "confidence": 0.95,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00064",
+      "status": "detected",
+      "confidence": 0.8982780770000001,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00065",
+      "status": "detected",
+      "confidence": 0.8938426690000001,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00066",
+      "status": "detected",
+      "confidence": 0.9051190290000001,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00067",
+      "status": "detected",
+      "confidence": 0.95,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00068",
+      "status": "detected",
+      "confidence": 0.8926534060000001,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00069",
+      "status": "detected",
+      "confidence": 0.9055526490000001,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00070",
+      "status": "detected",
+      "confidence": 0.9147483590000001,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00071",
+      "status": "detected",
+      "confidence": 0.89311845,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00072",
+      "status": "detected",
+      "confidence": 0.91212063,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00073",
+      "status": "detected",
+      "confidence": 0.9270792990000001,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00074",
+      "status": "detected",
+      "confidence": 0.895488116,
+      "model": "unknown"
+    },
+    {
+      "account_id": "ACC_00075",
+      "status": "detected",
+      "confidence": 0.902351242,
+      "model": "unknown"
+    }
+  ]
+}

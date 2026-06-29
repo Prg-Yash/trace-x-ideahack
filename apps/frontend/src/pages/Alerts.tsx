@@ -14,7 +14,6 @@ import {
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  staticAlerts,
   getTimelineByAlertId,
   getTransactionsByAccountId,
   type Alert,
@@ -127,8 +126,8 @@ export default function Alerts() {
         description: `Fraud pattern detected: ${a.flagged_for.join(", ")}`,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        accountName: a.account_id,
-        accountNumber: a.account_id,
+        accountName: a.customer_name || a.account_id,
+        accountNumber: `${a.account_id} (${a.branch_name || "Main Branch"})`,
       }))
     : [];
 

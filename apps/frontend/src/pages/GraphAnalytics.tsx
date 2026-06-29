@@ -21,12 +21,7 @@ import {
   TrendingUp, TrendingDown, Radio,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  staticGraphNetwork,
-  staticGraphPatterns,
-  staticGraphEdges,
-  type GraphNode,
-} from "@/data/staticData";
+import { type GraphNode } from "@/data/staticData";
 import { buildNetworkFromGraph, getGraphById } from "@/data/investigationData";
 import { useInvestigation } from "@/context/InvestigationContext";
 import { useTrace, useExplain, useScore, useAlertsQuick } from "@/hooks/useApi";
@@ -465,6 +460,13 @@ function GraphInner() {
     ? (routeAlertId.startsWith("ALT-") ? routeAlertId.split("-")[1] : routeAlertId)
     : null;
 
+  // URL-pinned pattern — e.g. "ALT-ACC_00002-layering" → "LAYERING"
+  // This is the AUTHORITATIVE pattern for this investigation page.
+  // It must NOT be overwritten by liveScore which runs separate ML inference.
+  const urlPattern = routeAlertId?.startsWith("ALT-")
+    ? routeAlertId.split("-").slice(2).join("_").toUpperCase()
+    : null;
+
   const { data: liveAlertsQuick, loading: alertsLoading } = useAlertsQuick(10);
   const fallbackAccountId = liveAlertsQuick?.alerts?.[0]?.account_id || "ACC_12044";
   const routeAccountId = routeAccountIdFromUrl || fallbackAccountId;
@@ -476,54 +478,69 @@ function GraphInner() {
   const isInvestigationRoute = location === "/graph-analytics";
   const isInvestigationMode = isInvestigationRoute && investigation !== null;
 
-  /* ── Static / Live data ── */
+  /* ── Live network data ── */
   const network = useMemo(() => {
     if (routeAccountId) {
       let chain = liveTrace?.chain?.length && liveTrace.chain.length > 1 ? liveTrace.chain : [];
       let amounts = liveTrace?.amounts || [];
+      const timestamps = (liveTrace as any)?.timestamps || [];
+      // Only use real chain from trace — no synthetic fallback accounts
       if (chain.length <= 1) {
-        const numMatch = routeAccountId.match(/\d+/);
-        const num = numMatch ? parseInt(numMatch[0]) : 12044;
-        chain = [
-          `ACC_${(num + 112).toString().padStart(5, "0")}`,
-          routeAccountId,
-          `ACC_${(num + 849).toString().padStart(5, "0")}`,
-          `CAYMAN_SHELL_${(num % 99).toString().padStart(3, "0")}`
-        ];
-        amounts = [145000, 98000, 95000];
+        // Keep the target account at minimum; additional hops come only when trace resolves
+        chain = [routeAccountId];
+        amounts = [];
       }
+      // The authoritative pattern = URL pattern first, then trace fraud_type
+      // NEVER use liveScore.flagged_for — that's per-model confidence, not alert type
+      const alertPattern = urlPattern || liveTrace?.fraud_type?.toUpperCase() || "FRAUD";
+
       const nodes = chain.map((acc, i) => {
         const isMain = acc === routeAccountId;
-        const score = isMain ? (liveScore ? Math.round(liveScore.combined_score * 100) : 88) : Math.max(30, 75 - i * 15);
+        // Risk level: for target use liveScore, for hops degrade gracefully
+        const score = isMain
+          ? (liveScore ? Math.round(liveScore.combined_score * 100) : 88)
+          : Math.max(30, 75 - i * 15);
         const risk = score >= 80 ? "CRITICAL" : score >= 60 ? "HIGH" : score >= 40 ? "MEDIUM" : "LOW";
-        const products = ["Corporate Checking", "Retail Savings", "Trade Finance", "Escrow Account", "Crypto Settlement"];
-        const branches = ["NYC-HQ (#001)", "London-04", "Cayman-Offshore", "Tokyo-Central", "Frankfurt-02"];
         return {
           id: acc,
           label: isMain ? `Target (${acc})` : `Hop ${i} (${acc})`,
           accountNumber: acc,
           riskLevel: risk,
-          accountType: i === 0 ? "Corporate Checking" : products[i % products.length],
-          branch: branches[i % branches.length],
-          kycStatus: i === 1 || score > 80 ? "PROFILE MISMATCH" : "VERIFIED",
-          balance: 150000 - i * 20000,
-          flagged: isMain || i > 0,
-          pattern: isMain ? (liveScore?.flagged_for[0] || routeAlertId?.split("-")[2]?.toUpperCase() || "LAYERING") : null,
+          // Use real account type from score data for target; generic for hops
+          accountType: isMain
+            ? (liveScore?.account_type || "Current Account")
+            : "Linked Account",
+          // Real branch from score data for target
+          branch: isMain
+            ? (liveScore?.branch_name || acc)
+            : acc,
+          // KYC status: for target node use real mismatch detection
+          kycStatus: isMain
+            ? (liveScore?.detections?.kyc_mismatch?.detected ? "PROFILE MISMATCH" : "VERIFIED")
+            : "VERIFIED",
+          balance: isMain
+            ? (liveScore?.volume_30d || 0)
+            : (amounts[i] || 0),
+          flagged: isMain,
+          // PIN the pattern to the URL alert pattern — never override with score
+          pattern: isMain ? alertPattern : null,
           x: null,
           y: null,
         };
       });
+
+
       const edges = [];
-      const channels = ["SWIFT", "RTGS", "Wire Transfer", "Crypto Rail", "Internal Transfer"];
+      const traceChannels = (liveTrace as any)?.channels || [];
       for (let i = 0; i < chain.length - 1; i++) {
         edges.push({
           id: `e-${chain[i]}-${chain[i + 1]}`,
           source: chain[i],
           target: chain[i + 1],
-          label: `$${(amounts[i] || 50000).toLocaleString()}`,
-          amount: amounts[i] || 50000,
-          channel: channels[i % channels.length],
-          timestamp: new Date().toISOString(),
+          label: `$${(amounts[i] || 0).toLocaleString()}`,
+          amount: amounts[i] || 0,
+          channel: traceChannels[i] || "SWIFT",
+          timestamp: timestamps[i] || new Date().toISOString(),
           riskLevel: "HIGH",
           isLoop: false,
         });
@@ -531,10 +548,11 @@ function GraphInner() {
       return { nodes, edges };
     }
     return { nodes: [], edges: [] };
-  }, [routeAccountId, liveTrace, liveScore, isInvestigationMode, investigation, routeAlertId]);
+  // Only re-run when account, trace data, or score risk level changes — NOT on every score update
+  }, [routeAccountId, liveTrace, liveScore?.combined_score, liveScore?.detections?.kyc_mismatch?.detected, urlPattern]);
 
   const graphEdges = useMemo(
-    () => (network.edges as typeof staticGraphEdges),
+    () => (network.edges as any[]),
     [network],
   );
 
@@ -542,19 +560,30 @@ function GraphInner() {
 
   const patterns = useMemo(() => {
     if (routeAccountId) {
-      const pName = liveScore?.flagged_for[0] || routeAlertId?.split("-")[2] || liveTrace?.fraud_type || "Fraud Alert";
-      const desc = liveExplain?.explanation_summary || `ML XAI engine detected suspicious transaction anomalies for ${routeAccountId}. Combined Risk Score: ${liveScore ? Math.round(liveScore.combined_score * 100) : 88}/100.`;
+      // PIN pattern to URL-derived type. liveScore.flagged_for is secondary XAI output
+      // and must NOT override the alert's declared pattern type.
+      const pName = urlPattern || liveTrace?.fraud_type?.toUpperCase() || "FRAUD_ALERT";
+      // Confidence: use trace confidence if available, else score combined
+      const confidence = liveTrace?.confidence
+        ? Math.round((liveTrace.confidence as number) * 100)
+        : liveScore
+          ? Math.round(liveScore.combined_score * 100)
+          : 92;
+      // Description from explain, fallback to pattern + score summary
+      const desc = (liveExplain?.by_fraud_type as any)?.kyc_mismatch?.explanation_summary
+        || (liveExplain as any)?.explanation_summary
+        || `ML XAI engine detected suspicious transaction anomalies for ${routeAccountId}. Combined Risk Score: ${confidence}/100.`;
       return [{
         id: `pat-${routeAccountId}`,
-        patternType: pName.toUpperCase(),
-        affectedAccounts: liveTrace?.chain || [routeAccountId],
-        totalAmount: (liveTrace?.amounts || []).reduce((a: number, b: number) => a + b, 0) || 150000,
-        confidence: liveScore ? Math.round(liveScore.combined_score * 100) : 92,
+        patternType: pName,
+        affectedAccounts: liveTrace?.chain?.length ? liveTrace.chain : [routeAccountId],
+        totalAmount: (liveTrace?.amounts || []).reduce((a: number, b: number) => a + b, 0),
+        confidence,
         description: desc,
       }];
     }
     return [];
-  }, [routeAccountId, liveScore, liveTrace, liveExplain, isInvestigationMode, investigation, routeAlertId]);
+  }, [routeAccountId, urlPattern, liveTrace, liveScore?.combined_score, liveExplain]);
 
   /* ── UI state ── */
   const [mode, setMode] = useState<Mode>("select");
@@ -565,11 +594,14 @@ function GraphInner() {
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [activePattern, setActivePattern] = useState<string | null>(null);
 
+  // Set active pattern once — from URL (stable), not from async liveScore
+  const patternInitialized = useRef(false);
   useEffect(() => {
-    if (patterns.length > 0 && !activePattern) {
+    if (!patternInitialized.current && patterns.length > 0) {
       setActivePattern(patterns[0].patternType);
+      patternInitialized.current = true;
     }
-  }, [patterns, activePattern]);
+  }, [patterns]);
 
   const [flaggedOnly, setFlaggedOnly] = useState(false);
   const [riskFilter, setRiskFilter] = useState<string | null>(null);

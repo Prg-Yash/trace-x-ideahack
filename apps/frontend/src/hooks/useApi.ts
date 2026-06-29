@@ -5,9 +5,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   fetchStats, fetchAlertsQuick, fetchFeed,
-  fetchScore, fetchTrace, fetchExplain, fetchEvidencePackage, fetchAccounts,
+  fetchScore, fetchTrace, fetchExplain, fetchEvidencePackage, fetchAccounts, fetchAccountNotes,
   type SystemStats, type AlertsResponse, type FeedResponse,
-  type ScoreResult, type TraceResult, type ExplainResult, type AccountRecord,
+  type ScoreResult, type TraceResult, type ExplainResult, type AccountRecord, type InvestigationNote,
 } from "@/lib/api";
 
 // ── Generic fetcher hook ─────────────────────────────────────────────────────
@@ -112,10 +112,19 @@ export function useReport(accountId: string | null) {
 }
 
 /** List accounts */
-export function useAccounts(limit = 100) {
+export function useAccounts(limit = 300) {
   return useQuery<AccountRecord[]>(
     () => fetchAccounts(limit),
     [limit],
     { refetchInterval: 60_000 }
+  );
+}
+
+/** Investigation notes for an account */
+export function useAccountNotes(accountId: string | null) {
+  return useQuery<InvestigationNote[]>(
+    () => fetchAccountNotes(accountId!),
+    [accountId],
+    { skip: !accountId, refetchInterval: 10_000 }
   );
 }

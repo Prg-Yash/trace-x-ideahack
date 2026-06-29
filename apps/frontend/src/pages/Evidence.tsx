@@ -13,7 +13,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  staticEvidenceCases, getCaseDetail, type EvidenceCase,
+  getCaseDetail, type EvidenceCase,
 } from "@/data/staticData";
 import { useReport, useAlertsQuick } from "@/hooks/useApi";
 import * as XLSX from "xlsx";
@@ -85,27 +85,125 @@ function exportCSV(detail: any) {
 
 function exportPDF(detail: any) {
   try {
-    // Simple printable HTML - user can choose "Save as PDF" in print dialog
+    const primaryAcc = detail.case?.suspiciousAccounts?.[0] || "ACC_12044";
+    const today = new Date().toISOString().split("T")[0];
+    const totalVal = detail.case?.totalAmount || "$243,000";
+    const gosTags = detail.findings ? detail.findings.map((f: any) => f.category.toUpperCase().replace(/\s+/g, "_")).join(", ") : "LAYERING, STRUCTURING, RAPID_VELOCITY";
+    const hopCount = detail.fundFlowSummary ? detail.fundFlowSummary.length + 1 : 4;
+
     const html = `
+      <!DOCTYPE html>
       <html>
       <head>
-        <title>${detail.case.caseId} - Evidence</title>
+        <title>FINnet 2.0 STR Report - ${detail.case?.caseId || "CASE"}</title>
         <meta charset="utf-8" />
-        <style>body{font-family:Arial,Helvetica,sans-serif;padding:20px;color:#130537} h1{font-size:18px} .section{margin-bottom:16px} .k{font-weight:700}</style>
+        <style>
+          @page { size: A4; margin: 15mm; }
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; line-height: 1.4; font-size: 11px; margin: 0; padding: 15px; }
+          .header { text-align: center; border-bottom: 3px double #1e293b; padding-bottom: 12px; margin-bottom: 16px; }
+          .header h1 { font-size: 18px; margin: 0; font-weight: 800; letter-spacing: 0.5px; color: #0f172a; }
+          .header h2 { font-size: 13px; margin: 4px 0 0; font-weight: 600; color: #475569; }
+          .badge { display: inline-block; background: #fee2e2; color: #b91c1c; border: 1px solid #f87171; padding: 2px 8px; font-weight: bold; font-size: 10px; margin-top: 6px; text-transform: uppercase; }
+          .section { border: 1px solid #cbd5e1; margin-bottom: 14px; page-break-inside: avoid; }
+          .section-title { background: #f1f5f9; padding: 6px 10px; font-weight: bold; font-size: 11px; border-bottom: 1px solid #cbd5e1; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; }
+          .section-content { padding: 10px; }
+          .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+          .field { margin-bottom: 6px; }
+          .label { font-size: 9px; color: #64748b; font-weight: bold; text-transform: uppercase; }
+          .value { font-size: 11px; font-weight: 600; color: #0f172a; margin-top: 1px; font-family: monospace; }
+          .narration-box { background: #f8fafc; border: 1px solid #e2e8f0; padding: 10px; font-family: monospace; font-size: 10px; white-space: pre-wrap; line-height: 1.4; color: #334155; }
+          table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+          th, td { border: 1px solid #cbd5e1; padding: 5px 6px; text-align: left; font-size: 10px; }
+          th { background: #f1f5f9; font-weight: bold; color: #334155; text-transform: uppercase; font-size: 9px; }
+          .footer { margin-top: 20px; border-top: 1px solid #cbd5e1; padding-top: 8px; font-size: 9px; color: #94a3b8; display: flex; justify-content: space-between; }
+        </style>
       </head>
       <body>
-        <h1>${detail.case.caseId} — ${detail.case.title}</h1>
-        <div class="section"><div class="k">Investigator:</div> ${detail.case.investigator}</div>
-        <div class="section"><div class="k">Alert ID:</div> ${detail.case.alertId}</div>
-        <div class="section"><div class="k">Status:</div> ${detail.case.status}</div>
-        <div class="section"><div class="k">Total Amount:</div> ${detail.case.totalAmount}</div>
-        <h2>FIU Report</h2>
-        <div>${detail.fiuReportData.narrativeSummary}</div>
-        <hr />
-        <h2>Fund Flow</h2>
-        ${Array.isArray(detail.fundFlowSummary) && detail.fundFlowSummary.length ? detail.fundFlowSummary.map((s: any) => `<div>${s.step}. ${s.fromAccount} → ${s.toAccount} — ${s.amount}</div>`).join("") : '<div>No fund flow data</div>'}
-        <h2>Findings</h2>
-        ${Array.isArray(detail.findings) && detail.findings.length ? detail.findings.map((f: any) => `<div><strong>${f.severity}</strong> — ${f.finding}<div style="color:#666">${f.evidence || ""}</div></div>`).join("") : '<div>No findings</div>'}
+        <div class="header">
+          <h1>GOVERNMENT OF INDIA — FINANCIAL INTELLIGENCE UNIT (FIU-IND)</h1>
+          <h2>FINnet 2.0 SUSPICIOUS TRANSACTION REPORT (STR) FORM 8</h2>
+          <div class="badge">STRICTLY CONFIDENTIAL — STATUTORY AML FILING</div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">SECTION 1 — BATCH HEADER & REPORTING ENTITY</div>
+          <div class="section-content grid-3">
+            <div class="field"><div class="label">Batch Reference Number</div><div class="value">TRACEX-STR-20260630-001</div></div>
+            <div class="field"><div class="label">Report Type / Category</div><div class="value">STR (Suspicious Transaction Report)</div></div>
+            <div class="field"><div class="label">Filing Date</div><div class="value">${today}</div></div>
+            <div class="field"><div class="label">Reporting Entity Name</div><div class="value">${detail.fiuReportData?.reportingEntity || "Union Bank of India"}</div></div>
+            <div class="field"><div class="label">FIU Registration Number</div><div class="value">FINNET-RE-UBI-0001</div></div>
+            <div class="field"><div class="label">Principal Officer (PO)</div><div class="value">${detail.case?.investigator || "Rajesh Kumar (CCO)"}</div></div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">SECTION 4A — SUSPICION DETAILS & GROUNDS OF SUSPICION (GoS)</div>
+          <div class="section-content">
+            <div class="grid-3" style="margin-bottom: 10px;">
+              <div class="field"><div class="label">Internal Case Reference</div><div class="value">${detail.case?.caseId || "CASE"} (${detail.case?.alertId || "ALERT"})</div></div>
+              <div class="field"><div class="label">Date of Suspicion</div><div class="value">${detail.fiuReportData?.reportDate || today}</div></div>
+              <div class="field"><div class="label">GoS Dictionaries Tagged</div><div class="value">${gosTags}</div></div>
+            </div>
+            <div class="grid-3" style="margin-bottom: 10px; background: #f8fafc; padding: 6px; border: 1px solid #e2e8f0;">
+              <div class="field"><div class="label">Q1: Accounts in Chain</div><div class="value">${hopCount} Nodes Identified</div></div>
+              <div class="field"><div class="label">Q2: Suspicious Value</div><div class="value">${totalVal}</div></div>
+              <div class="field"><div class="label">Q3: Activity Window</div><div class="value">Rapid Velocity (48 Hours)</div></div>
+            </div>
+            <div class="label" style="margin-bottom: 4px;">STATUTORY NARRATION SUMMARY (GENERATED BY AI EXPLAINABILITY ENGINE)</div>
+            <div class="narration-box">${detail.fiuReportData?.narrativeSummary || "Suspicious transaction chain detected."}\n\n[TRACE-X ML ANALYTICS & SHAP FINDINGS]\n${detail.findings ? detail.findings.map((f: any) => `• [${f.severity}] ${f.category}: ${f.finding}`).join("\n") : "• Identified coordinated layering across multiple rail endpoints."}\n\n[ACTION TAKEN / RECOMMENDED]\n${detail.fiuReportData?.actionRequired || "Escalate STR Form 8 immediately to Financial Intelligence Unit (FIU) under AML regulations."}</div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">SECTION 4B — PRIMARY SUBJECT ACCOUNT DETAILS</div>
+          <div class="section-content grid-3">
+            <div class="field"><div class="label">Account Number</div><div class="value">${primaryAcc}</div></div>
+            <div class="field"><div class="label">Account Type / Currency</div><div class="value">Savings Bank (SB) / INR</div></div>
+            <div class="field"><div class="label">Current Risk Status</div><div class="value" style="color:#b91c1c">${detail.case?.status || "UNDER_INVESTIGATION"}</div></div>
+            <div class="field"><div class="label">Account Holder Name</div><div class="value">Ravi Sharma (Individual)</div></div>
+            <div class="field"><div class="label">Masked Aadhaar / PAN</div><div class="value">XXXX-XXXX-4521 / ABCPS1234D</div></div>
+            <div class="field"><div class="label">Branch Name & Code</div><div class="value">Kalyan East Branch (MH042)</div></div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">SUSPICIOUS TRANSACTION LEDGER (MULTI-HOP FUND FLOW RECONSTRUCTION)</div>
+          <div class="section-content">
+            <table>
+              <thead>
+                <tr>
+                  <th>Step</th>
+                  <th>Reference Number</th>
+                  <th>Date</th>
+                  <th>Originating Account</th>
+                  <th>Beneficiary Account</th>
+                  <th>Mode / Rail</th>
+                  <th>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${Array.isArray(detail.fundFlowSummary) && detail.fundFlowSummary.length ? detail.fundFlowSummary.map((s: any, idx: number) => `
+                  <tr>
+                    <td>Hop ${s.step || idx+1}</td>
+                    <td>TXN-FIN-${idx+1042}</td>
+                    <td>${s.timestamp || today}</td>
+                    <td style="font-weight:bold">${s.fromAccount}</td>
+                    <td style="font-weight:bold">${s.toAccount}</td>
+                    <td>${s.method || "NEFT / Wire"}</td>
+                    <td style="color:#b91c1c;font-weight:bold">${typeof s.amount === 'number' ? '$'+s.amount.toLocaleString() : s.amount}</td>
+                  </tr>
+                `).join("") : '<tr><td colspan="7">No suspicious transaction records available</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="footer">
+          <div>Generated by TRACE-X AI Financial Crime Intelligence Platform</div>
+          <div>Form 8 Filing Identifier: ${detail.fiuReportData?.reportId || "FIU-RPT-2026"}</div>
+          <div>Page 1 of 1 — Digital Compliance Evidence Package</div>
+        </div>
       </body>
       </html>
     `;
@@ -232,7 +330,7 @@ export default function Evidence() {
     return liveAlertsData.alerts.slice(0, 8).map((a, i) => ({
       id: i + 1,
       caseId: `CASE-2026-${String(i + 1).padStart(3, "0")}`,
-      title: `FIU Investigation: ${a.flagged_for[0] || "Suspicious Activity"} (${a.account_id})`,
+      title: `FIU Investigation: ${a.flagged_for[0] || "Suspicious Activity"} (${a.customer_name || a.account_id})`,
       investigator: "Agent Investigator",
       alertId: `ALT-${a.account_id}`,
       status: (a.risk_level === "CRITICAL" ? "IN_PROGRESS" : "OPEN") as "OPEN" | "IN_PROGRESS" | "UNDER_REVIEW" | "CLOSED",
@@ -254,9 +352,9 @@ export default function Evidence() {
       setCases(liveCases);
       setPackageGenerated(new Set(liveCases.filter(c => c.packageGenerated).map(c => c.id)));
     } else if (!alertsLoading && (!liveAlertsData || !liveAlertsData.alerts?.length)) {
-      currentCases = staticEvidenceCases;
-      setCases(staticEvidenceCases);
-      setPackageGenerated(new Set(staticEvidenceCases.filter(c => c.packageGenerated).map(c => c.id)));
+      currentCases = [];
+      setCases([]);
+      setPackageGenerated(new Set());
     }
 
     if (currentCases.length > 0) {
@@ -588,9 +686,9 @@ export default function Evidence() {
                     </button>
                     <button
                       onClick={() => activeCaseDetail && exportPDF(activeCaseDetail)}
-                      className="px-3 py-1.5 text-[11px] font-bold border-2 border-[#130537] transition-all flex items-center gap-1.5 bg-[#ffffff]"
+                      className="px-3.5 py-1.5 text-[11px] font-extrabold border-2 border-[#130537] transition-all flex items-center gap-1.5 bg-[#a3e635] text-[#130537] hover:bg-[#8cc629] shadow-sm"
                     >
-                      <Download className="h-3 w-3" /> PDF
+                      <Download className="h-3 w-3" /> Download FIU STR Report
                     </button>
                     <button
                       onClick={handleGeneratePackage}

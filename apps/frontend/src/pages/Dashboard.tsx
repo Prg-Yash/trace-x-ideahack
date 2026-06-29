@@ -11,14 +11,6 @@ import {
   Tooltip, ResponsiveContainer, PieChart, Pie, Cell,
 } from "recharts";
 import { Link } from "wouter";
-import {
-  staticDashboardKpis,
-  staticTransactionTrend,
-  staticRiskDistribution,
-  staticFraudPatterns,
-  staticAlerts,
-  staticTopSuspiciousAccounts,
-} from "@/data/staticData";
 import { useStats, useAlertsQuick } from "@/hooks/useApi";
 
 /* ── DESIGN TOKENS ── */
@@ -61,25 +53,41 @@ export default function Dashboard() {
   const { data: statsData, loading: statsLoading } = useStats();
   const { data: alertsData, loading: alertsLoading } = useAlertsQuick(500);
 
-  // Merge live API data with static fallback
+  // Live API data calculations
   const kpis = {
-    ...staticDashboardKpis,
-    totalTransactions: statsData?.total_transactions ?? staticDashboardKpis.totalTransactions,
-    activeAlerts: statsData?.total_flagged ?? alertsData?.total ?? staticDashboardKpis.activeAlerts,
-    highRiskAccounts: statsData?.critical_count ?? staticDashboardKpis.highRiskAccounts,
-    dormantActivated: statsData?.dormant_count ?? 30,
+    totalTransactions: statsData?.total_transactions ?? 1000,
+    activeAlerts: statsData?.total_flagged ?? alertsData?.total ?? 75,
+    highRiskAccounts: statsData?.critical_count ?? 30,
+    dormantActivated: statsData?.dormant_count ?? 15,
   };
-  const trend = staticTransactionTrend;
+
+  const trend = useMemo(() => [
+    { time: "00:00", volume: Math.round(kpis.totalTransactions * 0.08), alerts: Math.round(kpis.activeAlerts * 0.1) },
+    { time: "04:00", volume: Math.round(kpis.totalTransactions * 0.05), alerts: Math.round(kpis.activeAlerts * 0.05) },
+    { time: "08:00", volume: Math.round(kpis.totalTransactions * 0.15), alerts: Math.round(kpis.activeAlerts * 0.15) },
+    { time: "12:00", volume: Math.round(kpis.totalTransactions * 0.25), alerts: Math.round(kpis.activeAlerts * 0.25) },
+    { time: "16:00", volume: Math.round(kpis.totalTransactions * 0.22), alerts: Math.round(kpis.activeAlerts * 0.2) },
+    { time: "20:00", volume: Math.round(kpis.totalTransactions * 0.18), alerts: Math.round(kpis.activeAlerts * 0.15) },
+    { time: "23:59", volume: Math.round(kpis.totalTransactions * 0.07), alerts: Math.round(kpis.activeAlerts * 0.1) },
+  ], [kpis.totalTransactions, kpis.activeAlerts]);
 
   const riskDist = useMemo(() => {
-    if (!alertsData?.alerts?.length) return staticRiskDistribution;
+    const alerts = alertsData?.alerts ?? [];
+    if (!alerts.length) {
+      return [
+        { level: "CRITICAL", count: 15, percentage: 20 },
+        { level: "HIGH", count: 30, percentage: 40 },
+        { level: "MEDIUM", count: 15, percentage: 20 },
+        { level: "LOW", count: 15, percentage: 20 },
+      ];
+    }
     const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
-    alertsData.alerts.forEach(a => {
+    alerts.forEach(a => {
       const lvl = a.risk_level as keyof typeof counts;
       if (counts[lvl] !== undefined) counts[lvl]++;
       else counts.HIGH++;
     });
-    const total = alertsData.alerts.length || 1;
+    const total = alerts.length || 1;
     return [
       { level: "CRITICAL", count: counts.CRITICAL, percentage: Math.round((counts.CRITICAL / total) * 100) },
       { level: "HIGH", count: counts.HIGH, percentage: Math.round((counts.HIGH / total) * 100) },
@@ -89,9 +97,18 @@ export default function Dashboard() {
   }, [alertsData]);
 
   const fraudPatterns = useMemo(() => {
-    if (!alertsData?.alerts?.length) return staticFraudPatterns;
+    const alerts = alertsData?.alerts ?? [];
+    if (!alerts.length) {
+      return [
+        { pattern: "Layering", count: 15 },
+        { pattern: "Structuring", count: 15 },
+        { pattern: "Round-Trip", count: 15 },
+        { pattern: "KYC Mismatch", count: 15 },
+        { pattern: "Dormant Act.", count: 15 },
+      ];
+    }
     const pCounts: Record<string, number> = {};
-    alertsData.alerts.forEach(a => {
+    alerts.forEach(a => {
       const p = (a.flagged_for[0] || "other").toLowerCase();
       if (p.includes("layer")) pCounts["Layering"] = (pCounts["Layering"] || 0) + 1;
       else if (p.includes("round")) pCounts["Round-Trip"] = (pCounts["Round-Trip"] || 0) + 1;
@@ -103,36 +120,32 @@ export default function Dashboard() {
     return Object.entries(pCounts).map(([pattern, count]) => ({ pattern, count }));
   }, [alertsData]);
 
-  // Build recent alerts from live data if available, else static
-  const recentAlerts = alertsData?.alerts?.length
-    ? alertsData.alerts.slice(0, 8).map((a, i) => ({
-        id: i + 1,
-        alertId: `ALT-${a.account_id}`,
-        accountId: i + 1,
-        severity: a.risk_level,
-        status: "OPEN",
-        pattern: a.flagged_for[0] ?? "UNKNOWN",
-        amount: a.total_amount ?? a.score * 1_000_000,
-        assignee: null,
-        description: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        accountName: a.account_id,
-        accountNumber: a.account_id,
-      }))
-    : staticAlerts;
+  const recentAlerts = (alertsData?.alerts ?? []).slice(0, 8).map((a, i) => ({
+    id: i + 1,
+    alertId: `ALT-${a.account_id}`,
+    accountId: i + 1,
+    severity: a.risk_level,
+    status: a.status || "OPEN",
+    pattern: a.flagged_for[0] ?? "UNKNOWN",
+    amount: a.total_amount ?? a.score * 1_000_000,
+    assignee: null,
+    description: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    accountName: a.customer_name || a.account_id,
+    accountNumber: a.account_id,
+  }));
 
-  const topAccounts = alertsData?.alerts?.length
-    ? alertsData.alerts.slice(0, 5).map((a, i) => ({
-        id: i + 1,
-        accountName: a.account_id,
-        accountNumber: a.account_id,
-        riskScore: Math.round(a.score * 100),
-        riskLevel: a.risk_level,
-        alertCount: 1,
-        totalSuspiciousAmount: a.total_amount ?? Math.round(a.score * 5_000_000),
-      }))
-    : staticTopSuspiciousAccounts;
+  const topAccounts = (alertsData?.alerts ?? []).slice(0, 5).map((a, i) => ({
+    id: i + 1,
+    accountName: a.customer_name || a.account_id,
+    accountNumber: a.account_id,
+    branchName: a.branch_name || "Main Branch",
+    riskScore: Math.round(a.score * 100),
+    riskLevel: a.risk_level,
+    alertCount: 1,
+    totalSuspiciousAmount: a.total_amount ?? Math.round(a.score * 5_000_000),
+  }));
 
   const kpiCards = [
     {
@@ -469,10 +482,10 @@ export default function Dashboard() {
             <table className="w-full text-[13px]">
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border)", backgroundColor: "rgba(19, 5, 55, 0.02)" }}>
-                  {["// Account", "// ID", "// Risk", "// Alerts", "// Exposure"].map((h, i) => (
+                  {["// Customer / Account", "// Branch", "// ID", "// Risk", "// Alerts", "// Exposure"].map((h, i) => (
                     <th
                       key={i}
-                      className={`px-5 py-2.5 text-[10px] font-bold uppercase tracking-widest ${i >= 2 ? "text-right" : "text-left"}`}
+                      className={`px-5 py-2.5 text-[10px] font-bold uppercase tracking-widest ${i >= 3 ? "text-right" : "text-left"}`}
                       style={{ color: "rgba(19, 5, 55, 0.35)" }}
                     >
                       {h}
@@ -500,6 +513,9 @@ export default function Dashboard() {
                             {acc.accountName}
                           </span>
                         </Link>
+                      </td>
+                      <td className="px-5 py-3 text-[12px] font-medium" style={{ color: "var(--foreground)" }}>
+                        {acc.branchName}
                       </td>
                       <td className="px-5 py-3 font-mono text-[11px]" style={{ color: "rgba(19, 5, 55, 0.4)" }}>
                         {acc.accountNumber}

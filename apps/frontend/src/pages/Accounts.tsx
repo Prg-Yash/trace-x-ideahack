@@ -8,16 +8,15 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  staticAccounts,
   getKycByAccountId,
   getTransactionsByAccountId,
-  getNotesByAccountId,
   getAlertsByAccountId,
   getRiskFactors,
   getSuspiciousBehaviors,
   type InvestigationNote,
 } from "@/data/staticData";
-import { useScore, useExplain, useAccounts } from "@/hooks/useApi";
+import { useScore, useExplain, useAccounts, useAccountNotes } from "@/hooks/useApi";
+import { addAccountNote } from "@/lib/api";
 
 const RISK: Record<string, { badge: string; bar: string; score: string; leftBar: string }> = {
   CRITICAL: { badge: "bg-red-500/10 text-red-400 border-red-500/25",   bar: "#EF4444", score: "text-red-400",   leftBar: "#EF4444" },
@@ -70,21 +69,21 @@ export default function Accounts() {
   const [noteContent, setNoteContent] = useState("");
   const [localNotes, setLocalNotes] = useState<InvestigationNote[]>([]);
 
-  const { data: liveAccounts, loading: accountsLoading } = useAccounts(100);
+  const { data: liveAccounts, loading: accountsLoading } = useAccounts(300);
 
   const mergedAccounts = liveAccounts?.length
     ? liveAccounts.map((a, i) => ({
         id: i + 1,
-        accountName: a.account_id,
+        accountName: a.customer_name || a.account_id,
         accountNumber: a.account_id,
         accountType: a.account_type || "Corporate Checking",
         riskLevel: (a.risk_category || "HIGH").toUpperCase() as "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
         riskScore: a.is_fraud ? 88 : 45,
         status: (a.status || "ACTIVE") as "ACTIVE" | "RESTRICTED" | "SUSPENDED" | "CLOSED",
-        balance: a.current_balance || 142000,
+        balance: a.current_balance || a.avg_monthly_volume || 142000,
         kycTier: (a.kyc_tier || 2) as 1 | 2 | 3,
-        branch: a.branch_code || "NYC-01",
-        openedAt: "2025-01-15",
+        branch: a.branch_name || a.branch_code || "Main Branch",
+        openedAt: a.opened_on || "2025-01-15",
         lastActivity: "2026-06-28",
       }))
     : [];
@@ -102,9 +101,10 @@ export default function Accounts() {
   const { data: scoreData, loading: scoreLoading } = useScore(liveAccountId);
   const { data: explainData, loading: explainLoading } = useExplain(liveAccountId);
 
+  const { data: apiNotes, refetch: refetchNotes } = useAccountNotes(liveAccountId);
+
   const kyc = selectedId ? getKycByAccountId(selectedId) : undefined;
   const transactions = selectedId ? getTransactionsByAccountId(selectedId) : [];
-  const staticNotes = selectedId ? getNotesByAccountId(selectedId) : [];
   const relatedAlerts = selectedId ? getAlertsByAccountId(selectedId) : [];
   const riskFactors = selectedAccount ? getRiskFactors(selectedAccount) : [];
   const suspiciousBehaviors = selectedAccount ? getSuspiciousBehaviors(selectedAccount) : [];
@@ -114,22 +114,19 @@ export default function Accounts() {
   const liveRiskScore = scoreData ? Math.round(scoreData.combined_score * 100) : selectedAccount?.riskScore;
   const liveFlaggedFor = scoreData?.flagged_for ?? [];
 
-  const allNotes = [
-    ...staticNotes,
-    ...localNotes.filter(n => n.accountId === selectedId),
-  ].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const allNotes = (apiNotes || []).map((n, i) => ({
+    id: n.id || i,
+    accountId: selectedId || 0,
+    content: n.content,
+    author: n.author,
+    createdAt: n.created_at,
+  })).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
-  const handleAddNote = () => {
-    if (!selectedId || !noteContent.trim()) return;
-    const newNote: InvestigationNote = {
-      id: Date.now(),
-      accountId: selectedId,
-      content: noteContent.trim(),
-      author: "Agent Investigator",
-      createdAt: new Date().toISOString(),
-    };
-    setLocalNotes(prev => [...prev, newNote]);
+  const handleAddNote = async () => {
+    if (!liveAccountId || !noteContent.trim()) return;
+    await addAccountNote(liveAccountId, noteContent.trim(), "FINnet Investigator");
     setNoteContent("");
+    refetchNotes();
   };
 
   return (

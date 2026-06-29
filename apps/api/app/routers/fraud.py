@@ -141,6 +141,7 @@ async def get_stats():
     return _coerce(stats)
 
 
+
 # ───────────────────────────────────────────────────────────────────────────────
 # ALERTS (quick — reads pre-built Alert nodes, instant, no ML)
 # ───────────────────────────────────────────────────────────────────────────────
@@ -153,22 +154,48 @@ PATTERN_RISK = {
 }
 
 
+async def _fetch_alert_amounts() -> dict:
+    """Fetch volume_30d from Postgres for all fraud accounts as the alert 'amount'."""
+    def _run():
+        import psycopg2
+        with psycopg2.connect(DATABASE_URL) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT a.account_id, COALESCE(s.volume_30d, 0) AS volume_30d
+                    FROM accounts a
+                    JOIN account_stats s ON a.account_id = s.account_id
+                    WHERE a.is_fraud = TRUE
+                """)
+                rows = cur.fetchall()
+                return {r["account_id"]: float(r["volume_30d"] or 0) for r in rows}
+    try:
+        return await asyncio.to_thread(_run)
+    except Exception as e:
+        print("PG alert amounts error:", e)
+        return {}
+
+
 @router.get("/alerts/quick")
 async def get_alerts_quick(limit: int = 200):
     """Read pre-generated Alert nodes from Neo4j. Instant — no ML inference."""
     query = """
         MATCH (a:Account)-[:FLAGGED_IN]->(al:Alert)
         RETURN
-            a.account_id                            AS account_id,
-            toLower(al.pattern)                     AS pattern,
-            coalesce(al.fraud_prob, 0.8)            AS fraud_prob,
-            al.tier                                 AS tier,
-            coalesce(al.total_amount, 0.0)          AS total_amount,
-            coalesce(al.status, 'OPEN')             AS status
-        ORDER BY al.fraud_prob DESC
+            a.account_id                                            AS account_id,
+            a.customer_name                                         AS customer_name,
+            a.branch_name                                           AS branch_name,
+            a.branch_code                                           AS branch_code,
+            toLower(coalesce(al.pattern_type, al.pattern, 'none'))  AS pattern,
+            coalesce(al.fraud_probability, al.fraud_prob, 0.8)      AS fraud_prob,
+            coalesce(al.severity, al.tier, 'HIGH')                  AS tier,
+            coalesce(al.status, 'OPEN')                             AS status
+        ORDER BY al.fraud_probability DESC
     """
     try:
-        records = await _cypher(query, limit=limit)
+        records, amounts_map = await asyncio.gather(
+            _cypher(query, limit=limit),
+            _fetch_alert_amounts(),
+        )
     except Exception as e:
         print("Neo4j alerts/quick error:", e)
         return {"total": 0, "alerts": [], "error": str(e)}
@@ -180,8 +207,12 @@ async def get_alerts_quick(limit: int = 200):
         pattern = str(rec.get("pattern") or "unknown")
         score   = float(rec.get("fraud_prob") or 0.8)
         tier    = str(rec.get("tier") or PATTERN_RISK.get(pattern, "HIGH"))
-        amount  = float(rec.get("total_amount") or 0.0)
+        # Use real volume_30d from Postgres, not missing Neo4j property
+        amount  = amounts_map.get(acc_id, 0.0)
         status  = str(rec.get("status") or "OPEN")
+        cust_name = rec.get("customer_name") or f"Entity ({acc_id})"
+        branch  = rec.get("branch_name") or "Main Branch"
+        b_code  = rec.get("branch_code") or "MH001"
 
         dedup = f"{acc_id}-{pattern}"
         if dedup in seen:
@@ -190,6 +221,9 @@ async def get_alerts_quick(limit: int = 200):
 
         alerts.append(_coerce({
             "account_id":   acc_id,
+            "customer_name": cust_name,
+            "branch_name":  branch,
+            "branch_code":  b_code,
             "risk_level":   tier,
             "flagged_for":  [pattern],
             "score":        round(score, 4),
@@ -205,13 +239,29 @@ async def get_alerts_quick(limit: int = 200):
     return _coerce({"total": len(alerts), "alerts": alerts})
 
 
+
+
 # ───────────────────────────────────────────────────────────────────────────────
 # SCORE (single account — real-time ML)
 # ───────────────────────────────────────────────────────────────────────────────
 @router.get("/score/{account_id}")
 async def get_score(account_id: str, background_tasks: BackgroundTasks):
     try:
-        result = await score_account(account_id)
+        result, pg_meta = await asyncio.gather(
+            score_account(account_id),
+            _pg_fetchone("""
+                SELECT
+                    a.account_type,
+                    a.branch_name,
+                    a.branch_code,
+                    a.risk_category,
+                    COALESCE(s.volume_30d, 0) AS volume_30d,
+                    COALESCE(s.txn_count_30d, 0) AS txn_count_30d
+                FROM accounts a
+                LEFT JOIN account_stats s ON a.account_id = s.account_id
+                WHERE a.account_id = %s
+            """, (account_id,)),
+        )
 
         if result.get("is_flagged"):
             background_tasks.add_task(detect_layering, account_id)
@@ -219,6 +269,14 @@ async def get_score(account_id: str, background_tasks: BackgroundTasks):
 
         if result.get("smurfing", {}).get("detected"):
             background_tasks.add_task(verify_coordinated_smurf_network, account_id)
+
+        # Enrich result with Postgres account metadata for graph display
+        if pg_meta:
+            result["account_type"]  = pg_meta.get("account_type") or "CURRENT"
+            result["branch_name"]   = pg_meta.get("branch_name") or ""
+            result["branch_code"]   = pg_meta.get("branch_code") or ""
+            result["volume_30d"]    = float(pg_meta.get("volume_30d") or 0)
+            result["txn_count_30d"] = int(pg_meta.get("txn_count_30d") or 0)
 
         return _coerce(result)
     except Exception as e:
@@ -238,6 +296,8 @@ async def get_score(account_id: str, background_tasks: BackgroundTasks):
             },
             "error": str(e),
         })
+
+
 
 
 # ───────────────────────────────────────────────────────────────────────────────

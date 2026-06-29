@@ -59,6 +59,12 @@ export type ScoreResult = {
   risk_level: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   combined_score: number;
   flagged_for: string[];
+  // Postgres-enriched metadata (added by /score endpoint)
+  account_type?: string;
+  branch_name?: string;
+  branch_code?: string;
+  volume_30d?: number;
+  txn_count_30d?: number;
   detections: {
     smurfing?: Detection;
     dormant?: Detection;
@@ -143,11 +149,29 @@ export type AccountRecord = {
   account_type?: string;
   kyc_tier?: number;
   status?: string;
+  branch_name?: string;
   branch_code?: string;
+  customer_name?: string;
+  pan_number?: string;
+  dob?: string;
+  address?: string;
   current_balance?: number;
   is_fraud?: boolean;
   risk_category?: string;
   pattern_type?: string | null;
+  opened_on?: string;
+  avg_monthly_volume?: number;
+  volume_30d?: number;
+  txn_count_30d?: number;
+  declared_annual_income?: number;
+};
+
+export type InvestigationNote = {
+  id: number;
+  account_id: string;
+  author: string;
+  content: string;
+  created_at: string;
 };
 
 // ── API calls ────────────────────────────────────────────────────────────────
@@ -193,5 +217,15 @@ export const fetchEvidencePackage = (accountId: string) =>
   apiFetch<any>(`/report/${encodeURIComponent(accountId)}`);
 
 /** List accounts */
-export const fetchAccounts = (limit = 100) =>
+export const fetchAccounts = (limit = 300) =>
   apiFetch<AccountRecord[]>(`/accounts?limit=${limit}`);
+
+/** Investigation notes */
+export const fetchAccountNotes = (accountId: string) =>
+  apiFetch<InvestigationNote[]>(`/accounts/${encodeURIComponent(accountId)}/notes`);
+
+export const addAccountNote = (accountId: string, content: string, author = "FINnet Investigator") =>
+  apiFetch<InvestigationNote>(`/accounts/${encodeURIComponent(accountId)}/notes`, {
+    method: "POST",
+    body: JSON.stringify({ author, content }),
+  });
