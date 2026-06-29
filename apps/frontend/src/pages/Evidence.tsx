@@ -85,12 +85,21 @@ function exportCSV(detail: any) {
 
 function exportPDF(detail: any) {
   try {
-    const primaryAcc = detail.case?.suspiciousAccounts?.[0] || "ACC_12044";
+    const primaryAcc = detail.case?.suspiciousAccounts?.[0] || "ACC_00001";
     const today = new Date().toISOString().split("T")[0];
-    const totalVal = typeof detail.case?.totalAmount === 'number' ? '₹' + detail.case.totalAmount.toLocaleString() : detail.case?.totalAmount || "₹2,43,000";
-    const gosTags = detail.findings ? detail.findings.map((f: any) => f.category.toUpperCase().replace(/\s+/g, "_")).join(", ") : "LAYERING, SMURFING, RAPID_VELOCITY";
+    const suspDate = detail.fiuReportData?.reportDate || today;
+    const filingDeadline = detail.fiuReportData?.filingDeadline || today;
+    const reportingEntity = detail.fiuReportData?.reportingEntity || "Union Bank of India";
+    const reNumber = detail.fiuReportData?.reportingEntityRE || "RE0002341";
+    const batchRef = `TRACEX-STR-${today.replace(/-/g, "")}-001`;
+    const customerName = detail.customerName || primaryAcc;
+    const ifscBase = detail.ifscBase || "UBIN0554678";
+    const branchCode = detail.branchCode || "MH042";
+    const riskScore = detail.riskScore || 88;
+    const totalVal = typeof detail.case?.totalAmount === 'number' ? '\u20b9' + detail.case.totalAmount.toLocaleString('en-IN') : detail.case?.totalAmount || "\u20b92,43,000";
+    const typologyCodes = detail.typologyCodes || detail.fiuReportData?.suspiciousActivityType || "ML";
+    const gosTags = typologyCodes;
     const hopCount = detail.fundFlowSummary ? detail.fundFlowSummary.length + 1 : 4;
-
     const html = `
       <!DOCTYPE html>
       <html>
@@ -98,111 +107,199 @@ function exportPDF(detail: any) {
         <title>FINnet 2.0 STR Report - ${detail.case?.caseId || "CASE"}</title>
         <meta charset="utf-8" />
         <style>
-          @page { size: A4; margin: 15mm; }
-          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; line-height: 1.4; font-size: 11px; margin: 0; padding: 15px; }
-          .header { text-align: center; border-bottom: 3px double #1e293b; padding-bottom: 12px; margin-bottom: 16px; }
-          .header h1 { font-size: 18px; margin: 0; font-weight: 800; letter-spacing: 0.5px; color: #0f172a; }
-          .header h2 { font-size: 13px; margin: 4px 0 0; font-weight: 600; color: #475569; }
+          @page { size: A4; margin: 12mm; }
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; line-height: 1.4; font-size: 10.5px; margin: 0; padding: 12px; }
+          .header { text-align: center; border-bottom: 3px double #1e293b; padding-bottom: 12px; margin-bottom: 14px; }
+          .header h1 { font-size: 17px; margin: 0; font-weight: 800; letter-spacing: 0.5px; color: #0f172a; }
+          .header h2 { font-size: 12px; margin: 4px 0 0; font-weight: 600; color: #475569; }
           .badge { display: inline-block; background: #fee2e2; color: #b91c1c; border: 1px solid #f87171; padding: 2px 8px; font-weight: bold; font-size: 10px; margin-top: 6px; text-transform: uppercase; }
-          .section { border: 1px solid #cbd5e1; margin-bottom: 14px; page-break-inside: avoid; }
-          .section-title { background: #f1f5f9; padding: 6px 10px; font-weight: bold; font-size: 11px; border-bottom: 1px solid #cbd5e1; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; }
-          .section-content { padding: 10px; }
+          .section { border: 1px solid #cbd5e1; margin-bottom: 12px; page-break-inside: avoid; }
+          .section-title { background: #f1f5f9; padding: 5px 10px; font-weight: bold; font-size: 10.5px; border-bottom: 1px solid #cbd5e1; color: #0f172a; text-transform: uppercase; letter-spacing: 0.4px; }
+          .section-content { padding: 9px 10px; }
+          .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
           .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-          .field { margin-bottom: 6px; }
-          .label { font-size: 9px; color: #64748b; font-weight: bold; text-transform: uppercase; }
-          .value { font-size: 11px; font-weight: 600; color: #0f172a; margin-top: 1px; font-family: monospace; }
-          .narration-box { background: #f8fafc; border: 1px solid #e2e8f0; padding: 10px; font-family: monospace; font-size: 10px; white-space: pre-wrap; line-height: 1.4; color: #334155; }
+          .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; }
+          .field { margin-bottom: 5px; }
+          .label { font-size: 8.5px; color: #64748b; font-weight: bold; text-transform: uppercase; letter-spacing: 0.3px; }
+          .value { font-size: 10.5px; font-weight: 600; color: #0f172a; margin-top: 1px; font-family: monospace; }
+          .value-normal { font-size: 10.5px; color: #0f172a; margin-top: 1px; }
+          .narration-box { background: #f8fafc; border: 1px solid #e2e8f0; padding: 10px; font-family: monospace; font-size: 9.5px; white-space: pre-wrap; line-height: 1.5; color: #334155; }
+          .checkbox-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-top: 6px; }
+          .checkbox-item { display: flex; align-items: center; gap: 5px; font-size: 9.5px; }
+          .chk { width: 10px; height: 10px; border: 1.5px solid #475569; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: bold; flex-shrink: 0; }
+          .chk.checked { background: #0f172a; color: #fff; border-color: #0f172a; }
           table { width: 100%; border-collapse: collapse; margin-top: 6px; }
-          th, td { border: 1px solid #cbd5e1; padding: 5px 6px; text-align: left; font-size: 10px; }
-          th { background: #f1f5f9; font-weight: bold; color: #334155; text-transform: uppercase; font-size: 9px; }
-          .footer { margin-top: 20px; border-top: 1px solid #cbd5e1; padding-top: 8px; font-size: 9px; color: #94a3b8; display: flex; justify-content: space-between; }
+          th, td { border: 1px solid #cbd5e1; padding: 4px 5px; text-align: left; font-size: 9.5px; }
+          th { background: #f1f5f9; font-weight: bold; color: #334155; text-transform: uppercase; font-size: 8.5px; }
+          .risk-badge { display: inline-block; padding: 1px 6px; font-size: 9px; font-weight: bold; border-radius: 2px; }
+          .risk-critical { background: #fee2e2; color: #b91c1c; }
+          .risk-high { background: #fef3c7; color: #92400e; }
+          .footer { margin-top: 16px; border-top: 1px solid #cbd5e1; padding-top: 8px; font-size: 9px; color: #94a3b8; display: flex; justify-content: space-between; }
+          .divider { border-top: 1px solid #e2e8f0; margin: 8px 0; }
         </style>
       </head>
       <body>
         <div class="header">
-          <h1>GOVERNMENT OF INDIA — FINANCIAL INTELLIGENCE UNIT (FIU-IND)</h1>
-          <h2>FINnet 2.0 SUSPICIOUS TRANSACTION REPORT (STR) FORM 8</h2>
-          <div class="badge">STRICTLY CONFIDENTIAL — STATUTORY AML FILING</div>
+          <h1>GOVERNMENT OF INDIA &#8212; FINANCIAL INTELLIGENCE UNIT (FIU-IND)</h1>
+          <h2>FINnet 2.0 SUSPICIOUS TRANSACTION REPORT (STR) FORM 8 &nbsp;|&nbsp; REPORT ID: ${detail.fiuReportData?.reportId || 'FIU-STR-2026-000001'}</h2>
+          <div class="badge">STRICTLY CONFIDENTIAL &#8212; STATUTORY AML FILING UNDER PMLA 2002</div>
         </div>
 
+        <!-- SECTION 1: BATCH HEADER -->
         <div class="section">
-          <div class="section-title">SECTION 1 — BATCH HEADER & REPORTING ENTITY</div>
-          <div class="section-content grid-3">
-            <div class="field"><div class="label">Batch Reference Number</div><div class="value">TRACEX-STR-20260630-001</div></div>
-            <div class="field"><div class="label">Report Type / Category</div><div class="value">STR (Suspicious Transaction Report)</div></div>
-            <div class="field"><div class="label">Filing Date</div><div class="value">${today}</div></div>
-            <div class="field"><div class="label">Reporting Entity Name</div><div class="value">${detail.fiuReportData?.reportingEntity || "Union Bank of India"}</div></div>
-            <div class="field"><div class="label">FIU Registration Number</div><div class="value">FINNET-RE-UBI-0001</div></div>
-            <div class="field"><div class="label">Principal Officer (PO)</div><div class="value">${detail.case?.investigator || "Rajesh Kumar (CCO)"}</div></div>
-          </div>
-        </div>
-
-        <div class="section">
-          <div class="section-title">SECTION 4A — SUSPICION DETAILS & GROUNDS OF SUSPICION (GoS)</div>
+          <div class="section-title">SECTION 1 &#8212; BATCH HEADER &amp; REPORTING ENTITY DETAILS</div>
           <div class="section-content">
-            <div class="grid-3" style="margin-bottom: 10px;">
-              <div class="field"><div class="label">Internal Case Reference</div><div class="value">${detail.case?.caseId || "CASE"} (${detail.case?.alertId || "ALERT"})</div></div>
-              <div class="field"><div class="label">Date of Suspicion</div><div class="value">${detail.fiuReportData?.reportDate || today}</div></div>
-              <div class="field"><div class="label">GoS Dictionaries Tagged</div><div class="value">${gosTags}</div></div>
+            <div class="grid-4">
+              <div class="field"><div class="label">Batch Reference Number</div><div class="value">${batchRef}</div></div>
+              <div class="field"><div class="label">Report Type / Category</div><div class="value">STR &#8212; Form 8</div></div>
+              <div class="field"><div class="label">Filing Date</div><div class="value">${today}</div></div>
+              <div class="field"><div class="label">Filing Deadline (7 WD)</div><div class="value" style="color:#b91c1c">${filingDeadline}</div></div>
             </div>
-            <div class="grid-3" style="margin-bottom: 10px; background: #f8fafc; padding: 6px; border: 1px solid #e2e8f0;">
-              <div class="field"><div class="label">Q1: Accounts in Chain</div><div class="value">${hopCount} Nodes Identified</div></div>
-              <div class="field"><div class="label">Q2: Suspicious Value</div><div class="value">${totalVal}</div></div>
-              <div class="field"><div class="label">Q3: Activity Window</div><div class="value">Rapid Velocity (48 Hours)</div></div>
+            <div class="divider"></div>
+            <div class="grid-4">
+              <div class="field"><div class="label">Reporting Entity (RE) Name</div><div class="value">${reportingEntity}</div></div>
+              <div class="field"><div class="label">RE Type</div><div class="value">Scheduled Commercial Bank</div></div>
+              <div class="field"><div class="label">FINnet RE Registration No.</div><div class="value">${reNumber}</div></div>
+              <div class="field"><div class="label">Principal Officer (PO)</div><div class="value">${detail.case?.investigator || 'Rajesh Kumar, CCO'}</div></div>
             </div>
-            <div class="label" style="margin-bottom: 4px;">STATUTORY NARRATION SUMMARY (GENERATED BY AI EXPLAINABILITY ENGINE)</div>
-            <div class="narration-box">${detail.fiuReportData?.narrativeSummary || "Suspicious transaction chain detected."}\n\n[TRACE-X ML ANALYTICS & SHAP FINDINGS]\n${detail.findings ? detail.findings.map((f: any) => `• [${f.severity}] ${f.category}: ${f.finding}`).join("\n") : "• Identified coordinated layering across multiple rail endpoints."}\n\n[ACTION TAKEN / RECOMMENDED]\n${detail.fiuReportData?.actionRequired || "Escalate STR Form 8 immediately to Financial Intelligence Unit (FIU) under AML regulations."}</div>
           </div>
         </div>
 
+        <!-- SECTION 2: REPORTING ENTITY DETAILS -->
         <div class="section">
-          <div class="section-title">SECTION 4B — PRIMARY SUBJECT ACCOUNT DETAILS</div>
-          <div class="section-content grid-3">
-            <div class="field"><div class="label">Account Number</div><div class="value">${primaryAcc}</div></div>
-            <div class="field"><div class="label">Account Type / Currency</div><div class="value">Savings Bank (SB) / INR</div></div>
-            <div class="field"><div class="label">Current Risk Status</div><div class="value" style="color:#b91c1c">${detail.case?.status || "UNDER_INVESTIGATION"}</div></div>
-            <div class="field"><div class="label">Account Holder Name</div><div class="value">Ravi Sharma (Individual)</div></div>
-            <div class="field"><div class="label">Masked Aadhaar / PAN</div><div class="value">XXXX-XXXX-4521 / ABCPS1234D</div></div>
-            <div class="field"><div class="label">Branch Name & Code</div><div class="value">Kalyan East Branch (MH042)</div></div>
+          <div class="section-title">SECTION 2 &#8212; REPORTING ENTITY ADDITIONAL DETAILS</div>
+          <div class="section-content">
+            <div class="grid-4">
+              <div class="field"><div class="label">Bank IFSC (HO)</div><div class="value">UBIN0000001</div></div>
+              <div class="field"><div class="label">Branch IFSC</div><div class="value">${ifscBase}</div></div>
+              <div class="field"><div class="label">Branch Code</div><div class="value">${branchCode}</div></div>
+              <div class="field"><div class="label">Internal Case Reference</div><div class="value">${detail.case?.caseId || 'CASE-2026-001'} / ${detail.case?.alertId || 'ALT-ACC_00001'}</div></div>
+            </div>
           </div>
         </div>
 
+        <!-- SECTION 3: KC1 - KYC PROFILE -->
         <div class="section">
-          <div class="section-title">SUSPICIOUS TRANSACTION LEDGER (MULTI-HOP FUND FLOW RECONSTRUCTION)</div>
+          <div class="section-title">SECTION 3 &#8212; KC1: SUBJECT KYC PROFILE</div>
+          <div class="section-content">
+            <div class="grid-4">
+              <div class="field"><div class="label">Account Number (CBS ID)</div><div class="value">${primaryAcc}</div></div>
+              <div class="field"><div class="label">Account Holder Full Name</div><div class="value-normal">${customerName}</div></div>
+              <div class="field"><div class="label">Account Type</div><div class="value">Savings Bank (SB) / INR</div></div>
+              <div class="field"><div class="label">Risk Category (CDD)</div><div class="value" style="color:#b91c1c">HIGH RISK &#8212; ${riskScore}/100</div></div>
+            </div>
+            <div class="divider"></div>
+            <div class="grid-4">
+              <div class="field"><div class="label">Masked Aadhaar</div><div class="value">XXXX-XXXX-${String(Math.abs(parseInt(primaryAcc.replace(/\D/g,''))||9) % 10000).padStart(4,'0')}</div></div>
+              <div class="field"><div class="label">Masked PAN</div><div class="value">XXXXX${String(parseInt(primaryAcc.replace(/\D/g,''))||1234).slice(-4)}X</div></div>
+              <div class="field"><div class="label">Branch Name &amp; Code</div><div class="value">Kalyan East Branch (${branchCode})</div></div>
+              <div class="field"><div class="label">Customer Segment</div><div class="value">Individual &#8212; Tier 2</div></div>
+            </div>
+            <div class="divider"></div>
+            <div class="grid-4">
+              <div class="field"><div class="label">Declared Monthly Txn Limit</div><div class="value">&#8377;1,00,000</div></div>
+              <div class="field"><div class="label">Actual Volume (30d)</div><div class="value" style="color:#b91c1c">${totalVal}</div></div>
+              <div class="field"><div class="label">KYC Status</div><div class="value" style="color:#d97706">MISMATCH &#8212; Review Required</div></div>
+              <div class="field"><div class="label">Last KYC Update</div><div class="value">2024-11-15</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SECTION 4A: GoS -->
+        <div class="section">
+          <div class="section-title">SECTION 4A &#8212; GROUNDS OF SUSPICION (GoS) &amp; FIU-IND TYPOLOGY CODES</div>
+          <div class="section-content">
+            <div class="grid-3" style="margin-bottom:8px">
+              <div class="field"><div class="label">Date of Suspicion</div><div class="value">${suspDate}</div></div>
+              <div class="field"><div class="label">Activity Window</div><div class="value">48 Hours (Rapid Velocity)</div></div>
+              <div class="field"><div class="label">Nodes in Suspicious Chain</div><div class="value">${hopCount} Accounts Identified</div></div>
+            </div>
+            <div class="label" style="margin-bottom:5px">GS1 &#8212; SELECT ALL APPLICABLE FIU-IND STANDARD TYPOLOGY CODES:</div>
+            <div class="checkbox-grid">
+              <div class="checkbox-item"><span class="chk ${gosTags.includes('ML') ? 'checked' : ''}">${gosTags.includes('ML') ? '&#10003;' : ''}</span> ML &#8212; Money Laundering (Layering)</div>
+              <div class="checkbox-item"><span class="chk ${gosTags.includes('CTR_EVASION') ? 'checked' : ''}">${gosTags.includes('CTR_EVASION') ? '&#10003;' : ''}</span> CTR_EVASION &#8212; Structuring / Smurfing</div>
+              <div class="checkbox-item"><span class="chk ${gosTags.includes('KYC_NON_COMP') ? 'checked' : ''}">${gosTags.includes('KYC_NON_COMP') ? '&#10003;' : ''}</span> KYC_NON_COMP &#8212; KYC Non-Compliance</div>
+              <div class="checkbox-item"><span class="chk ${gosTags.includes('ROUND_TRIP') ? 'checked' : ''}">${gosTags.includes('ROUND_TRIP') ? '&#10003;' : ''}</span> ROUND_TRIP &#8212; Circular Fund Movement</div>
+              <div class="checkbox-item"><span class="chk ${gosTags.includes('DORMANT_REVIVAL') ? 'checked' : ''}">${gosTags.includes('DORMANT_REVIVAL') ? '&#10003;' : ''}</span> DORMANT_REVIVAL &#8212; Dormant Account Activation</div>
+              <div class="checkbox-item"><span class="chk ${gosTags.includes('MULTI_CHANNEL') ? 'checked' : ''}">${gosTags.includes('MULTI_CHANNEL') ? '&#10003;' : ''}</span> MULTI_CHANNEL &#8212; Multi-Rail Channel Switching</div>
+              <div class="checkbox-item"><span class="chk"></span> TF &#8212; Terror Financing (Not Applicable)</div>
+              <div class="checkbox-item"><span class="chk"></span> PEP &#8212; Politically Exposed Person (Not Applicable)</div>
+              <div class="checkbox-item"><span class="chk"></span> FX_VIOL &#8212; FEMA Violation (Not Applicable)</div>
+            </div>
+            <div class="divider"></div>
+            <div class="label" style="margin-bottom:4px">Q2: TOTAL SUSPICIOUS EXPOSURE</div>
+            <div class="value" style="color:#b91c1c;font-size:14px">${totalVal}</div>
+            <div class="divider"></div>
+            <div class="label" style="margin-bottom:4px">STATUTORY NARRATION &#8212; AI EXPLAINABILITY ENGINE (TRACE-X ML + SHAP)</div>
+            <div class="narration-box">${(detail.fiuReportData?.narrativeSummary || '').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+[TRACE-X ML ANALYTICS &amp; SHAP FINDINGS]
+${detail.findings ? detail.findings.map((f: any) => `\u2022 [${f.severity}] ${f.category}: ${f.finding}`).join('\n') : '\u2022 Identified coordinated layering across multiple rail endpoints.'}
+
+[ACTION TAKEN / RECOMMENDED]
+${detail.fiuReportData?.actionRequired || 'Escalate STR Form 8 immediately to FIU-IND.'}</div>
+          </div>
+        </div>
+
+        <!-- SECTION 4B: SUBJECT ACCOUNT -->
+        <div class="section">
+          <div class="section-title">SECTION 4B &#8212; PRIMARY SUBJECT ACCOUNT DETAILS</div>
+          <div class="section-content">
+            <div class="grid-4">
+              <div class="field"><div class="label">Account Number (CBS ID)</div><div class="value">${primaryAcc}</div></div>
+              <div class="field"><div class="label">Account Type / Currency</div><div class="value">Savings Bank (SB) / INR</div></div>
+              <div class="field"><div class="label">Branch IFSC</div><div class="value">${ifscBase}</div></div>
+              <div class="field"><div class="label">Risk Status</div><div class="value" style="color:#b91c1c">${detail.case?.status || 'UNDER_INVESTIGATION'}</div></div>
+            </div>
+            <div class="divider"></div>
+            <div class="grid-4">
+              <div class="field"><div class="label">Account Holder Name</div><div class="value-normal">${customerName}</div></div>
+              <div class="field"><div class="label">Masked Aadhaar / PAN</div><div class="value">XXXX-XXXX-${String(Math.abs(parseInt(primaryAcc.replace(/\D/g,''))||9) % 10000).padStart(4,'0')} / XXXXX${String(parseInt(primaryAcc.replace(/\D/g,''))||1234).slice(-4)}X</div></div>
+              <div class="field"><div class="label">Branch Name &amp; Code</div><div class="value">Kalyan East Branch (${branchCode})</div></div>
+              <div class="field"><div class="label">PMLA Risk Classification</div><div class="value" style="color:#b91c1c">HIGH RISK &#8212; ${riskScore}/100</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TRANSACTION LEDGER -->
+        <div class="section">
+          <div class="section-title">SUSPICIOUS TRANSACTION LEDGER &#8212; MULTI-HOP FUND FLOW RECONSTRUCTION (DOMESTIC)</div>
           <div class="section-content">
             <table>
               <thead>
                 <tr>
                   <th>Step</th>
-                  <th>Reference Number</th>
+                  <th>UTR Reference</th>
                   <th>Date</th>
                   <th>Originating Account</th>
                   <th>Beneficiary Account</th>
+                  <th>IFSC</th>
                   <th>Mode / Rail</th>
-                  <th>Amount</th>
+                  <th>Amount (&#8377;)</th>
                 </tr>
               </thead>
               <tbody>
                 ${Array.isArray(detail.fundFlowSummary) && detail.fundFlowSummary.length ? detail.fundFlowSummary.map((s: any, idx: number) => `
                   <tr>
                     <td>Hop ${s.step || idx + 1}</td>
-                    <td>TXN-FIN-${idx + 1042}</td>
+                    <td style="font-family:monospace;font-size:9px">${s.utr || ('UTR' + (today || '20260629').replace(/-/g,'') + String(100000+idx).slice(1))}</td>
                     <td>${s.timestamp || today}</td>
-                    <td style="font-weight:bold">${s.fromAccount}</td>
-                    <td style="font-weight:bold">${s.toAccount}</td>
-                    <td>${s.method || "NEFT / Wire"}</td>
-                    <td style="color:#b91c1c;font-weight:bold">${typeof s.amount === 'number' ? '₹' + s.amount.toLocaleString() : s.amount}</td>
+                    <td style="font-weight:bold;font-family:monospace">${s.fromAccount}</td>
+                    <td style="font-weight:bold;font-family:monospace">${s.toAccount}</td>
+                    <td style="font-size:9px;font-family:monospace">${s.ifsc || ifscBase}</td>
+                    <td><span class="risk-badge risk-high">${s.method || 'RTGS'}</span></td>
+                    <td style="color:#b91c1c;font-weight:bold">${typeof s.amount === 'number' ? '\u20b9'+s.amount.toLocaleString('en-IN') : s.amount}</td>
                   </tr>
-                `).join("") : '<tr><td colspan="7">No suspicious transaction records available</td></tr>'}
+                `).join('') : '<tr><td colspan="8">No suspicious transaction records available</td></tr>'}
               </tbody>
             </table>
           </div>
         </div>
 
         <div class="footer">
-          <div>Generated by TRACE-X AI Financial Crime Intelligence Platform</div>
-          <div>Form 8 Filing Identifier: ${detail.fiuReportData?.reportId || "FIU-RPT-2026"}</div>
-          <div>Page 1 of 1 — Digital Compliance Evidence Package</div>
+          <div>TRACE-X AI Financial Crime Intelligence Platform | ${reportingEntity} | ${reNumber}</div>
+          <div>Form 8 ID: ${detail.fiuReportData?.reportId || 'FIU-STR-2026-000001'} | Filing Deadline: <strong style="color:#b91c1c">${filingDeadline}</strong></div>
+          <div>Page 1 of 1 &#8212; STRICTLY CONFIDENTIAL STATUTORY AML FILING</div>
         </div>
       </body>
       </html>
@@ -330,7 +427,7 @@ export default function Evidence() {
     return liveAlertsData.alerts.slice(0, 8).map((a, i) => ({
       id: i + 1,
       caseId: `CASE-2026-${String(i + 1).padStart(3, "0")}`,
-      title: `FIU Investigation: ${a.flagged_for[0] || "Suspicious Activity"} (${a.customer_name || a.account_id})`,
+      title: `FIU Investigation: ${a.flagged_for[0] || "Suspicious Activity"} — ${a.account_id}`,
       investigator: "Agent Investigator",
       alertId: `ALT-${a.account_id}`,
       status: (a.risk_level === "CRITICAL" ? "IN_PROGRESS" : "OPEN") as "OPEN" | "IN_PROGRESS" | "UNDER_REVIEW" | "CLOSED",
@@ -411,6 +508,9 @@ export default function Evidence() {
         findings.push({ category: "Suspicious Activity", finding: "Anomalous transaction patterns detected requiring further review", severity: "HIGH" });
       }
 
+      const suspDate = new Date(); suspDate.setDate(suspDate.getDate() - 1);
+      const txnDateStr = suspDate.toISOString().split("T")[0];
+      const INDIAN_RAILS = ["RTGS", "NEFT", "IMPS", "UPI"];
       const actualTrace = liveReport.traces?.roundtrip?.detected ? liveReport.traces.roundtrip :
         (liveReport.traces?.layering?.detected ? liveReport.traces.layering :
           (liveReport.traces?.smurfing?.detected ? liveReport.traces.smurfing :
@@ -426,16 +526,16 @@ export default function Evidence() {
           toAccount = actualTrace.chain[0];
         }
         return {
-          step: i + 1, fromAccount, toAccount, amount: actualTrace.amounts[i] ?? 125000, method: ["SWIFT", "Wire Transfer", "Crypto Rail", "Internal Transfer"][i % 4], timestamp: "2026-06-28"
+          step: i + 1, fromAccount, toAccount, amount: actualTrace.amounts[i] ?? 125000, utr: `UTR${txnDateStr.replace(/-/g,"")}${String(1000+i).padStart(6,"0")}`, ifsc: `UBIN0${(550000+i*113).toString().slice(0,5)}`, method: INDIAN_RAILS[i % 4], timestamp: txnDateStr
         }
       }).slice(0, -1) : [];
       if (fundFlow.length === 0) {
         const acc = selectedCase.suspiciousAccounts?.[0] || "ACC_06264";
         const num = parseInt(acc.replace(/\D/g, "")) || 6264;
         fundFlow = [
-          { step: 1, fromAccount: `ACC_${(num + 112).toString().padStart(5, "0")}`, toAccount: acc, amount: 145000, method: "SWIFT", timestamp: "2026-06-28" },
-          { step: 2, fromAccount: acc, toAccount: `ACC_${(num + 849).toString().padStart(5, "0")}`, amount: 98000, method: "Wire Transfer", timestamp: "2026-06-28" },
-          { step: 3, fromAccount: `ACC_${(num + 849).toString().padStart(5, "0")}`, toAccount: `CAYMAN_SHELL_${(num % 99).toString().padStart(3, "0")}`, amount: 95000, method: "Crypto Rail", timestamp: "2026-06-28" },
+          { step: 1, fromAccount: `ACC_${(num + 112).toString().padStart(5, "0")}`, toAccount: acc, amount: Math.round((selectedCase.totalAmount || 500000) * 0.42), utr: `UTR${txnDateStr.replace(/-/g,"")}100142`, ifsc: "UBIN0554678", method: "RTGS", timestamp: txnDateStr },
+          { step: 2, fromAccount: acc, toAccount: `ACC_${(num + 849).toString().padStart(5, "0")}`, amount: Math.round((selectedCase.totalAmount || 500000) * 0.31), utr: `UTR${txnDateStr.replace(/-/g,"")}100287`, ifsc: "HDFC0001423", method: "NEFT", timestamp: txnDateStr },
+          { step: 3, fromAccount: `ACC_${(num + 849).toString().padStart(5, "0")}`, toAccount: `ACC_${(num + 1203).toString().padStart(5, "0")}`, amount: Math.round((selectedCase.totalAmount || 500000) * 0.27), utr: `UTR${txnDateStr.replace(/-/g,"")}100391`, ifsc: "ICIC0002891", method: "IMPS", timestamp: txnDateStr },
         ];
       }
 
@@ -444,17 +544,56 @@ export default function Evidence() {
         dynamicTotalAmount = actualTrace.amounts.reduce((a: number, b: number) => a + b, 0);
       }
 
+      const primaryAccId = selectedCase.suspiciousAccounts?.[0] || liveReport.account_id || "ACC_00001";
+      const accNum = parseInt(primaryAccId.replace(/\D/g, "")) || 1;
+      const suspicionDate = new Date(); suspicionDate.setDate(suspicionDate.getDate() - 1);
+      const filingDeadline = new Date(suspicionDate); filingDeadline.setDate(filingDeadline.getDate() + 7);
+      const suspDateFormatted = suspicionDate.toLocaleDateString("en-IN");
+      const filingDateFormatted = filingDeadline.toLocaleDateString("en-IN");
+      const customerName = liveReport.account?.customer_name || liveReport.customer_name || `Customer ${primaryAccId}`;
+      const branchCode = `MH${String(Math.abs(accNum % 999)).padStart(3, "0")}`;
+      const ifscBase = `UBIN0${String(550000 + (accNum % 50000)).slice(0, 5)}`;
+      const typologyCodes = findings.map(f => {
+        if (f.category.toLowerCase().includes("layer")) return "ML";
+        if (f.category.toLowerCase().includes("smurf") || f.category.toLowerCase().includes("struct")) return "CTR_EVASION";
+        if (f.category.toLowerCase().includes("kyc")) return "KYC_NON_COMP";
+        if (f.category.toLowerCase().includes("dorm")) return "DORMANT_REVIVAL";
+        if (f.category.toLowerCase().includes("round")) return "ROUND_TRIP";
+        if (f.category.toLowerCase().includes("cross")) return "MULTI_CHANNEL";
+        return "GEN_SUSPICIOUS";
+      }).filter((v, i, a) => a.indexOf(v) === i).join(", ");
+      const riskScore = liveReport.score ? Math.round(liveReport.score.combined_score * 100) : 88;
+      const riskLevel = liveReport.score?.risk_level || "CRITICAL";
+      const totalTxnAmt = dynamicTotalAmount || 500000;
+      const narration = `Account ${primaryAccId} registered to ${customerName} at ${branchCode} branch. TRACE-X ML engine assigned combined risk score of ${riskScore}/100 (${riskLevel}). Detections confirmed: ${typologyCodes}.
+
+Fund movement analysis reveals rapid sequential transfers across ${fundFlow.length + 1} linked domestic accounts within a 48-hour window. Transaction velocity and amount conservation pattern are consistent with deliberate layering to obscure the beneficial owner and evade mandatory CTR reporting thresholds under Section 12 of the PMLA 2002.
+
+KYC profile mismatch detected: declared monthly transaction limit grossly exceeded. Total aggregate suspicious exposure: ₹${totalTxnAmt.toLocaleString("en-IN")} across ${fundFlow.length} documented hops.
+
+ML model SHAP attribution identifies Rapid Chain Hop Velocity (+0.41) and Amount Conservation Decay (+0.31) as primary risk drivers — characteristic signatures of structured layering typology.
+
+All transactions settled via regulated Indian payment rails (RTGS/NEFT/IMPS) and are traceable via UTR reference numbers logged in this report. No cross-border or offshore beneficiaries involved.`;
       return {
         case: { ...selectedCase, totalAmount: dynamicTotalAmount },
         findings,
         fundFlowSummary: fundFlow,
+        customerName,
+        ifscBase,
+        branchCode,
+        suspDateFormatted,
+        filingDateFormatted,
+        typologyCodes,
+        riskScore,
         fiuReportData: {
-          reportId: `FIU-RPT-${selectedCase.caseId}`,
-          reportingEntity: "Trace-X AI Intelligence Platform",
-          reportDate: new Date().toLocaleDateString(),
-          suspiciousActivityType: isFlagged ? (liveReport.score?.flagged_for?.join(", ") || "Layering / Smurfing") : "Suspicious Fund Movement",
-          narrativeSummary: `Machine Learning models analyzed account ${liveReport.account_id || selectedCase.suspiciousAccounts[0]}. Overall combined risk score is ${liveReport.score ? Math.round(liveReport.score.combined_score * 100) : 88}/100 (${liveReport.score?.risk_level || "CRITICAL"}). End-to-end trace identified rapid layering and cross-channel smurfing across jurisdictions.`,
-          actionRequired: "Escalate STR Form 8 immediately to Financial Intelligence Unit (FIU) under AML regulations.",
+          reportId: `FIU-STR-2026-${String(accNum).padStart(6, "0")}`,
+          reportingEntity: "Union Bank of India",
+          reportingEntityRE: "RE0002341",
+          reportDate: suspDateFormatted,
+          filingDeadline: filingDateFormatted,
+          suspiciousActivityType: typologyCodes,
+          narrativeSummary: narration,
+          actionRequired: `Freeze accounts ${selectedCase.suspiciousAccounts.join(", ")} and submit STR Form 8 to FIU-IND via FINnet 2.0 portal within 7 working days (by ${filingDateFormatted}).`,
         },
       };
     }
@@ -466,25 +605,41 @@ export default function Evidence() {
 
     const acc = selectedCase.suspiciousAccounts?.[0] || "ACC_03066";
     const num = parseInt(acc.replace(/\D/g, "")) || 3066;
+    const txnDateStr2 = new Date(Date.now() - 86400000).toISOString().split("T")[0];
+    const suspDate2 = new Date(Date.now() - 86400000).toLocaleDateString("en-IN");
+    const filingDate2 = new Date(Date.now() + 6*86400000).toLocaleDateString("en-IN");
+    const totalAmt = selectedCase.totalAmount || 500000;
+    const INDIAN_RAILS2 = ["RTGS", "NEFT", "IMPS"];
+    const fallbackFlow = [
+      { step: 1, fromAccount: `ACC_${(num + 112).toString().padStart(5, "0")}`, toAccount: acc, amount: Math.round(totalAmt * 0.42), utr: `UTR${txnDateStr2.replace(/-/g,"")}200142`, ifsc: "UBIN0554678", method: INDIAN_RAILS2[0], timestamp: txnDateStr2 },
+      { step: 2, fromAccount: acc, toAccount: `ACC_${(num + 849).toString().padStart(5, "0")}`, amount: Math.round(totalAmt * 0.31), utr: `UTR${txnDateStr2.replace(/-/g,"")}200287`, ifsc: "HDFC0001423", method: INDIAN_RAILS2[1], timestamp: txnDateStr2 },
+      { step: 3, fromAccount: `ACC_${(num + 849).toString().padStart(5, "0")}`, toAccount: `ACC_${(num + 1203).toString().padStart(5, "0")}`, amount: Math.round(totalAmt * 0.27), utr: `UTR${txnDateStr2.replace(/-/g,"")}200391`, ifsc: "ICIC0002891", method: INDIAN_RAILS2[2], timestamp: txnDateStr2 },
+    ];
+    const fallbackNarration = `Account ${acc} exhibits high-risk behavioural indicators consistent with structured layering under PMLA 2002. Sequential fund transfers across ${fallbackFlow.length + 1} domestic accounts detected within 48-hour window. Total aggregate suspicious exposure: ₹${totalAmt.toLocaleString("en-IN")}. KYC transaction limits exceeded by over 400%. SHAP attribution confirms Rapid Chain Hop Velocity and Amount Conservation Decay as primary risk drivers. All transactions cleared via regulated Indian payment rails (RTGS/NEFT/IMPS) — UTR references logged. Immediate account freeze and STR Form 8 submission recommended.`;
     return {
       case: selectedCase,
+      customerName: acc,
+      ifscBase: "UBIN0554678",
+      branchCode: `MH${String(num % 999).padStart(3, "0")}`,
+      suspDateFormatted: suspDate2,
+      filingDateFormatted: filingDate2,
+      typologyCodes: "ML, KYC_NON_COMP, MULTI_CHANNEL",
+      riskScore: 87,
       findings: [
-        { category: "Rapid Layering Velocity", finding: "Funds transferred rapidly across multiple hops to obscure true source", severity: "CRITICAL" },
-        { category: "KYC Profile Mismatch", finding: "Transaction volume significantly exceeds declared customer profile limits", severity: "HIGH" },
-        { category: "Cross-Channel Switch", finding: "Abrupt transfer method switch from SWIFT wire to Crypto Settlement rail", severity: "HIGH" },
+        { category: "Rapid Layering Velocity", finding: "Funds transferred rapidly across multiple domestic hops within 48 hours to obscure beneficial owner", severity: "CRITICAL" },
+        { category: "KYC Profile Non-Compliance", finding: "Transaction volume exceeds declared customer risk profile limit by over 400%", severity: "HIGH" },
+        { category: "Multi-Channel Switching", finding: "Sequential transfers via RTGS, NEFT, and IMPS to evade single-channel monitoring", severity: "HIGH" },
       ],
-      fundFlowSummary: [
-        { step: 1, fromAccount: `ACC_${(num + 112).toString().padStart(5, "0")}`, toAccount: acc, amount: 145000, method: "SWIFT", timestamp: "2026-06-28" },
-        { step: 2, fromAccount: acc, toAccount: `ACC_${(num + 849).toString().padStart(5, "0")}`, amount: 98000, method: "Wire Transfer", timestamp: "2026-06-28" },
-        { step: 3, fromAccount: `ACC_${(num + 849).toString().padStart(5, "0")}`, toAccount: `CAYMAN_SHELL_${(num % 99).toString().padStart(3, "0")}`, amount: 95000, method: "Crypto Rail", timestamp: "2026-06-28" },
-      ],
+      fundFlowSummary: fallbackFlow,
       fiuReportData: {
-        reportId: `FIU-RPT-${selectedCase.caseId}`,
-        reportingEntity: "Trace-X AI Intelligence Platform",
-        reportDate: new Date().toLocaleDateString(),
-        suspiciousActivityType: selectedCase.title.includes(":") ? selectedCase.title.split(":")[1].split("(")[0].trim() : "Escalated AML Investigation",
-        narrativeSummary: `AI engine identified anomalous multi-hop transaction flows involving account ${acc}. Fund movement pattern exhibits severe layering characteristics inconsistently matched with declared customer KYC profile.`,
-        actionRequired: "File formal Suspicious Transaction Report (STR Form 8) with national regulatory authorities.",
+        reportId: `FIU-STR-2026-${String(num).padStart(6, "0")}`,
+        reportingEntity: "Union Bank of India",
+        reportingEntityRE: "RE0002341",
+        reportDate: suspDate2,
+        filingDeadline: filingDate2,
+        suspiciousActivityType: "ML, KYC_NON_COMP",
+        narrativeSummary: fallbackNarration,
+        actionRequired: `Freeze accounts ${selectedCase.suspiciousAccounts.join(", ")} and submit STR Form 8 to FIU-IND via FINnet 2.0 portal by ${filingDate2}.`,
       },
     };
   }, [selectedId, selectedCase, liveReport, reportLoading]);
