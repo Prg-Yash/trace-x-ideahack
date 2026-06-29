@@ -401,19 +401,37 @@ export default function Evidence() {
     if (liveReport) {
       const isFlagged = liveReport.score?.is_flagged;
       const findings = [];
-      if (liveReport.score?.detections?.smurfing?.detected || selectedCase.title.toUpperCase().includes("STRUCT")) findings.push({ category: "Structuring", finding: "Multiple systematic deposits just below the $10,000 AML reporting threshold", severity: "CRITICAL" });
-      if (liveReport.score?.detections?.kyc_mismatch?.detected || selectedCase.title.toUpperCase().includes("KYC")) findings.push({ category: "KYC Profile Mismatch", finding: "Declared business turnover does not align with actual high-value transaction volume", severity: "HIGH" });
-      if (liveReport.score?.detections?.dormant?.detected || selectedCase.title.toUpperCase().includes("DORMANT")) findings.push({ category: "Dormant Activation", finding: "Sudden high-volume transfer activity detected after prolonged account dormancy", severity: "MEDIUM" });
-      if (liveReport.score?.detections?.layering?.detected || selectedCase.title.toUpperCase().includes("LAYERING")) findings.push({ category: "Rapid Layering Velocity", finding: "Funds transferred rapidly through multiple intermediary hops within 6 hours", severity: "CRITICAL" });
-      if (liveReport.score?.detections?.round_trip?.detected || selectedCase.title.toUpperCase().includes("ROUND")) findings.push({ category: "Round Tripping", finding: "Circular movement of funds returning to the original source entity", severity: "CRITICAL" });
+      const title = selectedCase.title.toUpperCase();
+      
+      // For demo cases, restrict findings to the primary pattern to prevent ML false positives from cluttering
+      if (title.includes("STRUCT") || (liveReport.score?.detections?.smurfing?.detected && !title.includes("DEMO"))) findings.push({ category: "Structuring", finding: "Multiple systematic deposits just below the $10,000 AML reporting threshold", severity: "CRITICAL" });
+      if (title.includes("KYC") || (liveReport.score?.detections?.kyc_mismatch?.detected && !title.includes("DEMO"))) findings.push({ category: "KYC Profile Mismatch", finding: "Declared business turnover does not align with actual high-value transaction volume", severity: "HIGH" });
+      if (title.includes("DORMANT") || (liveReport.score?.detections?.dormant?.detected && !title.includes("DEMO"))) findings.push({ category: "Dormant Activation", finding: "Sudden high-volume transfer activity detected after prolonged account dormancy", severity: "MEDIUM" });
+      if (title.includes("LAYERING") || (liveReport.score?.detections?.layering?.detected && !title.includes("DEMO"))) findings.push({ category: "Rapid Layering Velocity", finding: "Funds transferred rapidly through multiple intermediary hops within 6 hours", severity: "CRITICAL" });
+      if (title.includes("ROUND") || (liveReport.score?.detections?.round_trip?.detected && !title.includes("DEMO"))) findings.push({ category: "Round Tripping", finding: "Circular movement of funds returning to the original source entity", severity: "CRITICAL" });
 
-      if (findings.length < 3) {
-        if (!findings.some(f => f.category.includes("Layering"))) findings.push({ category: "Rapid Layering Velocity", finding: "Rapid sequential transfers detected across multiple accounts to obscure origin", severity: "CRITICAL" });
-        if (!findings.some(f => f.category.includes("KYC"))) findings.push({ category: "KYC Profile Mismatch", finding: "Transaction velocity exceeds declared customer risk profile expectations by over 400%", severity: "HIGH" });
-        if (!findings.some(f => f.category.includes("Cross"))) findings.push({ category: "Cross-Channel Switch", finding: "Funds abruptly converted from traditional wire transfer to decentralized Crypto Settlement rail", severity: "HIGH" });
+      if (findings.length === 0) {
+        findings.push({ category: "Suspicious Activity", finding: "Anomalous transaction patterns detected requiring further review", severity: "HIGH" });
       }
 
-      let fundFlow = liveReport.trace?.chain ? liveReport.trace.chain.map((c: string, i: number) => ({ step: i+1, fromAccount: c, toAccount: liveReport.trace.chain[i+1] ?? "End", amount: liveReport.trace.amounts[i] ?? 125000, method: ["SWIFT", "Wire Transfer", "Crypto Rail", "Internal Transfer"][i % 4], timestamp: "2026-06-28" })).slice(0, -1) : [];
+      const actualTrace = liveReport.traces?.roundtrip?.detected ? liveReport.traces.roundtrip : 
+        (liveReport.traces?.layering?.detected ? liveReport.traces.layering : 
+        (liveReport.traces?.smurfing?.detected ? liveReport.traces.smurfing : 
+        (liveReport.traces?.dormant?.detected ? liveReport.traces.dormant : 
+        (liveReport.traces?.kyc_mismatch?.detected ? liveReport.traces.kyc_mismatch : null))));
+        let fundFlow = actualTrace?.chain ? actualTrace.chain.map((c: string, i: number) => {
+            const isConvergent = ['SMURFING', 'DORMANT', 'DORMANT_ACTIVATION'].includes(actualTrace.fraud_type?.toUpperCase()) || 
+                                 liveReport.score?.flagged_for?.some((f: string) => ['SMURFING', 'DORMANT'].includes(f.toUpperCase()));
+            let fromAccount = c;
+            let toAccount = actualTrace.chain[i+1] ?? "End";
+            if (isConvergent && i < actualTrace.chain.length - 1) {
+                fromAccount = actualTrace.chain[i+1];
+                toAccount = actualTrace.chain[0];
+            }
+            return {
+                step: i+1, fromAccount, toAccount, amount: actualTrace.amounts[i] ?? 125000, method: ["SWIFT", "Wire Transfer", "Crypto Rail", "Internal Transfer"][i % 4], timestamp: "2026-06-28" 
+            }
+        }).slice(0, -1) : [];
       if (fundFlow.length === 0) {
         const acc = selectedCase.suspiciousAccounts?.[0] || "ACC_06264";
         const num = parseInt(acc.replace(/\D/g, "")) || 6264;
@@ -424,8 +442,13 @@ export default function Evidence() {
         ];
       }
 
+      let dynamicTotalAmount = selectedCase.totalAmount;
+      if (actualTrace?.amounts?.length) {
+          dynamicTotalAmount = actualTrace.amounts.reduce((a: number, b: number) => a + b, 0);
+      }
+
       return {
-        case: selectedCase,
+        case: { ...selectedCase, totalAmount: dynamicTotalAmount },
         findings,
         fundFlowSummary: fundFlow,
         fiuReportData: {
@@ -637,7 +660,7 @@ export default function Evidence() {
                       </div>
                       <div className="flex justify-between text-[11px] mt-3 pt-2 border-t border-[#130537]/20" style={{ color: "rgba(19, 5, 55, 0.55)" }}>
                         <span>{c.suspiciousAccounts.length} accounts</span>
-                        <span className="font-mono font-bold" style={{ color: "#130537" }}>${(c.totalAmount / 1_000_000).toFixed(2)}M</span>
+                        <span className="font-mono font-bold" style={{ color: "#130537" }}>${((c.id === selectedId && activeCaseDetail ? activeCaseDetail.case.totalAmount : c.totalAmount) / 1_000_000).toFixed(2)}M</span>
                       </div>
                     </div>
                   );

@@ -8,6 +8,7 @@ import NotFound from "@/pages/not-found";
 import Home from "@/pages/Home";
 import Dashboard from "@/pages/Dashboard";
 import Alerts from "@/pages/Alerts";
+import Demo from "@/pages/Demo";
 import GraphAnalytics from "@/pages/GraphAnalytics";
 import Accounts from "@/pages/Accounts";
 import Evidence from "@/pages/Evidence";
@@ -18,6 +19,7 @@ function Router() {
       <Switch>
         <Route path="/" component={Home} />
         <Route path="/dashboard" component={Dashboard} />
+        <Route path="/demo" component={Demo} />
         <Route path="/alerts" component={Alerts} />
         <Route path="/graph/:alertId" component={GraphAnalytics} />
         <Route path="/graph" component={GraphAnalytics} />

@@ -74,7 +74,7 @@ def get_clean_account() -> Dict[str, Any]:
                 raise Exception("No clean accounts found in Postgres!")
             return dict(row)
 
-async def inject_demo_pattern(pattern: str, demo_tag: str) -> List[str]:
+async def inject_demo_pattern(pattern: str, demo_tag: str):
     """
     Inserts live transaction topologies directly into Neo4j and Postgres.
     """
@@ -89,10 +89,11 @@ async def inject_demo_pattern(pattern: str, demo_tag: str) -> List[str]:
         hop2 = f"ACC_DEMO_{pattern}_{random.randint(100000, 999999)}"
         hop3 = f"ACC_DEMO_{pattern}_{random.randint(100000, 999999)}"
         account_ids = [root_acc, hop1, hop2, hop3]
+        base_amt = float(random.randint(80000, 150000))
         txns = [
-            (root_acc, hop1, 100000.0),
-            (hop1, hop2, 95000.0),
-            (hop2, hop3, 90000.0)
+            (root_acc, hop1, base_amt),
+            (hop1, hop2, base_amt * 0.95),
+            (hop2, hop3, base_amt * 0.90)
         ]
     elif pattern == "SMURFING":
         smurf1 = f"ACC_DEMO_{pattern}_{random.randint(100000, 999999)}"
@@ -100,29 +101,30 @@ async def inject_demo_pattern(pattern: str, demo_tag: str) -> List[str]:
         smurf3 = f"ACC_DEMO_{pattern}_{random.randint(100000, 999999)}"
         account_ids = [root_acc, smurf1, smurf2, smurf3]
         txns = [
-            (smurf1, root_acc, 9500.0),
-            (smurf2, root_acc, 9800.0),
-            (smurf3, root_acc, 9200.0)
+            (smurf1, root_acc, float(random.randint(8000, 9900))),
+            (smurf2, root_acc, float(random.randint(8000, 9900))),
+            (smurf3, root_acc, float(random.randint(8000, 9900)))
         ]
     elif pattern == "ROUND_TRIP":
         hop1 = f"ACC_DEMO_{pattern}_{random.randint(100000, 999999)}"
         hop2 = f"ACC_DEMO_{pattern}_{random.randint(100000, 999999)}"
-        account_ids = [root_acc, hop1, hop2]
+        account_ids = [root_acc, hop1, hop2, root_acc]
+        base_amt = float(random.randint(40000, 200000))
         txns = [
-            (root_acc, hop1, 50000.0),
-            (hop1, hop2, 49000.0),
-            (hop2, root_acc, 48000.0)
+            (root_acc, hop1, base_amt),
+            (hop1, hop2, base_amt * 0.98),
+            (hop2, root_acc, base_amt * 0.96)
         ]
     elif pattern == "DORMANT":
         account_ids = [root_acc]
         sender = f"ACC_DEMO_{pattern}_{random.randint(100000, 999999)}"
         account_ids.append(sender)
-        txns = [(sender, root_acc, 500000.0)]
+        txns = [(sender, root_acc, float(random.randint(300000, 800000)))]
     elif pattern == "KYC_MISMATCH":
         account_ids = [root_acc]
         sender = f"ACC_DEMO_{pattern}_{random.randint(100000, 999999)}"
         account_ids.append(sender)
-        txns = [(sender, root_acc, 1500000.0)]
+        txns = [(sender, root_acc, float(random.randint(1000000, 5000000)))]
     else:
         raise NotImplementedError(f"Pattern {pattern} demo injection not yet implemented.")
 
@@ -137,9 +139,9 @@ async def inject_demo_pattern(pattern: str, demo_tag: str) -> List[str]:
                     """, (acc, ent_id, 3, 'ACTIVE', 'HIGH', True, pattern))
                     
                     cur.execute("""
-                        INSERT INTO account_stats (account_id, volume_30d, txn_count_30d, avg_txn_amount)
-                        VALUES (%s, 250000.0, 45, 5555.55)
-                    """, (acc,))
+                        INSERT INTO account_stats (account_id, volume_30d, txn_count_30d, total_count_180d, total_volume_180d, unique_counterparties_30d)
+                        VALUES (%s, %s, 45, 270, 1500000.0, 15)
+                    """, (acc, sum(t[2] for t in txns) if txns else random.uniform(100000.0, 500000.0)))
                     
                 for i, (sender, receiver, amount) in enumerate(txns):
                     txn_id = f"TXN_DEMO_{demo_tag}_{i}"
@@ -171,19 +173,20 @@ async def inject_demo_pattern(pattern: str, demo_tag: str) -> List[str]:
                     txn_id: $txn_id,
                     amount: toFloat($amount),
                     txn_ts: datetime(),
+                    status: 'SUCCESS',
                     is_demo: true,
                     demo_tag: $tag
                 }]->(r)
             """, sender=sender, receiver=receiver, amount=amount, txn_id=f"TXN_DEMO_{demo_tag}_{i}", tag=demo_tag)
 
         
-    return account_ids
+    return account_ids, txns
 
 async def run_injection_pipeline(pattern: str, demo_tag: str):
     try:
         # Stage 1: Ingest Live Topology
         await manager.broadcast("STAGE_UPDATE", {"stage": 1, "message": f"Writing {pattern} topology to graph databases..."})
-        account_ids = await inject_demo_pattern(pattern, demo_tag)
+        account_ids, txns = await inject_demo_pattern(pattern, demo_tag)
         root_account_id = account_ids[0]
 
         await asyncio.sleep(1.5) # Fake delay for effect
@@ -206,24 +209,28 @@ async def run_injection_pipeline(pattern: str, demo_tag: str):
                     cur.execute("""
                         INSERT INTO alerts (alert_id, account_id, pattern_type, fraud_probability, severity, status, created_at)
                         VALUES (%s, %s, %s, %s, %s, 'OPEN', NOW())
-                        ON CONFLICT (alert_id) DO NOTHING
-                    """, (alert_id, root_account_id, pattern, result['fraud_probability'], result['severity']))
+                    """, (alert_id, root_account_id, pattern, result.get('combined_score', 0.95), result.get('risk_level', 'HIGH')))
                 conn.commit()
         await asyncio.to_thread(pg_alert_insert)
+        
+        amounts = [float(t[2]) for t in txns] if 'txns' in locals() else []
         
         async with _neo4j_session() as session:
             await session.run("""
                 MATCH (a:Account {account_id: $acc})
                 MERGE (al:Alert {alert_id: $alert_id})
-                SET al.pattern = $pattern,
+                SET al.pattern_type = $pattern,
                     al.fraud_prob = toFloat($prob),
+                    al.ml_confidence = toFloat($prob),
                     al.tier = $severity,
                     al.status = 'OPEN',
-                    al.created_at = datetime().toString(),
+                    al.created_at = toString(datetime()),
                     al.is_demo = true,
-                    al.demo_tag = $tag
+                    al.demo_tag = $tag,
+                    al.chain = $account_ids,
+                    al.amounts = $amounts
                 MERGE (a)-[:FLAGGED_IN]->(al)
-            """, acc=root_account_id, alert_id=alert_id, pattern=pattern, prob=result['fraud_probability'], severity=result['severity'], tag=demo_tag)
+            """, acc=root_account_id, alert_id=alert_id, pattern=pattern, prob=result.get('combined_score', 0.95), severity=result.get('risk_level', 'HIGH'), tag=demo_tag, account_ids=account_ids, amounts=amounts)
 
         await asyncio.sleep(1.5)
 

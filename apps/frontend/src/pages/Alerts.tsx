@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useState, useEffect, useRef, useMemo, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
@@ -21,7 +21,7 @@ import {
 } from "@/data/staticData";
 import { getInvestigationAlertById } from "@/data/investigationData";
 import { useInvestigation } from "@/context/InvestigationContext";
-import { useAlertsQuick } from "@/hooks/useApi";
+import { useAlertsQuick, useTrace } from "@/hooks/useApi";
 
 /* ── STYLES ── */
 const SEV: Record<string, { badge: string; dot: string; leftBar: string; drawerBg: string }> = {
@@ -201,14 +201,14 @@ export default function Alerts() {
     ? liveAlertsData.alerts.map((a: any, i: number) => ({
       id: i + 1,
       alertId: a.alert_id || `ALT-${a.account_id}-${(a.flagged_for?.[0] || "fraud").toLowerCase()}`,
-      accountId: i + 1,
+      accountId: a.account_id,
       severity: (a.risk_level || a.severity) as string,
       status: "OPEN",
       pattern: a.flagged_for?.[0] ?? a.pattern_type ?? "UNKNOWN",
       amount: a.total_amount ?? Math.round((a.score || a.fraud_probability || 0.9) * 5_000_000),
       assignee: null,
       description: `Fraud pattern detected: ${a.flagged_for.join(", ")}`,
-      createdAt: new Date().toISOString(),
+      createdAt: a.created_at || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       accountName: a.customer_name || a.account_id,
       accountNumber: `${a.account_id} (${a.branch_name || "Main Branch"})`,
@@ -243,8 +243,36 @@ export default function Alerts() {
 
   const alerts = filteredAlerts;
   const alertDetail = selectedId ? mergedAlerts.find(a => a.id === selectedId) : null;
+  const { data: liveTrace } = useTrace(alertDetail?.accountId || null);
   const timeline = selectedId ? getTimelineByAlertId(selectedId) : [];
-  const relatedTransactions = alertDetail ? getTransactionsByAccountId(alertDetail.accountId) : [];
+  
+  const relatedTransactions = useMemo(() => {
+    if (liveTrace && liveTrace.chain && liveTrace.chain.length > 1) {
+      const txns = [];
+      const chain = liveTrace.chain;
+      const amounts = liveTrace.amounts || [];
+      const isConvergent = ["SMURFING", "DORMANT", "DORMANT_ACTIVATION"].includes(liveTrace?.fraud_type?.toUpperCase() || "") || 
+                           ["SMURFING", "DORMANT"].includes(alertDetail?.pattern?.toUpperCase() || "");
+      for (let i = 0; i < chain.length - 1; i++) {
+        let fromAccount = chain[i];
+        let toAccount = chain[i + 1];
+        if (isConvergent) {
+            fromAccount = chain[i + 1];
+            toAccount = chain[0];
+        }
+        txns.push({
+          id: `TXN-LIVE-${i}`,
+          txnId: `TXN-LIVE-${i}`,
+          amount: amounts[i] || 0,
+          txnType: "Transfer",
+          fromAccount,
+          toAccount
+        });
+      }
+      return txns;
+    }
+    return alertDetail ? getTransactionsByAccountId(alertDetail.accountId) : [];
+  }, [liveTrace, alertDetail]);
 
   return (
     <div className="p-6 space-y-5 min-h-screen" style={{ backgroundColor: "var(--background)" }}>
@@ -561,7 +589,7 @@ export default function Alerts() {
                       </Button>
 
                       <Button
-                        onClick={() => { setDrawerOpen(false); navigate(`/evidence?account=${alertDetail.accountName}`); }}
+                        onClick={() => { setDrawerOpen(false); navigate(`/evidence?account=${alertDetail.accountId}`); }}
                         className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105 mt-3"
                         style={{
                           backgroundColor: "#130537",

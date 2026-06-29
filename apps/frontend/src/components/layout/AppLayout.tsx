@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import {
   BarChart3, AlertTriangle, Network, Users,
-  FileText, Home, Shield, Activity,
+  FileText, Home, Shield, Activity, Terminal
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +21,12 @@ const navSections = [
       { name: "Graph Analytics", href: "/graph", icon: Network, badge: "Core" },
       { name: "Accounts", href: "/accounts", icon: Users },
       { name: "Evidence", href: "/evidence", icon: FileText },
+    ],
+  },
+  {
+    label: "System",
+    items: [
+      { name: "Demo Control", href: "/demo", icon: Terminal, badge: "Inject" },
     ],
   },
 ];
