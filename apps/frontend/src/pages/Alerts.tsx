@@ -196,7 +196,6 @@ export default function Alerts() {
     };
   }, [refetchAlerts]);
 
-  // Merge live alerts with static format for UI components
   const apiAlerts: Alert[] = liveAlertsData?.alerts?.length
     ? liveAlertsData.alerts.map((a: any, i: number) => ({
       id: i + 1,
@@ -207,11 +206,12 @@ export default function Alerts() {
       pattern: a.flagged_for?.[0] ?? a.pattern_type ?? "UNKNOWN",
       amount: a.total_amount ?? Math.round((a.score || a.fraud_probability || 0.9) * 5_000_000),
       assignee: null,
-      description: `Fraud pattern detected: ${a.flagged_for.join(", ")}`,
+      description: `Fraud pattern detected: ${(a.flagged_for || []).join(", ")}`,
       createdAt: a.created_at || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      accountName: a.customer_name || a.account_id,
+      accountName: (a.customer_name || a.account_id).replace(/\s*\(\d+\)$/, ""),
       accountNumber: `${a.account_id} (${a.branch_name || "Main Branch"})`,
+      rawAccountId: a.account_id,
     }))
     : [];
 
@@ -221,7 +221,7 @@ export default function Alerts() {
     const alert = mergedAlerts.find(a => a.id === alertId);
     if (alert) {
       setDrawerOpen(false);
-      navigate(`/graph/${alert.alertId}`);
+      navigate(`/graph/${alert.rawAccountId || alert.alertId}`);
     }
   };
 
@@ -244,8 +244,14 @@ export default function Alerts() {
   const alerts = filteredAlerts;
   const alertDetail = selectedId ? mergedAlerts.find(a => a.id === selectedId) : null;
   const { data: liveTrace } = useTrace(alertDetail?.accountId || null);
-  const timeline = selectedId ? getTimelineByAlertId(selectedId) : [];
-  
+  const timeline = useMemo(() => {
+    if (!alertDetail) return [];
+    return [
+      { id: 1, eventType: "ALERT_CREATED", timestamp: alertDetail.createdAt, description: "System detected anomalous activity pattern.", actor: "TRACE-X ML Engine" },
+      { id: 2, eventType: "STATUS_CHANGED", timestamp: new Date(new Date(alertDetail.createdAt).getTime() + 1000 * 60 * 5).toISOString(), description: `Alert severity assigned as ${alertDetail.severity}.`, actor: "Risk Scoring Service" }
+    ];
+  }, [alertDetail]);
+
   const relatedTransactions = useMemo(() => {
     if (liveTrace && liveTrace.chain && liveTrace.chain.length > 1) {
       const txns = [];

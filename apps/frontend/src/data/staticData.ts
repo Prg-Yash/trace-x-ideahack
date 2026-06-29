@@ -58,6 +58,7 @@ export type Alert = {
   // Joined fields
   accountName: string;
   accountNumber: string;
+  rawAccountId?: string;
 };
 
 export type AlertTimeline = {

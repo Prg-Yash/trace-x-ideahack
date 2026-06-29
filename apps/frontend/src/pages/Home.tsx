@@ -220,13 +220,13 @@ export default function Home() {
           {/* Right CTAs */}
           <div className="flex items-center gap-2">
             <Link href="/dashboard">
-              <Button
+              {/* <Button
                 variant="ghost"
                 size="sm"
                 className="text-[13px] font-semibold text-[#130537] hover:bg-[#d0d0ca] rounded-none"
               >
                 Sign in
-              </Button>
+              </Button> */}
             </Link>
             <Link href="/dashboard">
               <button

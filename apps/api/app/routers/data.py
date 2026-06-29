@@ -1,4 +1,5 @@
 import os
+import re
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from fastapi import APIRouter, HTTPException
@@ -92,7 +93,7 @@ async def get_all_accounts(skip: int = 0, limit: int = 100):
             "entity_id": n_rec["entity_id"],
             "branch_name": pg_rec.get("branch_name") or n_rec.get("branch_name"),
             "branch_code": pg_rec.get("branch_code") or n_rec.get("branch_code"),
-            "customer_name": pg_rec.get("customer_name") or n_rec.get("customer_name"),
+            "customer_name": re.sub(r"\s*\(\d+\)$", "", str(pg_rec.get("customer_name") or n_rec.get("customer_name") or "")).strip(),
             "pan_number": pg_rec.get("pan_number"),
             "dob": pg_rec.get("dob"),
             "address": pg_rec.get("address"),
