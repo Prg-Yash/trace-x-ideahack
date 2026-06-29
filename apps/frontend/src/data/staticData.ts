@@ -46,7 +46,7 @@ export type InvestigationNote = {
 export type Alert = {
   id: number;
   alertId: string;
-  accountId: number;
+  accountId: number | string;
   severity: string;
   status: string;
   pattern: string;

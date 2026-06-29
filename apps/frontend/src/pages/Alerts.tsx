@@ -1,4 +1,5 @@
-import { useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useState, useEffect, useRef, useMemo, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -20,7 +21,7 @@ import {
 } from "@/data/staticData";
 import { getInvestigationAlertById } from "@/data/investigationData";
 import { useInvestigation } from "@/context/InvestigationContext";
-import { useAlertsQuick } from "@/hooks/useApi";
+import { useAlertsQuick, useTrace } from "@/hooks/useApi";
 
 /* ── STYLES ── */
 const SEV: Record<string, { badge: string; dot: string; leftBar: string; drawerBg: string }> = {
@@ -109,28 +110,112 @@ export default function Alerts() {
   const [showTimeline, setShowTimeline] = useState(false);
   const [statusOverrides, setStatusOverrides] = useState<Record<number, string>>({});
 
-  // Live API data
-  const { data: liveAlertsData, loading: alertsLoading } = useAlertsQuick(200);
+  const [optimisticAlerts, setOptimisticAlerts] = useState<Alert[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
 
-  // Merge live alerts with static format for UI components
-  const mergedAlerts: Alert[] = liveAlertsData?.alerts?.length
-    ? liveAlertsData.alerts.map((a, i) => ({
-        id: i + 1,
-        alertId: `ALT-${a.account_id}-${(a.flagged_for[0] || "fraud").toLowerCase()}`,
-        accountId: i + 1,
-        severity: a.risk_level as string,
-        status: "OPEN",
-        pattern: a.flagged_for[0] ?? "UNKNOWN",
-        amount: a.total_amount ?? Math.round(a.score * 5_000_000),
-        assignee: null,
-        description: `Fraud pattern detected: ${a.flagged_for.join(", ")}`,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        accountName: (a.customer_name || a.account_id).replace(/\s*\(\d+\)$/, ""),
-        accountNumber: `${a.account_id} (${a.branch_name || "Main Branch"})`,
-        rawAccountId: a.account_id,
-      }))
+  // Live API data
+  const { data: liveAlertsData, loading: alertsLoading, refetch: refetchAlerts } = useAlertsQuick(200);
+
+  useEffect(() => {
+    let reconnectTimeout: ReturnType<typeof setTimeout>;
+
+    function connect() {
+      const wsUrl = import.meta.env.VITE_WS_URL || "ws://localhost:8000/api/v1/ws";
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log("WebSocket connected for Demo Injector updates.");
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (!payload) return;
+
+          if (payload.event === "STAGE_UPDATE") {
+            const data = payload.data;
+            toast.info(`Stage ${data.stage}: ${data.message}`);
+          }
+          else if (payload.event === "NEW_ALERT") {
+            const data = payload.data;
+            toast.success(`Demo Injection Complete! Alert ${data.alert_id} generated.`);
+
+            // Construct optimistic alert
+            const newAlert: Alert = {
+              id: Date.now(), // temporary unique id
+              alertId: data.alert_id,
+              accountId: data.account_ids ? data.account_ids[0] : "unknown",
+              severity: data.severity || data.tier || "CRITICAL",
+              status: "OPEN",
+              pattern: data.pattern || "LAYERING",
+              amount: data.total_amount ?? Math.round((data.fraud_prob || data.fraud_probability || 0.95) * 500000),
+              assignee: null,
+              description: `Live Injection: ${data.pattern}`,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              accountName: data.account_ids ? data.account_ids[0] : "unknown",
+              accountNumber: data.account_ids ? data.account_ids[0] : "unknown",
+            };
+
+            setOptimisticAlerts(prev => [newAlert, ...prev]);
+
+            // Trigger actual refetch after 1500ms to ensure DB commit is visible
+            setTimeout(() => {
+              if (refetchAlerts) refetchAlerts();
+              setOptimisticAlerts([]); // clear optimistic once live data returns
+            }, 1500);
+          }
+          else if (payload.event === "INJECTION_ERROR") {
+            toast.error(`Injection Failed: ${payload.data.message}`);
+          }
+          else if (payload.event === "DEMO_RESET") {
+            toast.success("Demo data cleared.");
+            if (refetchAlerts) refetchAlerts();
+            setOptimisticAlerts([]);
+          }
+        } catch (e) {
+          console.error("WS Parse Error", e);
+        }
+      };
+
+      ws.onclose = () => {
+        console.log("WebSocket disconnected. Reconnecting in 3s...");
+        reconnectTimeout = setTimeout(connect, 3000);
+      };
+    }
+
+    connect();
+
+    return () => {
+      clearTimeout(reconnectTimeout);
+      if (wsRef.current) {
+        wsRef.current.onclose = null; // Prevent reconnect on unmount
+        wsRef.current.close();
+      }
+    };
+  }, [refetchAlerts]);
+
+  const apiAlerts: Alert[] = liveAlertsData?.alerts?.length
+    ? liveAlertsData.alerts.map((a: any, i: number) => ({
+      id: i + 1,
+      alertId: a.alert_id || `ALT-${a.account_id}-${(a.flagged_for?.[0] || "fraud").toLowerCase()}`,
+      accountId: a.account_id,
+      severity: (a.risk_level || a.severity) as string,
+      status: "OPEN",
+      pattern: a.flagged_for?.[0] ?? a.pattern_type ?? "UNKNOWN",
+      amount: a.total_amount ?? Math.round((a.score || a.fraud_probability || 0.9) * 5_000_000),
+      assignee: null,
+      description: `Fraud pattern detected: ${(a.flagged_for || []).join(", ")}`,
+      createdAt: a.created_at || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      accountName: (a.customer_name || a.account_id).replace(/\s*\(\d+\)$/, ""),
+      accountNumber: `${a.account_id} (${a.branch_name || "Main Branch"})`,
+      rawAccountId: a.account_id,
+    }))
     : [];
+
+  const mergedAlerts = [...optimisticAlerts, ...apiAlerts];
 
   const handleStartInvestigation = (alertId: number) => {
     const alert = mergedAlerts.find(a => a.id === alertId);
@@ -158,8 +243,36 @@ export default function Alerts() {
 
   const alerts = filteredAlerts;
   const alertDetail = selectedId ? mergedAlerts.find(a => a.id === selectedId) : null;
+  const { data: liveTrace } = useTrace(alertDetail?.accountId || null);
   const timeline = selectedId ? getTimelineByAlertId(selectedId) : [];
-  const relatedTransactions = alertDetail ? getTransactionsByAccountId(alertDetail.accountId) : [];
+  
+  const relatedTransactions = useMemo(() => {
+    if (liveTrace && liveTrace.chain && liveTrace.chain.length > 1) {
+      const txns = [];
+      const chain = liveTrace.chain;
+      const amounts = liveTrace.amounts || [];
+      const isConvergent = ["SMURFING", "DORMANT", "DORMANT_ACTIVATION"].includes(liveTrace?.fraud_type?.toUpperCase() || "") || 
+                           ["SMURFING", "DORMANT"].includes(alertDetail?.pattern?.toUpperCase() || "");
+      for (let i = 0; i < chain.length - 1; i++) {
+        let fromAccount = chain[i];
+        let toAccount = chain[i + 1];
+        if (isConvergent) {
+            fromAccount = chain[i + 1];
+            toAccount = chain[0];
+        }
+        txns.push({
+          id: `TXN-LIVE-${i}`,
+          txnId: `TXN-LIVE-${i}`,
+          amount: amounts[i] || 0,
+          txnType: "Transfer",
+          fromAccount,
+          toAccount
+        });
+      }
+      return txns;
+    }
+    return alertDetail ? getTransactionsByAccountId(alertDetail.accountId) : [];
+  }, [liveTrace, alertDetail]);
 
   return (
     <div className="p-6 space-y-5 min-h-screen" style={{ backgroundColor: "var(--background)" }}>
@@ -476,7 +589,7 @@ export default function Alerts() {
                       </Button>
 
                       <Button
-                        onClick={() => { setDrawerOpen(false); navigate(`/evidence?account=${alertDetail.rawAccountId || alertDetail.accountNumber.split(" ")[0]}`); }}
+                        onClick={() => { setDrawerOpen(false); navigate(`/evidence?account=${alertDetail.accountId}`); }}
                         className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105 mt-3"
                         style={{
                           backgroundColor: "#130537",

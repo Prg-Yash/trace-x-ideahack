@@ -285,7 +285,7 @@ ${detail.fiuReportData?.actionRequired || 'Escalate STR Form 8 immediately to FI
               <tbody>
                 ${Array.isArray(detail.fundFlowSummary) && detail.fundFlowSummary.length ? detail.fundFlowSummary.map((s: any, idx: number) => `
                   <tr>
-                    <td>Hop ${s.step || idx+1}</td>
+                    <td>Hop ${s.step || idx + 1}</td>
                     <td style="font-family:monospace;font-size:9px">${s.utr || ('UTR' + (today || '20260629').replace(/-/g,'') + String(100000+idx).slice(1))}</td>
                     <td>${s.timestamp || today}</td>
                     <td style="font-weight:bold;font-family:monospace">${s.fromAccount}</td>
@@ -530,8 +530,26 @@ export default function Evidence() {
       const suspDate = new Date(); suspDate.setDate(suspDate.getDate() - 1);
       const txnDateStr = suspDate.toISOString().split("T")[0];
       const INDIAN_RAILS = ["RTGS", "NEFT", "IMPS", "UPI"];
-      let fundFlow = liveReport.trace?.chain && liveReport.trace.chain.length > 1 ? liveReport.trace.chain.map((c: string, i: number) => ({ step: i+1, fromAccount: c, toAccount: liveReport.trace.chain[i+1] ?? "End", amount: liveReport.trace.amounts[i] ?? 125000, utr: `UTR${txnDateStr.replace(/-/g,"")}${String(1000+i).padStart(6,"0")}`, ifsc: `UBIN0${(550000+i*113).toString().slice(0,5)}`, method: INDIAN_RAILS[i % 4], timestamp: txnDateStr })).slice(0, -1) : [];
-      
+      const actualTrace = liveReport.traces?.roundtrip?.detected ? liveReport.traces.roundtrip :
+        (liveReport.traces?.layering?.detected ? liveReport.traces.layering :
+          (liveReport.traces?.smurfing?.detected ? liveReport.traces.smurfing :
+            (liveReport.traces?.dormant?.detected ? liveReport.traces.dormant :
+              (liveReport.traces?.kyc_mismatch?.detected ? liveReport.traces.kyc_mismatch : null))));
+              
+      let fundFlow = actualTrace?.chain ? actualTrace.chain.map((c: string, i: number) => {
+        const isConvergent = ['SMURFING', 'DORMANT', 'DORMANT_ACTIVATION'].includes(actualTrace.fraud_type?.toUpperCase()) ||
+          liveReport.score?.flagged_for?.some((f: string) => ['SMURFING', 'DORMANT'].includes(f.toUpperCase()));
+        let fromAccount = c;
+        let toAccount = actualTrace.chain[i + 1] ?? "End";
+        if (isConvergent && i < actualTrace.chain.length - 1) {
+          fromAccount = actualTrace.chain[i + 1];
+          toAccount = actualTrace.chain[0];
+        }
+        return {
+          step: i + 1, fromAccount, toAccount, amount: actualTrace.amounts[i] ?? 125000, utr: `UTR${txnDateStr.replace(/-/g,"")}${String(1000+i).padStart(6,"0")}`, ifsc: `UBIN0${(550000+i*113).toString().slice(0,5)}`, method: INDIAN_RAILS[i % 4], timestamp: txnDateStr
+        }
+      }).slice(0, -1) : [];
+
       let primaryAccId = selectedCase.suspiciousAccounts?.[0] || liveReport.account_id || "ACC_00001";
       if (!primaryAccId.startsWith("ACC_")) primaryAccId = "ACC_00115";
       const accNum = parseInt(primaryAccId.replace(/\D/g, "")) || 1;
@@ -551,7 +569,6 @@ export default function Evidence() {
           };
         });
       }
-
       if (fundFlow.length === 0) {
         let acc = selectedCase.suspiciousAccounts?.[0] || "ACC_06264";
         if (!acc.startsWith("ACC_")) acc = "ACC_00115";
@@ -563,6 +580,10 @@ export default function Evidence() {
         ];
       }
 
+      let dynamicTotalAmount = selectedCase.totalAmount;
+      if (actualTrace?.amounts?.length) {
+        dynamicTotalAmount = actualTrace.amounts.reduce((a: number, b: number) => a + b, 0);
+      }
       const suspicionDate = new Date(); suspicionDate.setDate(suspicionDate.getDate() - 1);
       const filingDeadline = new Date(suspicionDate); filingDeadline.setDate(filingDeadline.getDate() + 7);
       const suspDateFormatted = suspicionDate.toLocaleDateString("en-IN");
@@ -588,7 +609,7 @@ export default function Evidence() {
       }).filter((v, i, a) => a.indexOf(v) === i).join(", ");
       const riskScore = liveReport.score ? Math.round(liveReport.score.combined_score * 100) : 88;
       const riskLevel = liveReport.score?.risk_level || "CRITICAL";
-      const totalTxnAmt = selectedCase.totalAmount || 500000;
+      const totalTxnAmt = dynamicTotalAmount || 500000;
       const narration = `Account ${primaryAccId} registered to ${customerName} at ${branchCode} branch. TRACE-X ML engine assigned combined risk score of ${riskScore}/100 (${riskLevel}). Detections confirmed: ${typologyCodes}.
 
 Fund movement analysis reveals rapid sequential transfers across ${fundFlow.length + 1} linked domestic accounts within a 48-hour window. Transaction velocity and amount conservation pattern are consistent with deliberate layering to obscure the beneficial owner and evade mandatory CTR reporting thresholds under Section 12 of the PMLA 2002.
@@ -599,7 +620,7 @@ ML model SHAP attribution identifies Rapid Chain Hop Velocity (+0.41) and Amount
 
 All transactions settled via regulated Indian payment rails (RTGS/NEFT/IMPS) and are traceable via UTR reference numbers logged in this report. No cross-border or offshore beneficiaries involved.`;
       return {
-        case: selectedCase,
+        case: { ...selectedCase, totalAmount: dynamicTotalAmount },
         findings,
         fundFlowSummary: fundFlow,
         customerName,

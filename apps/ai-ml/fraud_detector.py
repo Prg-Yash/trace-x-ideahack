@@ -146,6 +146,13 @@ FEATURE_SEQUENCE = [
     "unique_counterparties_30d"
 ]
 
+# Load KYC Features dynamically if present
+try:
+    _kyc_thresh = joblib.load(MODELS_DIR / "kyc_threshold.pkl")
+    KYC_FEATURES = _kyc_thresh.get("features", FEATURE_SEQUENCE)
+except Exception:
+    KYC_FEATURES = FEATURE_SEQUENCE
+
 SMURF_THRESHOLD = 0.90
 _thresh_path = MODELS_DIR / "smurf_threshold.json"
 if _thresh_path.exists():
@@ -929,14 +936,22 @@ async def detect_kyc_mismatch(account_id: str) -> Dict:
         props["income_utilization_ratio"] = float(props.get("volume_30d") or 0.0) / monthly_inc
 
     # Build the strictly ordered dataframe row
-    row_dict = {col: 0.0 for col in FEATURE_SEQUENCE}
+    row_dict = {col: 0.0 for col in KYC_FEATURES}
     
     # Map Numerical properties
-    for col in FEATURE_SEQUENCE:
+    for col in KYC_FEATURES:
         if col in props and not isinstance(props[col], str):
             row_dict[col] = float(props[col] or 0.0)
             
-    X = pd.DataFrame([row_dict], columns=FEATURE_SEQUENCE)
+    # Map Categorical OHE properties
+    for cat_field in ["account_type", "entity_type", "status", "risk_category"]:
+        val = props.get(cat_field, "")
+        if val:
+            ohe_col = f"{cat_field}_{val}"
+            if ohe_col in KYC_FEATURES:
+                row_dict[ohe_col] = 1.0
+                
+    X = pd.DataFrame([row_dict], columns=KYC_FEATURES)
     
     # Predict Proba
     dmatrix = xgb.DMatrix(X)
@@ -1368,7 +1383,7 @@ async def _get_account_alerts(account_id: str) -> List[Dict]:
         records = await _run_query(
             """
             MATCH (a:Account {account_id: $acc_id})-[:FLAGGED_IN]->(al:Alert)
-            RETURN al.pattern AS pattern, al.fraud_prob AS fraud_prob, al.tier AS tier
+            RETURN al.pattern_type AS pattern, al.fraud_prob AS fraud_prob, al.tier AS tier
             """,
             acc_id=account_id,
         )
@@ -1568,8 +1583,36 @@ async def trace_account(account_id: str, hint: str = "") -> Dict:
             hint = "layering"
         elif "ROUND_TRIP" in patterns:
             hint = "round_trip"
+        elif "SMURFING" in patterns:
+            hint = "smurfing"
+        elif "DORMANT" in patterns or "DORMANT_ACTIVATION" in patterns:
+            hint = "dormant"
+        elif "KYC_MISMATCH" in patterns:
+            hint = "kyc_mismatch"
+            
+    print(f"DEBUG trace_account hint: {hint} for {account_id}")
 
-    if hint in ("layering", "LAYERING"):
+    if hint in ("smurfing", "SMURFING", "dormant", "DORMANT", "DORMANT_ACTIVATION", "dormant_activation", "kyc_mismatch", "KYC_MISMATCH"):
+        # Smurfing and Dormant are tabular, so we just read the pre-stored trace from the Alert node
+        records = await _run_query("""
+            MATCH (a:Account {account_id: $acc_id})-[:FLAGGED_IN]->(al:Alert)
+            WHERE toUpper(al.pattern_type) = toUpper($hint)
+              AND al.chain IS NOT NULL
+            RETURN al.chain AS chain, al.amounts AS amounts, al.fraud_prob AS prob
+            LIMIT 1
+        """, acc_id=account_id, hint=hint)
+        print(f"DEBUG trace_account records for tabular: {records}")
+        if records:
+            r = records[0]
+            return {
+                "detected": True,
+                "fraud_type": hint.upper(),
+                "chain": r["chain"],
+                "amounts": r["amounts"] if "amounts" in r and r["amounts"] else [],
+                "confidence": r["prob"] if "prob" in r else 0.95
+            }
+        return {"detected": False, "fraud_type": "SMURFING", "chain": [], "amounts": []}
+    elif hint in ("layering", "LAYERING"):
         result = await detect_layering(account_id)
         if result.get("detected"):
             return result
@@ -1655,12 +1698,16 @@ async def build_evidence_package(account_id: str) -> Dict:
         "generated_at":  datetime.utcnow().isoformat(),
         "score":         score,
         "traces": {
-            "layering":  await detect_layering(account_id),
-            "roundtrip": await detect_roundtrip(account_id),
+            "layering":     await detect_layering(account_id),
+            "roundtrip":    await detect_roundtrip(account_id),
+            "smurfing":     await trace_account(account_id, "SMURFING"),
+            "dormant":      await trace_account(account_id, "DORMANT"),
+            "kyc_mismatch": await trace_account(account_id, "KYC_MISMATCH"),
         },
         "explanations": {
-            "dormant":   await explain_dormant(account_id),
-            "smurfing":  await explain_smurfing(account_id),
+            "dormant":      await explain_dormant(account_id),
+            "smurfing":     await explain_smurfing(account_id),
+            "kyc_mismatch": await explain_kyc_mismatch(account_id),
         },
         "report_summary": {
             "risk_level":    score["risk_level"],

@@ -509,7 +509,8 @@ function GraphInner() {
       // NEVER use liveScore.flagged_for — that's per-model confidence, not alert type
       const alertPattern = urlPattern || liveTrace?.fraud_type?.toUpperCase() || "FRAUD";
 
-      const nodes = chain.map((acc, i) => {
+      const uniqueChain = Array.from(new Set(chain));
+      const nodes = uniqueChain.map((acc, i) => {
         const isMain = acc === traceQueryId;
         // Risk level: for target use liveScore, for hops degrade gracefully
         const score = isMain
@@ -551,10 +552,18 @@ function GraphInner() {
       for (let i = 0; i < chain.length - 1; i++) {
         const defaultChannel = INDIAN_RAILS[i % INDIAN_RAILS.length];
         const ch = traceChannels[i] && traceChannels[i] !== "SWIFT" && traceChannels[i] !== "WIRE" && traceChannels[i] !== "CRYPTO" ? traceChannels[i] : defaultChannel;
+        let source = chain[i];
+        let target = chain[i + 1];
+        const isConvergent = ["SMURFING", "DORMANT", "DORMANT_ACTIVATION"].includes(liveTrace?.fraud_type?.toUpperCase() || "") || 
+                             ["SMURFING", "DORMANT"].includes(alertPattern?.toUpperCase() || "");
+        if (isConvergent) {
+            source = chain[i + 1];
+            target = chain[0];
+        }
         edges.push({
-          id: `e-${chain[i]}-${chain[i + 1]}-${i}`,
-          source: chain[i],
-          target: chain[i + 1],
+          id: `e-${source}-${target}-${i}`,
+          source,
+          target,
           label: `₹${(amounts[i] || 0).toLocaleString()}`,
           amount: amounts[i] || 0,
           channel: ch,
