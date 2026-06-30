@@ -185,6 +185,7 @@ export type AccountRecord = {
   volume_30d?: number;
   txn_count_30d?: number;
   declared_annual_income?: number;
+  risk_score?: number;
 };
 
 export type InvestigationNote = {
@@ -260,7 +261,7 @@ export const fetchAlerts = (limit = 50) =>
 
 /** Admin investigator management */
 export const fetchInvestigators = () =>
-  apiFetch<{ id: string; username: string; full_name: string; role: string }[]>("/auth/users/investigators");
+  apiFetch<{ id: string; username: string; full_name: string; role: string, is_locked?: boolean }[]>("/auth/users/investigators");
 
 export const createInvestigator = (data: any) =>
   apiFetch<{ id: string; username: string; full_name: string; role: string }>("/auth/users", {
@@ -277,6 +278,11 @@ export const updateInvestigatorPassword = (userId: string, newPassword: string) 
 export const deleteInvestigator = (userId: string) =>
   apiFetch<{ message: string }>(`/auth/users/${userId}`, {
     method: "DELETE",
+  });
+
+export const unlockInvestigator = (userId: string) =>
+  apiFetch<{ message: string }>(`/auth/users/${userId}/unlock`, {
+    method: "POST",
   });
 
 export const fetchBranches = () =>
@@ -370,3 +376,6 @@ export const sendChatMessage = (message: string, history: ChatHistoryTurn[] = []
     method: "POST",
     body: JSON.stringify({ message, history }),
   });
+
+export const fetchSystemAuditLogs = (limit = 100, skip = 0) =>
+  apiFetch<{ audit_logs: any[] }>(`/admin/audit-logs?limit=${limit}&skip=${skip}`);

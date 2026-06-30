@@ -24,6 +24,7 @@ import TransactionTimeMachine from "@/pages/TransactionTimeMachine";
 import RiskMap from "@/pages/RiskMap";
 import UserManagement from "@/pages/UserManagement";
 import Branches from "@/pages/Branches";
+import { AuditLogs } from "@/pages/AuditLogs";
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
   constructor(props: { children: React.ReactNode }) {
@@ -73,6 +74,7 @@ function BranchRoutes() {
         <Route path="/evidence" component={Evidence} />
         <RoleRoute path="/users" component={UserManagement} allowedRoles={["Admin", "Branch Manager"]} />
         <RoleRoute path="/branches" component={Branches} allowedRoles={["Admin"]} />
+        <RoleRoute path="/audit-logs" component={AuditLogs} allowedRoles={["Admin"]} />
         <Route path="/transaction-time-machine/:alertId" component={TransactionTimeMachine} />
         <Route component={NotFound} />
       </Switch>
@@ -91,13 +93,7 @@ function RoutingGuard({ children }: { children: React.ReactNode }) {
 
     if (isRootOrDashboard) {
       if (user.role !== "Admin") {
-        const fallbackBranch = user.branchId || "ALL";
-        // Default Branch Managers and Investigators to their assigned branch
-        // Right now the API uses branch_code, but our context has branchId?
-        // Wait, the API returns branchCode or we can fallback to branchCode if user has it.
-        // Let's assume user object has a branchCode field or we use branchId.
-        // Actually, user schema has `branch_code` or `branchId`.
-        const code = (user as any).branchCode || "ALL"; // fallback if branchCode isn't explicitly exposed yet
+        const code = user.branchCode || "ALL";
         setLocation(`/b/${code}/dashboard`);
       }
     }

@@ -1,24 +1,37 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from psycopg2.extras import RealDictCursor
 from app.core.deps import get_current_user, require_roles
 from app.db.session import get_pg_conn
 from pydantic import BaseModel
 from typing import Optional
 import json
+from app.core.audit import log_system_event
 
 class AssignRequest(BaseModel):
     assignee_id: Optional[str] = None
 
 router = APIRouter(tags=["workflow"])
 
-def write_audit_log(cur, alert_id: str, user_id: str, action: str, metadata: dict = None):
+def write_audit_log(request, cur, alert_id: str, user_id: str, user_name: str, action: str, metadata: dict = None):
     cur.execute(
         "INSERT INTO audit_log (alert_id, user_id, action, metadata) VALUES (%s, %s, %s, %s)",
         (alert_id, user_id, action, json.dumps(metadata) if metadata else None)
     )
+    # Also log to the centralized system audit log
+    log_system_event(
+        action_type=f"ALERT_{action}",
+        status="SUCCESS",
+        description=f"Action '{action}' performed on alert {alert_id}. {json.dumps(metadata) if metadata else ''}",
+        actor_id=user_id,
+        actor_name=user_name,
+        target_id=alert_id,
+        request=request,
+        conn=cur.connection
+    )
 
 @router.post("/{alert_id}/assign")
 async def assign_alert(
+    request: Request,
     alert_id: str,
     payload: AssignRequest = None,
     current_user: dict = Depends(require_roles(["Investigator", "Admin"])),
@@ -58,21 +71,35 @@ async def assign_alert(
             assignee_branch_id = assignee["branch_id"]
             
             # Verify the assignee belongs to the same branch as the alert
-            # Extract account_id from the alert_id (e.g. ALT-ACCOUNT123-LAYERING)
-            try:
-                # The alert_id format is ALT-{account_id}-{pattern}
-                # But to be completely safe, we can just fetch the alert's branch_code from Neo4j or accounts table
-                # For simplicity, if this is a Branch Manager, they can only assign their own branch's investigators
-                if current_user["role"] == "Branch Manager":
-                    if str(assignee_branch_id) != str(current_user.get("branch_id")):
-                        raise HTTPException(status_code=403, detail="Cannot assign an investigator from a different branch")
-                elif current_user["role"] == "Admin":
-                    # For admin, we should technically check the alert's branch.
-                    # In a real system we'd query the DB for the alert's branch. 
-                    # We will enforce the alert's branch matches the assignee's branch.
-                    pass
-            except Exception as e:
+            # Fetch the alert's branch_code
+            cur.execute("""
+                SELECT acc.branch_code 
+                FROM alerts al 
+                JOIN accounts acc ON al.account_id = acc.account_id 
+                WHERE al.alert_id = %s
+            """, (alert_id,))
+            alert_branch = cur.fetchone()
+            
+            if not alert_branch:
+                # If account is not found, maybe fallback to extracting it from alert_id if it follows a pattern,
+                # but let's just allow it for now if we can't find it to prevent breaking the flow entirely.
                 pass
+            else:
+                alert_branch_code = alert_branch["branch_code"]
+                
+                # We need assignee's branch_code. Let's fetch it from users or branch table.
+                # Actually, `assignee["branch_id"]` might be a UUID.
+                cur.execute("SELECT branch_code FROM branches WHERE id = %s", (assignee_branch_id,))
+                branch_row = cur.fetchone()
+                if branch_row:
+                    assignee_branch_code = branch_row["branch_code"]
+                    
+                    if current_user["role"] == "Branch Manager":
+                        if str(assignee_branch_code) != str(current_user.get("branch_code")):
+                            raise HTTPException(status_code=403, detail="Cannot assign an investigator from a different branch")
+                    
+                    if str(assignee_branch_code) != str(alert_branch_code):
+                        raise HTTPException(status_code=403, detail=f"Assignee branch ({assignee_branch_code}) does not match alert branch ({alert_branch_code})")
                 
         else:
             # Investigator assigning to themselves
@@ -84,13 +111,14 @@ async def assign_alert(
             (assignee_id, alert_id)
         )
         
-        write_audit_log(cur, alert_id, current_user["id"], "ASSIGNED", {"assigned_to": assignee_username})
+        write_audit_log(request, cur, alert_id, current_user["id"], current_user["username"], "ASSIGNED", {"assigned_to": assignee_username})
         conn.commit()
         
     return {"message": "Alert assigned successfully", "status": "UNDER_INVESTIGATION"}
 
 @router.post("/{alert_id}/draft-str")
 async def draft_str(
+    request: Request,
     alert_id: str,
     current_user: dict = Depends(require_roles(["Investigator"])),
     conn = Depends(get_pg_conn)
@@ -113,13 +141,14 @@ async def draft_str(
             (alert_id,)
         )
         
-        write_audit_log(cur, alert_id, current_user["id"], "STR_DRAFTED", {"action": "Draft sent for approval"})
+        write_audit_log(request, cur, alert_id, current_user["id"], current_user["username"], "STR_DRAFTED", {"action": "Draft sent for approval"})
         conn.commit()
         
     return {"message": "STR Drafted", "status": "PENDING_APPROVAL"}
 
 @router.post("/{alert_id}/approve-str")
 async def approve_str(
+    request: Request,
     alert_id: str,
     current_user: dict = Depends(require_roles(["Admin", "Branch Manager"])),
     conn = Depends(get_pg_conn)
@@ -139,13 +168,14 @@ async def approve_str(
             (alert_id,)
         )
         
-        write_audit_log(cur, alert_id, current_user["id"], "STR_APPROVED", {"action": "STR Filed with FIU"})
+        write_audit_log(request, cur, alert_id, current_user["id"], current_user["username"], "STR_APPROVED", {"action": "STR Filed with FIU"})
         conn.commit()
         
     return {"message": "STR Approved and Filed", "status": "FILED"}
 
 @router.post("/{alert_id}/reject-str")
 async def reject_str(
+    request: Request,
     alert_id: str,
     current_user: dict = Depends(require_roles(["Admin", "Branch Manager"])),
     conn = Depends(get_pg_conn)
@@ -165,7 +195,7 @@ async def reject_str(
             (alert_id,)
         )
         
-        write_audit_log(cur, alert_id, current_user["id"], "STR_REJECTED", {"action": "STR Rejected and returned to Investigator"})
+        write_audit_log(request, cur, alert_id, current_user["id"], current_user["username"], "STR_REJECTED", {"action": "STR Rejected and returned to Investigator"})
         conn.commit()
         
     return {"message": "STR Rejected", "status": "UNDER_INVESTIGATION"}

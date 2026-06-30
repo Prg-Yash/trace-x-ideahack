@@ -18,3 +18,5 @@ aiokafka
 bcrypt==4.0.1
 python-jose[cryptography]
 python-multipart
+pyotp
+webauthn

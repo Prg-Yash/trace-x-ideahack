@@ -77,7 +77,7 @@ export default function Accounts() {
         accountNumber: a.account_id,
         accountType: a.account_type || "Corporate Checking",
         riskLevel: (a.risk_category || "HIGH").toUpperCase() as "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
-        riskScore: a.is_fraud ? 88 : 45,
+        riskScore: a.risk_score ?? (a.is_fraud ? 92 : 15),
         status: (a.status || "ACTIVE") as "ACTIVE" | "RESTRICTED" | "SUSPENDED" | "CLOSED",
         balance: a.current_balance || a.avg_monthly_volume || 142000,
         kycTier: (a.kyc_tier || 2) as 1 | 2 | 3,

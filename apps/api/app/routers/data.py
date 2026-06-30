@@ -2,7 +2,9 @@ import os
 import re
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Request
+from app.core.deps import get_current_user
+from app.core.audit import log_system_event
 from pydantic import BaseModel
 from fraud_detector import _run_query, REL_TYPE, _get_driver
 
@@ -25,7 +27,10 @@ def get_db_connection():
         raise HTTPException(status_code=503, detail=f"NeonDB connection failed: {e}")
 
 @router.get("/accounts")
-async def get_all_accounts(skip: int = 0, limit: int = 100, branch_code: str | None = None):
+async def get_all_accounts(skip: int = 0, limit: int = 100, branch_code: str | None = None, current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != "Admin":
+        branch_code = current_user.get("branch_code")
+        
     if _get_driver() is None:
         raise HTTPException(status_code=503, detail="Neo4j is not connected")
     
@@ -33,7 +38,8 @@ async def get_all_accounts(skip: int = 0, limit: int = 100, branch_code: str | N
     neo4j_query = """
         MATCH (a:Account)
         WHERE ($branch_code IS NULL OR a.branch_code = $branch_code)
-        RETURN a.account_id AS account_id, a.entity_id AS entity_id, a.customer_name AS customer_name, a.branch_name AS branch_name, a.branch_code AS branch_code
+        OPTIONAL MATCH (a)-[:FLAGGED_IN]->(al:Alert)
+        RETURN a.account_id AS account_id, a.entity_id AS entity_id, a.customer_name AS customer_name, a.branch_name AS branch_name, a.branch_code AS branch_code, max(coalesce(al.fraud_probability, al.fraud_prob, 0.0)) AS neo4j_prob
         SKIP $skip LIMIT $limit
     """
     neo4j_records = await _run_query(neo4j_query, skip=skip, limit=limit, branch_code=branch_code)
@@ -65,7 +71,8 @@ async def get_all_accounts(skip: int = 0, limit: int = 100, branch_code: str | N
             e.customer_name,
             e.pan_number,
             e.dob,
-            e.address
+            e.address,
+            (SELECT MAX(al.fraud_probability) FROM alerts al WHERE al.account_id = a.account_id) AS pg_prob
         FROM accounts a
         LEFT JOIN account_stats s ON a.account_id = s.account_id
         LEFT JOIN entities e ON a.entity_id = e.entity_id
@@ -89,6 +96,21 @@ async def get_all_accounts(skip: int = 0, limit: int = 100, branch_code: str | N
         acc_id = n_rec["account_id"]
         pg_rec = pg_lookup.get(acc_id, {})
         
+        n_prob = float(n_rec.get("neo4j_prob") or 0.0)
+        p_prob = float(pg_rec.get("pg_prob") or 0.0)
+        prob = max(n_prob, p_prob)
+        is_fraud = pg_rec.get("is_fraud")
+        risk_cat = pg_rec.get("risk_category") or "LOW"
+        
+        if prob > 0.0:
+            risk_score = int(round(prob * 100))
+        elif is_fraud or risk_cat in ("CRITICAL", "HIGH"):
+            risk_score = 92 if risk_cat == "CRITICAL" else 78
+        elif risk_cat == "MEDIUM":
+            risk_score = 55
+        else:
+            risk_score = 15
+
         combined = {
             "account_id": acc_id,
             "entity_id": n_rec["entity_id"],
@@ -107,26 +129,53 @@ async def get_all_accounts(skip: int = 0, limit: int = 100, branch_code: str | N
             "avg_monthly_volume": pg_rec.get("avg_monthly_volume"),
             "volume_30d": pg_rec.get("volume_30d"),
             "txn_count_30d": pg_rec.get("txn_count_30d"),
-            "declared_annual_income": pg_rec.get("declared_annual_income")
+            "declared_annual_income": pg_rec.get("declared_annual_income"),
+            "risk_score": risk_score
         }
         results.append(combined)
 
     return results
 
 @router.get("/transactions")
-async def get_all_transactions(skip: int = 0, limit: int = 100):
+async def get_all_transactions(skip: int = 0, limit: int = 100, branch_code: str | None = None, current_user: dict = Depends(get_current_user)):
     if _get_driver() is None:
         raise HTTPException(status_code=503, detail="Neo4j is not connected")
     
-    neo4j_query = f"""
-        MATCH (s:Account)-[t:{REL_TYPE}]->(r:Account)
-        RETURN 
-            t.txn_id AS txn_id,
-            s.account_id AS sender_id,
-            r.account_id AS receiver_id
-        SKIP $skip LIMIT $limit
-    """
-    neo4j_records = await _run_query(neo4j_query, skip=skip, limit=limit)
+    branch_code = None
+    if current_user["role"] != "Admin":
+        branch_code = current_user.get("branch_code")
+        neo4j_query = f"""
+            MATCH (s:Account)-[t:{REL_TYPE}]->(r:Account)
+            WHERE s.branch_code = $branch_code OR r.branch_code = $branch_code
+            RETURN 
+                t.txn_id AS txn_id,
+                s.account_id AS sender_id,
+                r.account_id AS receiver_id
+            SKIP $skip LIMIT $limit
+        """
+    else:
+        # For Admin, if branch_code is provided via query param, we still want to filter
+        if branch_code:
+            neo4j_query = f"""
+                MATCH (s:Account)-[t:{REL_TYPE}]->(r:Account)
+                WHERE s.branch_code = $branch_code OR r.branch_code = $branch_code
+                RETURN 
+                    t.txn_id AS txn_id,
+                    s.account_id AS sender_id,
+                    r.account_id AS receiver_id
+                SKIP $skip LIMIT $limit
+            """
+        else:
+            neo4j_query = f"""
+                MATCH (s:Account)-[t:{REL_TYPE}]->(r:Account)
+                RETURN 
+                    t.txn_id AS txn_id,
+                    s.account_id AS sender_id,
+                    r.account_id AS receiver_id
+                SKIP $skip LIMIT $limit
+            """
+        
+    neo4j_records = await _run_query(neo4j_query, skip=skip, limit=limit, branch_code=branch_code)
     if not neo4j_records:
         return []
 
@@ -173,7 +222,7 @@ async def get_all_transactions(skip: int = 0, limit: int = 100):
     return results
 
 @router.get("/accounts/{account_id}")
-async def get_account(account_id: str):
+async def get_account(account_id: str, current_user: dict = Depends(get_current_user)):
     pg_query = """
         SELECT 
             a.account_id,
@@ -196,7 +245,8 @@ async def get_account(account_id: str):
             e.customer_name,
             e.pan_number,
             e.dob,
-            e.address
+            e.address,
+            (SELECT MAX(al.fraud_probability) FROM alerts al WHERE al.account_id = a.account_id) AS pg_prob
         FROM accounts a
         LEFT JOIN account_stats s ON a.account_id = s.account_id
         LEFT JOIN entities e ON a.entity_id = e.entity_id
@@ -216,10 +266,26 @@ async def get_account(account_id: str):
     if not pg_record:
         raise HTTPException(status_code=404, detail="Account not found in PostgreSQL")
         
+    if current_user["role"] != "Admin":
+        if pg_record.get("branch_code") != current_user.get("branch_code"):
+            raise HTTPException(status_code=403, detail="You do not have permission to view this account")
+
+    p_prob = float(pg_record.get("pg_prob") or 0.0)
+    is_fraud = pg_record.get("is_fraud")
+    risk_cat = pg_record.get("risk_category") or "LOW"
+    if p_prob > 0.0:
+        pg_record["risk_score"] = int(round(p_prob * 100))
+    elif is_fraud or risk_cat in ("CRITICAL", "HIGH"):
+        pg_record["risk_score"] = 92 if risk_cat == "CRITICAL" else 78
+    elif risk_cat == "MEDIUM":
+        pg_record["risk_score"] = 55
+    else:
+        pg_record["risk_score"] = 15
+
     return pg_record
 
 @router.get("/transactions/{txn_id}")
-async def get_transaction(txn_id: str):
+async def get_transaction(txn_id: str, current_user: dict = Depends(get_current_user)):
     pg_query = """
         SELECT *
         FROM transactions
@@ -237,10 +303,26 @@ async def get_transaction(txn_id: str):
     if not pg_record:
         raise HTTPException(status_code=404, detail="Transaction not found in PostgreSQL")
         
+    # Restrict transactions by branch. A transaction must belong to the user's branch via sender or receiver.
+    if current_user["role"] != "Admin":
+        branch_code = current_user.get("branch_code")
+        # To determine branch, we need to check the accounts involved.
+        # But `transactions` table might not store branch code.
+        # We can query neo4j to verify
+        neo4j_query = f"""
+            MATCH (s:Account)-[t:{REL_TYPE}]->(r:Account)
+            WHERE t.txn_id = $txn_id
+            RETURN s.branch_code AS sender_branch, r.branch_code AS receiver_branch
+        """
+        records = await _run_query(neo4j_query, txn_id=txn_id)
+        if records:
+            if records[0].get("sender_branch") != branch_code and records[0].get("receiver_branch") != branch_code:
+                raise HTTPException(status_code=403, detail="You do not have permission to view this transaction")
+                
     return pg_record
 
 @router.get("/accounts/{account_id}/notes")
-async def get_account_notes(account_id: str):
+async def get_account_notes(account_id: str, current_user: dict = Depends(get_current_user)):
     conn = get_db_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -250,7 +332,7 @@ async def get_account_notes(account_id: str):
         conn.close()
 
 @router.post("/accounts/{account_id}/notes")
-async def add_account_note(account_id: str, note: NoteCreate):
+async def add_account_note(request: Request, account_id: str, note: NoteCreate, current_user: dict = Depends(get_current_user)):
     conn = get_db_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -261,6 +343,16 @@ async def add_account_note(account_id: str, note: NoteCreate):
             """, (account_id, note.author, note.content))
             new_note = cur.fetchone()
         conn.commit()
+        
+        log_system_event(
+            action_type="ACCOUNT_NOTE_ADDED",
+            status="SUCCESS",
+            description=f"Added note to account {account_id}",
+            actor_id=current_user["id"],
+            actor_name=current_user.get("full_name", current_user["username"]),
+            target_id=account_id,
+            request=request
+        )
         return new_note
     finally:
         conn.close()
