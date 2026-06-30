@@ -89,6 +89,7 @@ export function Sidebar() {
               const adminItems = [];
               if (user?.role === "Admin") {
                 adminItems.push({ name: "Branches", href: "/branches", icon: Building2 });
+                adminItems.push({ name: "Audit Logs", href: "/audit-logs", icon: Shield });
               }
               adminItems.push({ name: "User Management", href: "/users", icon: Users });
 

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { BASE } from "@/lib/api";
+import { startRegistration } from "@simplewebauthn/browser";
 
 export function SettingsModal({ open, onOpenChange, user }: { open: boolean, onOpenChange: (open: boolean) => void, user: any }) {
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(user?.two_factor_enabled || false);
@@ -71,6 +72,43 @@ export function SettingsModal({ open, onOpenChange, user }: { open: boolean, onO
     }
   };
 
+  const handleRegisterPasskey = async () => {
+    setLoading(true);
+    try {
+      const token = sessionStorage.getItem("trace-x-token");
+      
+      // 1. Get registration options
+      const optsRes = await fetch(`${BASE}/auth/register/generate`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!optsRes.ok) throw new Error("Failed to generate passkey options");
+      
+      const { options } = await optsRes.json();
+      
+      // 2. Prompt user
+      const attResp = await startRegistration(JSON.parse(options));
+      
+      // 3. Verify
+      const verifyRes = await fetch(`${BASE}/auth/register/verify`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(attResp)
+      });
+      
+      if (!verifyRes.ok) throw new Error("Failed to verify passkey");
+      
+      toast.success("Passkey registered successfully! You can now log in using it.");
+      setTwoFactorEnabled(true);
+    } catch (err: any) {
+      toast.error(err.message || "Passkey registration failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent style={{ backgroundColor: "var(--card)", border: "2px solid var(--border)", borderRadius: 0 }}>
@@ -127,6 +165,18 @@ export function SettingsModal({ open, onOpenChange, user }: { open: boolean, onO
                 )}
               </div>
             )}
+          </div>
+          
+          <div className="space-y-4 p-4 border border-[#2A2F35] bg-[#1A1F27]">
+            <h3 className="text-[12px] font-bold uppercase tracking-widest text-[#a3e635]">Passkey Authentication</h3>
+            <p className="text-sm text-gray-400">Register a Passkey (FaceID, TouchID, or Security Key) for faster, passwordless logins.</p>
+            <Button
+              onClick={handleRegisterPasskey}
+              disabled={loading}
+              className="w-full rounded-none border border-white text-white hover:bg-white hover:text-[#130537] bg-transparent"
+            >
+              Register Passkey
+            </Button>
           </div>
         </div>
       </DialogContent>

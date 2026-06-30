@@ -5,6 +5,7 @@ import { Shield, Lock, User, KeyRound, AlertTriangle, ArrowRight } from "lucide-
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
 import { BASE } from "@/lib/api";
+import { startAuthentication } from "@simplewebauthn/browser";
 
 export default function Login() {
   const [username, setUsername] = useState("");
@@ -35,6 +36,9 @@ export default function Login() {
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
+        if (res.status === 403 && errorData.detail?.includes("Account locked")) {
+          throw new Error(errorData.detail);
+        }
         if (errorData.detail === "2FA code required") {
           setNeeds2FA(true);
           setIsSubmitting(false);
@@ -68,11 +72,77 @@ export default function Login() {
         description: `Welcome back, ${userPayload.role} ${userPayload.name}.`,
       });
       setLocation("/dashboard");
-    } catch (error) {
+    } catch (error: any) {
+      const isLocked = error.message?.includes("Account locked");
+      if (isLocked) {
+        setNeeds2FA(false);
+      }
       toast({
         variant: "destructive",
-        title: "Authentication Failed",
-        description: "Invalid credentials. Unauthorized access is logged.",
+        title: isLocked ? "Account Locked" : "Authentication Failed",
+        description: error.message || "Invalid credentials. Unauthorized access is logged.",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handlePasskeyLogin = async () => {
+    if (!username) {
+      toast({
+        variant: "destructive",
+        title: "Username Required",
+        description: "Please enter your Operator ID first to use a Passkey.",
+      });
+      return;
+    }
+    
+    setIsSubmitting(true);
+    try {
+      // 1. Get auth options from backend
+      const optsRes = await fetch(`${BASE}/auth/authenticate/generate/${encodeURIComponent(username)}`);
+      if (!optsRes.ok) {
+        const errorData = await optsRes.json().catch(() => ({}));
+        throw new Error(errorData.detail || "Failed to generate passkey challenge");
+      }
+      
+      const { options } = await optsRes.json();
+      
+      // 2. Prompt user with biometric auth
+      const authResp = await startAuthentication(JSON.parse(options));
+      
+      // 3. Verify auth response
+      const verifyRes = await fetch(`${BASE}/auth/authenticate/verify/${encodeURIComponent(username)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(authResp)
+      });
+      
+      if (!verifyRes.ok) {
+        const errorData = await verifyRes.json().catch(() => ({}));
+        throw new Error(errorData.detail || "Passkey verification failed");
+      }
+      
+      const data = await verifyRes.json();
+      const userPayload = {
+        id: data.user.id,
+        name: data.user.name,
+        role: data.user.role,
+        username: data.user.username,
+        branchCode: data.user.branch_code
+      };
+
+      login(userPayload, data.access_token);
+      toast({
+        title: "Authentication Successful",
+        description: `Welcome back, ${userPayload.role} ${userPayload.name} (via Passkey).`,
+      });
+      setLocation("/dashboard");
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Passkey Error",
+        description: error.message || "Failed to authenticate with passkey",
       });
     } finally {
       setIsSubmitting(false);
@@ -207,6 +277,15 @@ export default function Login() {
                   <ArrowRight className="h-4 w-4 opacity-100 group-hover:translate-x-1 transition-transform group-hover:text-[#130537] text-[#a3e635]" />
                 </>
               )}
+            </button>
+            
+            <button
+              type="button"
+              onClick={handlePasskeyLogin}
+              disabled={isSubmitting}
+              className="w-full mt-3 bg-transparent text-[#130537] font-bold py-3 px-4 transition-all border border-[#130537] hover:bg-[#130537] hover:text-[#e8e8e2]"
+            >
+              Log in with Passkey (FaceID / TouchID)
             </button>
           </form>
 

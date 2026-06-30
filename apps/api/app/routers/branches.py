@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel
 from psycopg2.extras import RealDictCursor
 from app.core.deps import require_roles
 from app.db.session import get_pg_conn
+from app.core.audit import log_system_event
 
 router = APIRouter(tags=["branches"])
 
@@ -26,6 +27,7 @@ async def get_branches(
 
 @router.post("/branches")
 async def create_branch(
+    request: Request,
     branch_data: BranchCreate,
     current_user: dict = Depends(require_roles(["Admin"])),
     conn = Depends(get_pg_conn)
@@ -41,10 +43,21 @@ async def create_branch(
         )
         new_branch = cur.fetchone()
         conn.commit()
+        
+    log_system_event(
+        action_type="BRANCH_CREATE",
+        status="SUCCESS",
+        description=f"Created branch {branch_data.name} ({branch_data.branch_code})",
+        actor_id=current_user["id"],
+        actor_name=current_user["full_name"],
+        target_id=str(new_branch["id"]),
+        request=request
+    )
     return new_branch
 
 @router.patch("/branches/{branch_id}")
 async def update_branch(
+    request: Request,
     branch_id: int,
     branch_data: BranchUpdate,
     current_user: dict = Depends(require_roles(["Admin"])),
@@ -70,10 +83,21 @@ async def update_branch(
         if not updated_branch:
             raise HTTPException(status_code=404, detail="Branch not found")
         conn.commit()
+        
+    log_system_event(
+        action_type="BRANCH_UPDATE",
+        status="SUCCESS",
+        description=f"Updated branch {branch_id}",
+        actor_id=current_user["id"],
+        actor_name=current_user["full_name"],
+        target_id=str(branch_id),
+        request=request
+    )
     return updated_branch
 
 @router.delete("/branches/{branch_id}")
 async def delete_branch(
+    request: Request,
     branch_id: int,
     current_user: dict = Depends(require_roles(["Admin"])),
     conn = Depends(get_pg_conn)
@@ -88,4 +112,14 @@ async def delete_branch(
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Branch not found")
         conn.commit()
+        
+    log_system_event(
+        action_type="BRANCH_DELETE",
+        status="SUCCESS",
+        description=f"Deleted branch {branch_id}",
+        actor_id=current_user["id"],
+        actor_name=current_user["full_name"],
+        target_id=str(branch_id),
+        request=request
+    )
     return {"message": "Branch deleted successfully"}

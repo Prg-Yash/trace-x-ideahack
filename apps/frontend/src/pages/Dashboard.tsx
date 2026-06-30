@@ -62,6 +62,10 @@ export function DashboardContent() {
     activeAlerts: statsData?.total_flagged || alertsData?.total || 75,
     highRiskAccounts: statsData?.critical_count || (alertsData?.alerts?.filter(a => a.risk_level === "CRITICAL" || a.score >= 0.8).length) || 30,
     dormantActivated: statsData?.dormant_count || (alertsData?.alerts?.filter(a => (a.flagged_for[0] || "").toLowerCase().includes("dorm")).length) || 15,
+    transactionChange: 12.5,
+    alertChange: -5.2,
+    riskChange: 2.1,
+    dormantChange: 15.3
   };
 
   const trend = useMemo(() => {
@@ -148,7 +152,7 @@ export function DashboardContent() {
     id: i + 1,
     accountName: a.customer_name || a.account_id,
     accountNumber: a.account_id,
-    branchName: a.branch_name || "Main Branch",
+    branchName: (a as any).branch_name || "Main Branch",
     riskScore: Math.round(a.score * 100),
     riskLevel: a.risk_level,
     alertCount: 1,
