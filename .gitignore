@@ -1,72 +1,61 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # Dependencies
-node_modules
+node_modules/
 .pnp
 .pnp.js
 
-# Local env files
+# Local env secrets
 .env
 .env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*.local
+*.env
 
-# Testing
-coverage
-
-# Turbo
-.turbo
-.venv
-**/.venv
-# Vercel
-.vercel
-
-#python environment
+# Virtual Environments & Python Caches
 venv/
+.venv/
 **/venv/
+**/.venv/
 __pycache__/
 **/__pycache__/
 *.py[cod]
+*$py.class
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-**/*.egg-info/
+*.egg-info/
 
-# Build Outputs
+# Build & Turborepo Outputs
+.turbo/
+.vercel/
 .next/
 out/
-build
-dist
-
-# TRACE-X generated data and artifacts
-apps/ai-ml/data/accounts.csv
-apps/ai-ml/data/transactions.csv
-apps/ai-ml/data/neo4j/
-apps/ai-ml/data/labels/
-# apps/ai-ml/models/
-# apps/ai-ml/**/*.pt
-# apps/ai-ml/**/*.pkl
-# apps/ai-ml/**/*.npy
-# apps/ai-ml/**/*.json
-# apps/ai-ml/**/*.csv
-
-# Frontend local build artifacts
+build/
+dist/
 apps/frontend/.next/
 apps/frontend/out/
 apps/frontend/build/
 apps/frontend/coverage/
 
-
-# Debug
+# Testing & Logs
+coverage/
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Misc
+# OS & Misc
 .DS_Store
 *.pem
-layering_detection_explanation.md
-model_selection_analysis(1).md
-apps/ai-ml/test_roundtrip.py
-apps/ai-ml/test_layering.py
+
+# TRACE-X Generated Data Files (Large CSV datasets & neo4j graphs)
+apps/ai-ml/data/*.csv
+apps/ai-ml/data/**/*.csv
+apps/ai-ml/data/*.parquet
+apps/ai-ml/data/neo4j/
+apps/ai-ml/data/labels/
+apps/ai-ml/data/processed/
+
+# Note: All Python scripts (*.py), models (*.pkl, *.json), and evaluation scripts
+# (judge_demo_v2.py, evaluate_financial_impact.py, stress_test_noisy_data.py, etc.)
+# are explicitly KEPT in git for judges and team collaboration.

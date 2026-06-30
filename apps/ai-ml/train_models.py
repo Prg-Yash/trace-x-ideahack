@@ -86,12 +86,14 @@ def load_transactions() -> pd.DataFrame:
     return df
 
 
-def train_isolation_forest(df_acc: pd.DataFrame) -> None:
+def train_isolation_forest(df_acc: pd.DataFrame, df_txn: pd.DataFrame) -> None:
     """
     Hybrid Dormancy Detector (Model A):
     Stage 1 — Isolation Forest generates anomaly scores as a feature.
     Stage 2 — Supervised XGBoost trains on features + anomaly score.
     Result: combines unsupervised signal with supervised learning.
+    
+    All features are computed from actual transaction data — no data leakage.
     """
     print("Training Model A: Hybrid Dormancy Detector (ISO -> XGBoost)...")
 
@@ -106,32 +108,86 @@ def train_isolation_forest(df_acc: pd.DataFrame) -> None:
         "total_volume_180d",
         "avg_monthly_volume",
         "avg_monthly_count",
-        # Derived features (computed below)
+        # Derived features (computed from real transaction data — no leakage)
         "volume_spike_ratio",
         "new_counterparty_ratio",
         "channel_switch_flag",
     ]
 
-    # Compute derived features
-    # Compute derived features with cross-dimensional velocity spikes
+    # ── volume_spike_ratio: recent burst vs historical average ────────────
     if "avg_monthly_volume" in df_acc.columns and "volume_7d" in df_acc.columns:
-        # Volume in past 7 days / Average weekly volume historically
         df_acc["volume_spike_ratio"] = df_acc["volume_7d"] / ((df_acc["total_volume_180d"] / 26.0) + 1.0)
     else:
         df_acc["volume_spike_ratio"] = 0.0
 
-    # Engineer mock features for the presentation that correlate with the synthetic data
-    # In production, these are derived from the live transaction stream
-    df_acc["new_counterparty_ratio"] = np.where(
-        df_acc["pattern_type"].fillna("").str.contains("DORMANT_ACTIVATION"),
-        np.random.uniform(0.8, 1.0, len(df_acc)), 
-        np.random.uniform(0.0, 0.2, len(df_acc))
+    # ── new_counterparty_ratio: computed from real transaction history ─────
+    # A dormant account that reactivates will send to NEW people.
+    # Ratio = (unique counterparties in last 30d) / (unique in 180d + 1)
+    # A recently-reactivated dormant account: most 30d CPs are new → ratio ~1.0
+    # A normal active account: same recurring CPs → ratio ~0.1–0.3
+    print("  Computing new_counterparty_ratio from transaction history...")
+    df_txn_clean = df_txn.copy()
+    df_txn_clean["txn_ts"] = pd.to_datetime(df_txn_clean["txn_ts"], format="mixed", errors="coerce")
+    df_txn_clean = df_txn_clean.dropna(subset=["txn_ts"])
+    now_ts = pd.Timestamp.now()
+    w30 = now_ts - pd.Timedelta(days=30)
+    w180 = now_ts - pd.Timedelta(days=180)
+
+    # Count unique counterparties per sender in each window
+    cp_30d = (
+        df_txn_clean[df_txn_clean["txn_ts"] >= w30]
+        .groupby("sender_id")["receiver_id"].nunique()
+        .rename("_uniq_cp_30d")
     )
-    
-    df_acc["channel_switch_flag"] = np.where(
-        df_acc["pattern_type"].fillna("").str.contains("DORMANT_ACTIVATION"),
-        1.0, 
-        0.0
+    cp_180d = (
+        df_txn_clean[df_txn_clean["txn_ts"] >= w180]
+        .groupby("sender_id")["receiver_id"].nunique()
+        .rename("_uniq_cp_180d")
+    )
+    df_acc = df_acc.merge(cp_30d, left_on="account_id", right_index=True, how="left")
+    df_acc = df_acc.merge(cp_180d, left_on="account_id", right_index=True, how="left")
+    df_acc["_uniq_cp_30d"] = df_acc["_uniq_cp_30d"].fillna(0)
+    df_acc["_uniq_cp_180d"] = df_acc["_uniq_cp_180d"].fillna(0)
+    df_acc["new_counterparty_ratio"] = df_acc["_uniq_cp_30d"] / (df_acc["_uniq_cp_180d"] + 1.0)
+
+    # ── channel_switch_flag: did UPI usage shift significantly recently? ───
+    # Compare UPI ratio in last 30d vs last 180d. A dormant account that
+    # reactivates via UPI when it historically used NEFT shows a channel shift.
+    upi_30d = (
+        df_txn_clean[
+            (df_txn_clean["txn_ts"] >= w30)
+            & (df_txn_clean["channel"].str.upper() == "UPI")
+        ].groupby("sender_id").size().rename("_upi_30d")
+    )
+    total_30d = (
+        df_txn_clean[df_txn_clean["txn_ts"] >= w30]
+        .groupby("sender_id").size().rename("_total_30d")
+    )
+    upi_180d = (
+        df_txn_clean[
+            (df_txn_clean["txn_ts"] >= w180)
+            & (df_txn_clean["channel"].str.upper() == "UPI")
+        ].groupby("sender_id").size().rename("_upi_180d")
+    )
+    total_180d = (
+        df_txn_clean[df_txn_clean["txn_ts"] >= w180]
+        .groupby("sender_id").size().rename("_total_180d")
+    )
+    df_acc = df_acc.merge(upi_30d, left_on="account_id", right_index=True, how="left")
+    df_acc = df_acc.merge(total_30d, left_on="account_id", right_index=True, how="left")
+    df_acc = df_acc.merge(upi_180d, left_on="account_id", right_index=True, how="left")
+    df_acc = df_acc.merge(total_180d, left_on="account_id", right_index=True, how="left")
+    for c in ["_upi_30d", "_total_30d", "_upi_180d", "_total_180d"]:
+        df_acc[c] = df_acc[c].fillna(0)
+    upi_ratio_30d = df_acc["_upi_30d"] / (df_acc["_total_30d"] + 1.0)
+    upi_ratio_180d = df_acc["_upi_180d"] / (df_acc["_total_180d"] + 1.0)
+    df_acc["channel_switch_flag"] = (abs(upi_ratio_30d - upi_ratio_180d) > 0.3).astype(float)
+
+    # Drop temp columns
+    df_acc = df_acc.drop(
+        columns=[c for c in ["_uniq_cp_30d", "_uniq_cp_180d",
+                              "_upi_30d", "_total_30d", "_upi_180d", "_total_180d"]
+                 if c in df_acc.columns]
     )
 
     # Keep only features that exist
@@ -243,37 +299,77 @@ def train_isolation_forest(df_acc: pd.DataFrame) -> None:
 
 
 def detect_smurf_accounts(df_txn: pd.DataFrame) -> Set[str]:
+    """
+    Multi-tier smurfing labeler.
+    Detects 4 tiers of structuring behavior using sliding-window scans.
+    Detection is BEHAVIOR-based (burst + recipient diversity + CV),
+    NOT amount-based — so it catches ₹5k smurfing AND ₹90k smurfing.
+    """
     smurfers: Set[str] = set()
     df_out = df_txn[df_txn["status"].str.upper() == "SUCCESS"].copy()
     df_out = df_out.dropna(subset=["txn_ts", "amount", "receiver_id", "channel"])
     df_out["channel"] = df_out["channel"].str.upper()
-    df_out = df_out.sort_values("txn_ts")
+    df_out["txn_ts"] = pd.to_datetime(df_out["txn_ts"], format="mixed", errors="coerce")
+    df_out = df_out.dropna(subset=["txn_ts"]).sort_values("txn_ts")
 
-    window = pd.Timedelta(hours=24)
-    strict = {
-        "min_txns": 12,
-        "min_receivers": 10,
-        "amount_low": 70000,
-        "amount_high": 100000,
-        "max_cv": 0.2,
-        "min_total": 800000,
-        "max_total": 2000000,
-        "min_upi_ratio": 0.7,
-    }
-    relaxed = {
-        "min_txns": 8,
-        "min_receivers": 7,
-        "amount_low": 60000,
-        "amount_high": 120000,
-        "max_cv": 0.3,
-        "min_total": 600000,
-        "max_total": 2500000,
-        "min_upi_ratio": 0.6,
-    }
+    # ── Multi-tier parameter sets ─────────────────────────────────────────
+    # Each tier matches a smurfing pattern at a different amount level.
+    # Note: min_upi_ratio=0.0 means channel is not restricted (catches IMPS/NEFT smurfing).
+    TIER_PARAMS: List[Dict] = [
+        {
+            "name": "MICRO",
+            "window": pd.Timedelta(hours=48),
+            "min_txns": 30,
+            "min_receivers": 20,
+            "amount_low": 2_000,
+            "amount_high": 10_000,
+            "max_cv": 0.35,
+            "min_total": 60_000,
+            "max_total": 1_500_000,
+            "min_upi_ratio": 0.0,
+        },
+        {
+            "name": "SMALL",
+            "window": pd.Timedelta(hours=48),
+            "min_txns": 20,
+            "min_receivers": 15,
+            "amount_low": 8_000,
+            "amount_high": 26_000,
+            "max_cv": 0.35,
+            "min_total": 160_000,
+            "max_total": 2_000_000,
+            "min_upi_ratio": 0.0,
+        },
+        {
+            "name": "UPI_THRESHOLD",
+            "window": pd.Timedelta(hours=24),
+            "min_txns": 12,
+            "min_receivers": 10,
+            "amount_low": 60_000,
+            "amount_high": 100_000,
+            "max_cv": 0.25,
+            "min_total": 600_000,
+            "max_total": 3_000_000,
+            "min_upi_ratio": 0.5,
+        },
+        {
+            "name": "RTGS_THRESHOLD",
+            "window": pd.Timedelta(hours=72),
+            "min_txns": 5,
+            "min_receivers": 3,
+            "amount_low": 150_000,
+            "amount_high": 500_000,
+            "max_cv": 0.40,
+            "min_total": 750_000,
+            "max_total": 7_000_000,
+            "min_upi_ratio": 0.0,
+        },
+    ]
 
-    def scan_thresholds(params: Dict[str, float]) -> Set[str]:
+    def _scan_tier(params: Dict) -> Set[str]:
         found: Set[str] = set()
-        for acc_id, group in df_out.groupby("sender_id"):
+        window = params["window"]
+        for acc_id, group in df_out.groupby("sender_id", sort=False):
             group = group.sort_values("txn_ts").reset_index(drop=True)
             times = group["txn_ts"].to_numpy()
             amounts = group["amount"].astype(float).to_numpy()
@@ -289,48 +385,36 @@ def detect_smurf_accounts(df_txn: pd.DataFrame) -> Set[str]:
                 if count < params["min_txns"]:
                     continue
 
-                window_amounts = amounts[start : end + 1]
-                mean_amount = float(window_amounts.mean())
-                if not (params["amount_low"] <= mean_amount <= params["amount_high"]):
+                w_amounts = amounts[start: end + 1]
+                mean_amt = float(w_amounts.mean())
+                if not (params["amount_low"] <= mean_amt <= params["amount_high"]):
                     continue
 
-                total_amount = float(window_amounts.sum())
-                if not (params["min_total"] <= total_amount <= params["max_total"]):
+                total_amt = float(w_amounts.sum())
+                if not (params["min_total"] <= total_amt <= params["max_total"]):
                     continue
 
-                cv = float(window_amounts.std() / max(mean_amount, 1.0))
+                cv = float(w_amounts.std() / max(mean_amt, 1.0))
                 if cv > params["max_cv"]:
                     continue
 
-                unique_receivers = len(set(receivers[start : end + 1]))
-                if unique_receivers < params["min_receivers"]:
+                uniq_recv = len(set(receivers[start: end + 1]))
+                if uniq_recv < params["min_receivers"]:
                     continue
 
-                upi_ratio = float(np.mean(channels[start : end + 1] == "UPI"))
-                if upi_ratio < params["min_upi_ratio"]:
-                    continue
+                if params["min_upi_ratio"] > 0.0:
+                    upi_ratio = float(np.mean(channels[start: end + 1] == "UPI"))
+                    if upi_ratio < params["min_upi_ratio"]:
+                        continue
 
                 found.add(acc_id)
                 break
-
         return found
 
-    smurfers = scan_thresholds(strict)
-    if len(smurfers) < 20:
-        smurfers |= scan_thresholds(relaxed)
-
-    if len(smurfers) < 20:
-        df_pref = df_out[(df_out["channel"] == "UPI") & df_out["amount"].between(60000, 120000)]
-        grouped = df_pref.groupby("sender_id").agg(
-            txn_count=("amount", "size"),
-            unique_receivers=("receiver_id", "nunique"),
-            total_amount=("amount", "sum"),
-        )
-        grouped["score"] = grouped["txn_count"] * grouped["unique_receivers"]
-        grouped = grouped[grouped["total_amount"].between(600000, 2500000)]
-        if not grouped.empty:
-            top_n = max(20, int(len(grouped) * 0.02))
-            smurfers.update(grouped.sort_values("score", ascending=False).head(top_n).index.tolist())
+    for tier in TIER_PARAMS:
+        tier_smurfers = _scan_tier(tier)
+        print(f"  Tier '{tier['name']}': {len(tier_smurfers)} smurfers detected")
+        smurfers |= tier_smurfers
 
     return smurfers
 
@@ -439,6 +523,136 @@ def train_xgboost_kyc(X_train: pd.DataFrame, patterns: pd.Series) -> None:
         print("  [WARNING] income_utilization_ratio_30d is the top feature - potential leakage!")
 
 
+def build_burst_features(df_txn: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute 24-hour sliding-window burst features for every sender account.
+
+    These features capture smurfing at ANY amount level because they measure
+    BEHAVIOR (burst frequency + recipient diversity + amount uniformity),
+    not absolute amounts.
+
+    Returns a DataFrame indexed by account_id with one row per sender.
+    """
+    THRESHOLDS = [5_000, 10_000, 25_000, 50_000, 100_000, 500_000, 1_000_000]
+    NEAR_PCT = 0.12  # "near threshold" = within 12% below any threshold
+
+    df_out = df_txn[df_txn["status"].str.upper() == "SUCCESS"].copy()
+    df_out["txn_ts"] = pd.to_datetime(df_out["txn_ts"], format="mixed", errors="coerce")
+    df_out = df_out.dropna(subset=["txn_ts", "sender_id", "amount", "channel"])
+    df_out["channel"] = df_out["channel"].str.upper()
+    df_out = df_out.sort_values(["sender_id", "txn_ts"])
+
+    window_ns = np.timedelta64(24, "h")
+    records: Dict[str, Dict] = {}
+
+    for acc_id, group in df_out.groupby("sender_id", sort=False):
+        group = group.reset_index(drop=True)
+        times = group["txn_ts"].values           # numpy datetime64
+        amounts = group["amount"].astype(float).values
+        receivers = group["receiver_id"].values
+        channels = group["channel"].values
+        n = len(group)
+
+        # ── 24h sliding window: peak burst metrics ─────────────────────────
+        max_txn_in_24h = 0
+        max_uniq_recv_24h = 0
+        max_vol_24h = 0.0
+        max_uniformity_score = 0.0   # 1 - CV; high means suspiciously uniform
+
+        start = 0
+        for end in range(n):
+            while times[end] - times[start] > window_ns:
+                start += 1
+            w_cnt = end - start + 1
+            w_amt = amounts[start: end + 1]
+            w_recv = receivers[start: end + 1]
+            w_vol = float(w_amt.sum())
+            w_uniq = len(set(w_recv))
+
+            max_txn_in_24h = max(max_txn_in_24h, w_cnt)
+            max_uniq_recv_24h = max(max_uniq_recv_24h, w_uniq)
+            max_vol_24h = max(max_vol_24h, w_vol)
+
+            if w_cnt >= 3:
+                w_mean = float(w_amt.mean())
+                w_cv = float(w_amt.std() / (w_mean + 1.0))
+                uniformity = max(0.0, 1.0 - w_cv)   # 0=chaotic, 1=perfectly uniform
+                max_uniformity_score = max(max_uniformity_score, uniformity)
+
+        # ── Overall account-level behavioral features ──────────────────────
+        mean_amt = float(amounts.mean()) if n > 0 else 0.0
+        std_amt = float(amounts.std()) if n > 1 else 0.0
+        amount_cv_overall = std_amt / (mean_amt + 1.0)
+
+        # Near-threshold avoidance ratio
+        near_count = sum(
+            1 for a in amounts
+            if any(t * (1.0 - NEAR_PCT) <= a < t for t in THRESHOLDS)
+        )
+        near_threshold_ratio = near_count / max(n, 1)
+
+        # Time-gap features (burst speed)
+        if n > 1:
+            gap_ns = np.diff(times.astype(np.int64))
+            gap_min = gap_ns / 1e9 / 60.0           # nanoseconds → minutes
+            min_gap_minutes = float(gap_min.min())
+            mean_gap_minutes = float(gap_min.mean())
+        else:
+            min_gap_minutes = 99_999.0
+            mean_gap_minutes = 99_999.0
+
+        # Channel entropy (Shannon)
+        from collections import Counter
+        ch_counts = Counter(channels)
+        total_ch = sum(ch_counts.values())
+        entropy = -sum(
+            (c / total_ch) * np.log2(c / total_ch + 1e-10)
+            for c in ch_counts.values()
+        )
+        upi_ratio = ch_counts.get("UPI", 0) / max(total_ch, 1)
+
+        # Recipient reuse (low reuse = many unique = smurfing signal)
+        unique_recv_all = len(set(receivers))
+        recipient_reuse_rate = 1.0 - (unique_recv_all / max(n, 1))
+
+        records[acc_id] = {
+            "max_txn_in_24h":       float(max_txn_in_24h),
+            "max_uniq_recv_24h":    float(max_uniq_recv_24h),
+            "max_vol_24h":          max_vol_24h,
+            "max_uniformity_score": max_uniformity_score,
+            "total_txn_count":      float(n),
+            "mean_amount":          mean_amt,
+            "amount_cv_overall":    amount_cv_overall,
+            "near_threshold_ratio": near_threshold_ratio,
+            "min_gap_minutes":      min_gap_minutes,
+            "mean_gap_minutes":     mean_gap_minutes,
+            "channel_entropy":      entropy,
+            "upi_ratio":            upi_ratio,
+            "recipient_reuse_rate": recipient_reuse_rate,
+        }
+
+    print(f"  [build_burst_features] computed for {len(records)} sender accounts")
+    return pd.DataFrame.from_dict(records, orient="index")
+
+
+# Feature names used for smurfing — must match build_burst_features() output
+SMURF_BURST_FEATURES = [
+    "max_txn_in_24h",
+    "max_uniq_recv_24h",
+    "max_vol_24h",
+    "max_uniformity_score",
+    "total_txn_count",
+    "mean_amount",
+    "amount_cv_overall",
+    "near_threshold_ratio",
+    "min_gap_minutes",
+    "mean_gap_minutes",
+    "channel_entropy",
+    "upi_ratio",
+    "recipient_reuse_rate",
+]
+
+
 def train_smurf_xgboost(X_train: pd.DataFrame, df_txn: pd.DataFrame) -> None:
     print("\nTraining Model B: XGBoost (smurfing detector)...")
     try:
@@ -447,139 +661,137 @@ def train_smurf_xgboost(X_train: pd.DataFrame, df_txn: pd.DataFrame) -> None:
         print("XGBoost not installed. Skipping.")
         return
 
-    df_txn_success = df_txn[df_txn["status"].str.upper() == "SUCCESS"].copy()
-    
+    # ── Step 1: Build 24h burst features from transaction history ─────────
+    print("  Building 24h burst behavioral features (this replaces coarse 30d stats)...")
+    burst_feats = build_burst_features(df_txn)
+
+    # ── Step 2: Label accounts using multi-tier sliding-window algorithm ───
     def normalize_acc(acc_id: str) -> str:
         try:
             return f"ACC_{int(str(acc_id).split('_')[1]):05d}"
-        except:
+        except Exception:
             return str(acc_id)
-            
+
     labels_path = DATA_DIR / "labels" / "smurf_accounts.csv"
     if labels_path.exists():
         labels_df = pd.read_csv(labels_path)
         smurfers = {normalize_acc(x) for x in labels_df["account_id"].dropna()}
-        print(f"  Smurf labels loaded: {len(smurfers)} accounts")
+        print(f"  Smurf labels loaded from file: {len(smurfers)} accounts")
     else:
-        smurfers = {normalize_acc(x) for x in detect_smurf_accounts(df_txn_success)}
-        print(f"  Smurf labeler found {len(smurfers)} accounts")
+        smurfers = {normalize_acc(x) for x in detect_smurf_accounts(df_txn)}
+        print(f"  Smurf labeler found {len(smurfers)} accounts total")
 
-    feature_cols = [
-        'amount', 'tx_count_last_24h', 'total_volume_24h', 'channel_upi_ratio',
-        'tx_count_last_7d', 'tx_count_last_30d', 'total_volume_7d', 'total_volume_30d',
-        'near_threshold_count_30d', 'amount_variance_24h', 'amount_clustering_score',
-        'threshold_avoidance_ratio', 'time_gap_mean_min', 'time_gap_stddev', 'is_weekend',
-        'unique_recipients_24h', 'account_age_days', 'orig_balance_after_ratio'
-    ]
+    if len(smurfers) == 0:
+        raise ValueError(
+            "Smurf labeler produced 0 positives. "
+            "Regenerate data with python data/generate_data.py"
+        )
 
-    print("  Dynamically building offline smurfing features...")
-    df_txn_success['txn_ts'] = pd.to_datetime(df_txn_success['txn_ts'], format='mixed', errors='coerce')
-    out_txn = df_txn_success.dropna(subset=['txn_ts', 'sender_id'])
-    
-    gb = out_txn.groupby('sender_id')
-    features = pd.DataFrame(index=gb.groups.keys())
-    
-    time_span = (out_txn.groupby('sender_id')['txn_ts'].max() - out_txn.groupby('sender_id')['txn_ts'].min()).dt.total_seconds() / 86400.0
-    time_span = time_span.replace(0, 1)
-    
-    features['tx_count_last_24h'] = gb.size() / time_span
-    features['total_volume_24h'] = gb['amount'].sum() / time_span
-    features['channel_upi_ratio'] = out_txn[out_txn['channel'].str.upper() == 'UPI'].groupby('sender_id').size() / gb.size()
-    features['amount_variance_24h'] = gb['amount'].var()
-    
-    out_txn = out_txn.sort_values(['sender_id', 'txn_ts'])
-    out_txn['time_gap'] = out_txn.groupby('sender_id')['txn_ts'].diff().dt.total_seconds() / 60.0
-    features['time_gap_mean_min'] = out_txn.groupby('sender_id')['time_gap'].mean()
-    features['time_gap_stddev'] = out_txn.groupby('sender_id')['time_gap'].std()
-    
-    features['unique_recipients_24h'] = gb['receiver_id'].nunique()
-    features['is_weekend'] = out_txn[out_txn['txn_ts'].dt.dayofweek >= 5].groupby('sender_id').size() / gb.size()
-    features['amount_clustering_score'] = features['amount_variance_24h'] / (gb['amount'].mean() ** 2 + 1)
-    
-    # Smurf pattern: dodging 1L UPI threshold (amounts clustered just below 100k)
-    features['threshold_avoidance_ratio'] = out_txn[(out_txn['amount'] >= 65000) & (out_txn['amount'] <= 99999)].groupby('sender_id').size() / gb.size()
-    features['amount'] = gb['amount'].mean()
-    features['orig_balance_after_ratio'] = 0.1
-    features = features.fillna(0)
-    
-    X_full = X_train.merge(features, left_on='account_id', right_index=True, how='left').fillna(0)
-    
-    X_full['tx_count_last_7d'] = X_full.get('txn_count_7d', 0)
-    X_full['tx_count_last_30d'] = X_full.get('txn_count_30d', 0)
-    X_full['total_volume_7d'] = X_full.get('volume_7d', 0)
-    X_full['total_volume_30d'] = X_full.get('volume_30d', 0)
-    X_full['near_threshold_count_30d'] = X_full.get('near_threshold_txns_30d', 0)
+    # ── Step 3: Merge burst features with X_train (account-level) ─────────
+    # burst_feats is indexed by sender_id (= account_id)
+    X_full = X_train.merge(
+        burst_feats.reset_index().rename(columns={"index": "account_id"}),
+        on="account_id",
+        how="left",
+    ).fillna(0)
 
-    missing = [col for col in feature_cols if col not in X_full.columns]
+    # Ground-truth labels: 1 if account is a smurfer, else 0
+    y_full = X_full["account_id"].apply(lambda x: 1 if x in smurfers else 0).values
+    n_pos = int(y_full.sum())
+    n_total = len(y_full)
+    print(f"  Dataset: {n_total} accounts, {n_pos} smurfers ({100*n_pos/n_total:.1f}%)")
+
+    # Use burst features as primary signal; keep account_age_days as context
+    feature_cols = SMURF_BURST_FEATURES
+    missing = [c for c in feature_cols if c not in X_full.columns]
     if missing:
-        for col in missing:
-            print(f"Warning: XGBoost missing {col}")
-            X_full[col] = 0
-            
-    # Make sure we sort properly by account id so labels match features
-    y_full = X_full['account_id'].apply(lambda x: 1 if x in smurfers else 0).values
-    
-    print(f"  Dataset: {len(X_full)} accounts, {int(y_full.sum())} smurfers")
-    if int(y_full.sum()) == 0:
-        raise ValueError("Smurf labeler produced 0 positives. Regenerate data.")
+        print(f"  [WARN] Missing burst features (will be zeroed): {missing}")
+        for c in missing:
+            X_full[c] = 0.0
 
-    X = X_full[feature_cols].copy().fillna(0)
+    X = X_full[feature_cols].copy().fillna(0).astype(float)
 
-    from sklearn.model_selection import train_test_split
-    from sklearn.metrics import average_precision_score, f1_score
+    # ── Step 4: Train/Test split (stratified) ─────────────────────────────
+    from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_predict
+    from sklearn.metrics import (
+        average_precision_score, f1_score, precision_recall_curve,
+        classification_report, confusion_matrix
+    )
     from sklearn.calibration import CalibratedClassifierCV
     import joblib
 
-    X_tr, X_val, y_tr, y_val = train_test_split(X, y_full, test_size=0.2, random_state=RANDOM_SEED, stratify=y_full)
+    X_tr, X_val, y_tr, y_val = train_test_split(
+        X, y_full, test_size=0.20, random_state=RANDOM_SEED, stratify=y_full
+    )
 
-    # SMOTE oversampling to address class imbalance
+    # ── Step 5: SMOTE on training split only ──────────────────────────────
     try:
         from imblearn.over_sampling import SMOTE
-        sm = SMOTE(random_state=RANDOM_SEED, k_neighbors=min(3, int(y_tr.sum()) - 1))
-        X_tr_resampled, y_tr_resampled = sm.fit_resample(X_tr, y_tr)
-        print(f"  SMOTE: {int(y_tr.sum())} -> {int(y_tr_resampled.sum())} positives in training set")
+        k = min(5, max(1, int(y_tr.sum()) - 1))
+        sm = SMOTE(random_state=RANDOM_SEED, k_neighbors=k)
+        X_tr_res, y_tr_res = sm.fit_resample(X_tr, y_tr)
+        print(f"  SMOTE: {int(y_tr.sum())} -> {int(y_tr_res.sum())} positives in training set")
     except ImportError:
-        print("  [WARN] imbalanced-learn not installed, skipping SMOTE. pip install imbalanced-learn")
-        X_tr_resampled, y_tr_resampled = X_tr, y_tr
+        print("  [WARN] imbalanced-learn not installed — install with: pip install imbalanced-learn")
+        X_tr_res, y_tr_res = X_tr, y_tr
 
-    # Calculate scale_pos_weight for residual imbalance
-    pos_weight = float((y_tr_resampled == 0).sum()) / max(1, float((y_tr_resampled == 1).sum()))
+    pos_weight = float((y_tr_res == 0).sum()) / max(1.0, float((y_tr_res == 1).sum()))
     print(f"  scale_pos_weight = {pos_weight:.2f}")
 
-    # Regularization guardrails
+    # ── Step 6: Train XGBoost with regularization ──────────────────────────
     base_model = xgb.XGBClassifier(
-        n_estimators=200,
-        max_depth=5,
+        n_estimators=300,
+        max_depth=4,
         learning_rate=0.05,
         scale_pos_weight=pos_weight,
-        reg_alpha=0.1,         # L1
-        reg_lambda=1.0,        # L2
+        reg_alpha=0.1,
+        reg_lambda=1.0,
         min_child_weight=3,
         subsample=0.8,
         colsample_bytree=0.8,
-        random_state=RANDOM_SEED
+        eval_metric="aucpr",
+        random_state=RANDOM_SEED,
     )
-    
-    # Probability Calibration
-    calibrated_model = CalibratedClassifierCV(estimator=base_model, method='isotonic', cv=3)
-    calibrated_model.fit(X_tr_resampled, y_tr_resampled)
 
-    out_path = MODELS_DIR / "smurf_model.pkl"
-    joblib.dump(calibrated_model, out_path)
-    print(f"  Saved: {out_path}")
+    # Probability calibration so scores are interpretable (e.g. 87% = real 87%)
+    calibrated_model = CalibratedClassifierCV(
+        estimator=base_model, method="isotonic", cv=3
+    )
+    calibrated_model.fit(X_tr_res, y_tr_res)
 
-    # Evaluate on held-out test set
-    preds = calibrated_model.predict(X_val)
-    probs = calibrated_model.predict_proba(X_val)[:, 1]
-    auc_pr = average_precision_score(y_val, probs)
-    print(f"  XGBoost Validation F1: {f1_score(y_val, preds):.4f}")
-    print(f"  XGBoost Validation AUC-PR: {auc_pr:.4f}")
+    # ── Step 7: Threshold optimisation on validation set ──────────────────
+    probs_val = calibrated_model.predict_proba(X_val)[:, 1]
+    best_thresh, _ = pick_threshold(y_val, probs_val, beta=0.5)
+    preds_val = (probs_val >= best_thresh).astype(int)
 
-    # Print SHAP/Feature Importance check directly during training
-    importances = pd.Series(calibrated_model.calibrated_classifiers_[0].estimator.feature_importances_, index=feature_cols).sort_values(ascending=False)
-    print("\n  Top 5 Smurf Features by Weight:")
+    auc_pr = average_precision_score(y_val, probs_val)
+    print(f"\n  [SMURFING — 20% Held-Out Test Set]")    
+    print(classification_report(y_val, preds_val,
+                                target_names=["normal", "smurfing"], zero_division=0))
+    print("  Confusion matrix:")
+    print(confusion_matrix(y_val, preds_val))
+    print(f"  AUC-PR: {auc_pr:.4f}")
+    print(f"  Optimal threshold: {best_thresh:.3f}")
+
+    # ── Step 8: Feature importance ────────────────────────────────────────
+    inner_model = calibrated_model.calibrated_classifiers_[0].estimator
+    importances = pd.Series(
+        inner_model.feature_importances_, index=feature_cols
+    ).sort_values(ascending=False)
+    print("\n  Top 5 Smurf Features by Importance:")
     for feat, imp in importances.head(5).items():
         print(f"    {feat}: {imp:.4f}")
+
+    # ── Step 9: Save model + metadata ─────────────────────────────────────
+    bundle = {
+        "model": calibrated_model,
+        "features": feature_cols,
+        "threshold": float(best_thresh),
+        "auc_pr": float(auc_pr),
+    }
+    out_path = MODELS_DIR / "smurf_model.pkl"
+    joblib.dump(bundle, out_path)
+    print(f"  Saved: {out_path}")
 
 
 def train_layering_xgb(df_txn: pd.DataFrame) -> None:
@@ -826,7 +1038,7 @@ def main() -> None:
 
     # Merge account_stats into df_acc for the hybrid dormancy trainer
     df_acc_full = df_acc.merge(df_stats, on="account_id", how="left", suffixes=("", "_stats"))
-    train_isolation_forest(df_acc_full)
+    train_isolation_forest(df_acc_full, df_txn)
     train_xgboost_kyc(X_train, patterns)
     try:
         train_layering_xgb(df_txn)

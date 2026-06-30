@@ -352,33 +352,103 @@ def main() -> None:
         generate_legitimate_chain((50000, 500000), True)
         generate_legitimate_chain((100000, 2000000), True)
 
-    # Pattern 3: Smurfing (Proper amounts just below 10L threshold)
-    for _ in range(smurf_clusters):
-        master = random.choice(acc_ids)
-        receivers = random.sample([a for a in acc_ids if a != master], random.randint(15, 25))
-        base_time = datetime.now() - timedelta(days=random.randint(1, 30))
-        all_accs = [master] + receivers
-        max_opened = max([account_opened[a] for a in all_accs])
-        if base_time < max_opened: base_time = max_opened + timedelta(days=1)
-        if base_time > datetime.now(): base_time = datetime.now() - timedelta(minutes=60)
-        
-        fraud_accounts.add(master)
-        account_balances[master] += sum([99000 for _ in receivers])
-        pattern_labels[master].add("SMURFING")
-        for recv in receivers:
-            fraud_accounts.add(recv)
-            pattern_labels[recv].add("SMURFING")
-            # Amount between 70k-99k (just below 1L UPI threshold, inside detector window 60k-120k)
-            smurf_amount = random.gauss(85000, 8000)
-            smurf_amount = max(65000, min(smurf_amount, 99000))
-            transactions.append(
-                make_txn(
-                    counter, txn_width, master, recv, smurf_amount,
-                    "UPI",  # Smurfing uses UPI — detector requires min_upi_ratio >= 0.7
-                    base_time + timedelta(minutes=random.randint(1, 90)),
-                    "SUCCESS", "split transfer", True, "SMURFING"
+    # Pattern 3: Multi-Tier Smurfing
+    # Smurfing = behavioral pattern (burst + recipient diversity), NOT specific amounts.
+    # Real criminals structure transactions at MULTIPLE threshold levels.
+    # Each tier avoids a different financial reporting/monitoring threshold.
+    SMURF_TIERS = [
+        # (tier_label, amount_mean, amount_std, amount_min, amount_max,
+        #  channels, n_recv_min, n_recv_max, time_window_hours, narrations)
+        (
+            "MICRO",          # Avoids ₹10,000 cash reporting / UPI informal threshold
+            5000, 1500, 2000, 8999,
+            ["IMPS", "UPI"],
+            50, 120,
+            48,
+            ["personal transfer", "family support", "daily allowance", "misc payment"]
+        ),
+        (
+            "SMALL",          # Mid-tier structuring, avoids ₹25k NEFT attention
+            16000, 4000, 8000, 24999,
+            ["IMPS", "NEFT", "UPI"],
+            25, 70,
+            48,
+            ["vendor payment", "freelance fee", "part payment", "service charge"]
+        ),
+        (
+            "UPI_THRESHOLD",  # Classic UPI threshold avoidance (below ₹1L)
+            83000, 9000, 65000, 99000,
+            ["UPI"],
+            15, 30,
+            24,
+            ["split transfer", "goods payment", "settlement", "trade payment"]
+        ),
+        (
+            "RTGS_THRESHOLD", # Avoids ₹5L RTGS / large-value reporting threshold
+            340000, 80000, 180000, 490000,
+            ["RTGS", "NEFT", "WIRE"],
+            5, 14,
+            72,
+            ["business settlement", "bulk payment", "project advance", "inter-firm transfer"]
+        ),
+    ]
+
+    # Distribute smurf_clusters across all 4 tiers proportionally
+    # More clusters for lower tiers (harder to detect = more common in practice)
+    tier_weights = [0.30, 0.30, 0.25, 0.15]
+    tier_counts = [max(1, int(smurf_clusters * w)) for w in tier_weights]
+    # Correct rounding so total = smurf_clusters
+    tier_counts[-1] = smurf_clusters - sum(tier_counts[:-1])
+
+    for (tier_label, amt_mean, amt_std, amt_min, amt_max,
+         channels, n_recv_min, n_recv_max, window_hours, narrations), n_clusters \
+            in zip(SMURF_TIERS, tier_counts):
+
+        for _ in range(n_clusters):
+            master = random.choice(acc_ids)
+            n_receivers = random.randint(n_recv_min, n_recv_max)
+            receivers = random.sample([a for a in acc_ids if a != master], n_receivers)
+
+            # Spread transactions over the window — NOT all at the same minute
+            base_time = datetime.now() - timedelta(days=random.randint(1, 25))
+            all_accs = [master] + receivers
+            max_opened = max(account_opened[a] for a in all_accs)
+            if base_time < max_opened:
+                base_time = max_opened + timedelta(days=1)
+            if base_time > datetime.now():
+                base_time = datetime.now() - timedelta(hours=window_hours + 1)
+
+            fraud_accounts.add(master)
+            pattern_labels[master].add("SMURFING")
+
+            for recv in receivers:
+                fraud_accounts.add(recv)
+                pattern_labels[recv].add("SMURFING")
+
+                # Amount: Gaussian around mean, clipped to [min, max]
+                smurf_amount = random.gauss(amt_mean, amt_std)
+                smurf_amount = max(amt_min, min(smurf_amount, amt_max))
+                account_balances[master] = max(account_balances.get(master, 0), 0) + smurf_amount
+
+                # Channel: pick randomly from tier's allowed channels
+                channel = random.choice(channels)
+
+                # Timestamp: random spread within the window
+                # Add slight clustering (real smurfs burst in sub-windows)
+                minutes_offset = random.uniform(1, window_hours * 60)
+                txn_time = base_time + timedelta(minutes=minutes_offset)
+
+                transactions.append(
+                    make_txn(
+                        counter, txn_width, master, recv,
+                        round(smurf_amount, 2),
+                        channel,
+                        txn_time,
+                        "SUCCESS",
+                        random.choice(narrations),
+                        True, "SMURFING"
+                    )
                 )
-            )
 
     # Pattern 4: Dormant Activation
     dormant_targets = list(dormant_candidates)[:dormant_activations]
