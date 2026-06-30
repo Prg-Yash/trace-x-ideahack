@@ -6,7 +6,7 @@ import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle, Search, X, Clock, User,
-  ChevronRight, ChevronDown, CheckCircle2, Network, Shield, Activity,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, CheckCircle2, Network, Shield, Activity,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -105,6 +105,8 @@ function DrawerSectionLabel({ children }: { children: ReactNode }) {
   );
 }
 
+const statusOptions = ["NEW", "OPEN", "INVESTIGATING", "CLOSED_FALSE_POSITIVE", "CLOSED_TRUE_POSITIVE"];
+
 export default function Alerts() {
   const [, navigate] = useLocation();
   const { setInvestigation } = useInvestigation();
@@ -115,7 +117,6 @@ export default function Alerts() {
   const [selectedAssignee, setSelectedAssignee] = useState<string>("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showTimeline, setShowTimeline] = useState(false);
-
   const { user } = useAuth();
   const [viewMode, setViewMode] = useState<"ALL" | "MY_CASES">("ALL");
   const [, setTick] = useState(0);
@@ -132,6 +133,15 @@ export default function Alerts() {
   useEffect(() => {
     // Audit log sync removed, using API polling or refetch on action
   }, []);
+
+  const [statusOverrides, setStatusOverrides] = useState<Record<number, string>>({});
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, severity, status, pageSize]);
+
 
   const [optimisticAlerts, setOptimisticAlerts] = useState<Alert[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
@@ -284,6 +294,14 @@ export default function Alerts() {
   });
 
   const alerts = filteredAlerts;
+  const totalPages = Math.max(1, Math.ceil(alerts.length / pageSize));
+  const effectivePage = Math.min(currentPage, totalPages);
+
+  const paginatedAlerts = useMemo(() => {
+    const start = (effectivePage - 1) * pageSize;
+    return alerts.slice(start, start + pageSize);
+  }, [alerts, effectivePage, pageSize]);
+
   const alertDetail = selectedId ? mergedAlerts.find(a => a.id === selectedId) : null;
   const { data: liveTrace } = useTrace(alertDetail?.rawAccountId || alertDetail?.alertId || null);
   const timeline = useMemo(() => {
@@ -419,7 +437,7 @@ export default function Alerts() {
 
           {(severity || status !== "ALL" || search || viewMode !== "ALL") && (
             <button
-              onClick={() => { setSeverity(""); setStatus("ALL"); setSearch(""); setViewMode("ALL"); }}
+              onClick={() => { setSeverity(""); setStatus("ALL"); setSearch(""); setViewMode("ALL"); setCurrentPage(1); }}
               className="flex items-center gap-1 px-3 h-9 text-[12px] font-bold uppercase tracking-widest transition-colors"
               style={{ border: "2px solid var(--border)", color: "rgba(19, 5, 55, 0.5)", backgroundColor: "transparent" }}
               onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "#a3e635"; (e.currentTarget as HTMLButtonElement).style.color = "#a3e635"; }}
@@ -484,7 +502,7 @@ export default function Alerts() {
                     </td>
                   </tr>
                 ) : (
-                  alerts.map((alert: any, i) => {
+                  paginatedAlerts.map((alert: any, i) => {
                     const s = SEV[alert.severity];
                     const alertStatus = alert.status || "NEW";
                     const alertAssignedTo = alert.assignedTo || null;
@@ -555,6 +573,174 @@ export default function Alerts() {
               </tbody>
             </table>
           </div>
+
+          {/* ── PAGINATION CONTROLS ── */}
+          {!alertsLoading && alerts.length > 0 && (
+            <div
+              className="flex flex-col sm:flex-row items-center justify-between px-5 py-4 gap-4"
+              style={{
+                borderTop: "2px solid var(--border)",
+                backgroundColor: "rgba(19, 5, 55, 0.015)",
+              }}
+            >
+              <div className="flex items-center gap-2 text-[11px] font-mono font-semibold" style={{ color: "rgba(19, 5, 55, 0.6)" }}>
+                <span>SHOWING</span>
+                <span className="px-1.5 py-0.5 bg-[#a3e635]/20 text-[#130537] font-black border border-[#a3e635]/50">
+                  {(effectivePage - 1) * pageSize + 1}
+                </span>
+                <span>TO</span>
+                <span className="px-1.5 py-0.5 bg-[#a3e635]/20 text-[#130537] font-black border border-[#a3e635]/50">
+                  {Math.min(effectivePage * pageSize, alerts.length)}
+                </span>
+                <span>OF</span>
+                <span className="font-black text-[12px]" style={{ color: "var(--foreground)" }}>
+                  {alerts.length}
+                </span>
+                <span className="uppercase tracking-wider">ALERTS</span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "rgba(19, 5, 55, 0.45)" }}>
+                    Rows per page:
+                  </span>
+                  <Select
+                    value={String(pageSize)}
+                    onValueChange={(val) => {
+                      setPageSize(Number(val));
+                      setCurrentPage(1);
+                    }}
+                  >
+                    <SelectTrigger
+                      className="h-8 w-20 text-[11px] font-mono font-bold rounded-none"
+                      style={{
+                        backgroundColor: "var(--card)",
+                        border: "2px solid var(--border)",
+                        color: "var(--foreground)",
+                      }}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="15">15</SelectItem>
+                      <SelectItem value="25">25</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    disabled={effectivePage === 1}
+                    onClick={() => setCurrentPage(1)}
+                    className="h-8 w-8 rounded-none border-2 disabled:opacity-30 transition-all"
+                    style={{
+                      borderColor: "var(--border)",
+                      backgroundColor: effectivePage === 1 ? "rgba(19, 5, 55, 0.05)" : "var(--card)",
+                    }}
+                    title="First Page"
+                  >
+                    <ChevronsLeft className="h-3.5 w-3.5" />
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    disabled={effectivePage === 1}
+                    onClick={() => setCurrentPage(effectivePage - 1)}
+                    className="h-8 w-8 rounded-none border-2 disabled:opacity-30 transition-all"
+                    style={{
+                      borderColor: "var(--border)",
+                      backgroundColor: effectivePage === 1 ? "rgba(19, 5, 55, 0.05)" : "var(--card)",
+                    }}
+                    title="Previous Page"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </Button>
+
+                  {(() => {
+                    const pages: (number | string)[] = [];
+                    if (totalPages <= 5) {
+                      for (let p = 1; p <= totalPages; p++) pages.push(p);
+                    } else {
+                      if (effectivePage <= 3) {
+                        pages.push(1, 2, 3, 4, "...", totalPages);
+                      } else if (effectivePage >= totalPages - 2) {
+                        pages.push(1, "...", totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
+                      } else {
+                        pages.push(1, "...", effectivePage - 1, effectivePage, effectivePage + 1, "...", totalPages);
+                      }
+                    }
+
+                    return pages.map((p, idx) => {
+                      if (p === "...") {
+                        return (
+                          <span
+                            key={`ellipsis-${idx}`}
+                            className="h-8 w-8 flex items-center justify-center font-mono text-[11px] font-bold"
+                            style={{ color: "rgba(19, 5, 55, 0.4)" }}
+                          >
+                            •••
+                          </span>
+                        );
+                      }
+                      const pageNum = p as number;
+                      const isCurrent = pageNum === effectivePage;
+                      return (
+                        <button
+                          key={pageNum}
+                          type="button"
+                          onClick={() => setCurrentPage(pageNum)}
+                          className="h-8 min-w-[32px] px-2 text-[11px] font-mono font-black transition-all"
+                          style={{
+                            border: isCurrent ? "2px solid #130537" : "2px solid var(--border)",
+                            backgroundColor: isCurrent ? "#a3e635" : "var(--card)",
+                            color: isCurrent ? "#130537" : "var(--foreground)",
+                            boxShadow: isCurrent ? "2px 2px 0px #130537" : "none",
+                          }}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    });
+                  })()}
+
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    disabled={effectivePage === totalPages}
+                    onClick={() => setCurrentPage(effectivePage + 1)}
+                    className="h-8 w-8 rounded-none border-2 disabled:opacity-30 transition-all"
+                    style={{
+                      borderColor: "var(--border)",
+                      backgroundColor: effectivePage === totalPages ? "rgba(19, 5, 55, 0.05)" : "var(--card)",
+                    }}
+                    title="Next Page"
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    disabled={effectivePage === totalPages}
+                    onClick={() => setCurrentPage(totalPages)}
+                    className="h-8 w-8 rounded-none border-2 disabled:opacity-30 transition-all"
+                    style={{
+                      borderColor: "var(--border)",
+                      backgroundColor: effectivePage === totalPages ? "rgba(19, 5, 55, 0.05)" : "var(--card)",
+                    }}
+                    title="Last Page"
+                  >
+                    <ChevronsRight className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </motion.div >
 
@@ -575,6 +761,7 @@ export default function Alerts() {
               const s = SEV[alertDetail.severity];
               const alertStatus = alertDetail.status || "NEW";
               const alertAssignedTo = alertDetail.assignee || null;
+              const effectiveStatus = statusOverrides[alertDetail.id] || alertStatus;
 
               return (
                 <div className="flex flex-col min-h-full">
@@ -707,145 +894,6 @@ export default function Alerts() {
                         </div>
                       )}
 
-                      <Button
-                        onClick={() => handleStartInvestigation(alertDetail.id)}
-                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
-                        style={{
-                          backgroundColor: DRAWER.accent,
-                          color: DRAWER.accentDark,
-                          border: `1px solid ${DRAWER.accentDark}`,
-                          boxShadow: `3px 3px 0px ${DRAWER.accentDark}`,
-                        }}
-                      >
-                        <Network className="h-3.5 w-3.5 mr-2" />
-                        Start Investigation
-                      </Button>
-
-                      <Button
-                        onClick={() => { setDrawerOpen(false); navigate(`/evidence?account=${alertDetail.accountId}&alertId=${alertDetail.alertId}`); }}
-                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105 mt-3"
-                        style={{
-                          backgroundColor: "#130537",
-                          color: "#e8e8e2",
-                          border: `1px solid #a3e635`,
-                          boxShadow: `3px 3px 0px #a3e635`,
-                        }}
-                      >
-                        <Shield className="h-3.5 w-3.5 mr-2 text-[#a3e635]" />
-                        Escalate to FIU Evidence Case
-                      </Button>
-                    </section>
-
-                    {/* ── Related Transactions ── */}
-                    {relatedTransactions.length > 0 && (
-                      <>
-                        <DrawerDivider />
-                        <section className="py-6">
-                          <DrawerSectionLabel>{`// Related Transactions`}</DrawerSectionLabel>
-                          <div className="space-y-2">
-                            {relatedTransactions.slice(0, 5).map((txn) => (
-                              <div
-                                key={txn.id}
-                                className="px-3.5 py-3 flex justify-between items-start gap-3"
-                                style={{
-                                  backgroundColor: DRAWER.surface,
-                                  border: `1px solid ${DRAWER.border}`,
-                                }}
-                              >
-                                <div className="min-w-0">
-                                  <p
-                                    className="font-mono text-[10px] font-semibold mb-1 tracking-wide"
-                                    style={{ color: DRAWER.accent }}
-                                  >
-                                    {txn.txnId}
-                                  </p>
-                                  <p
-                                    className="text-[11px] truncate"
-                                    style={{ color: DRAWER.textMuted }}
-                                  >
-                                    {txn.fromAccount} → {txn.toAccount}
-                                  </p>
-                                </div>
-                                <div className="text-right shrink-0">
-                                  <p
-                                    className="font-black text-[13px] tabular-nums font-mono"
-                                    style={{ color: DRAWER.text }}
-                                  >
-                                    ₹{txn.amount.toLocaleString()}
-                                  </p>
-                                  <p className="text-[10px] mt-0.5" style={{ color: DRAWER.textMuted }}>
-                                    {txn.txnType}
-                                  </p>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </section>
-                      </>
-                    )}
-
-                    <DrawerDivider />
-
-                    {/* ── Description ── */}
-                    {alertDetail.description && (
-                      <>
-                        <section className="py-6">
-                          <DrawerSectionLabel>{`// Description`}</DrawerSectionLabel>
-                          <p
-                            className="text-[13px] leading-relaxed"
-                            style={{ color: "rgba(232,232,226,0.82)" }}
-                          >
-                            {alertDetail.description}
-                          </p>
-                        </section>
-                        <DrawerDivider />
-                      </>
-                    )}
-
-                    {/* ── Actions ── */}
-                    <section className="py-6 space-y-5">
-                      <Button
-                        onClick={() => handleStartInvestigation(alertDetail.id)}
-                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
-                        style={{
-                          backgroundColor: DRAWER.accent,
-                          color: DRAWER.accentDark,
-                          border: `1px solid ${DRAWER.accentDark}`,
-                          boxShadow: `3px 3px 0px ${DRAWER.accentDark}`,
-                        }}
-                      >
-                        <Network className="h-3.5 w-3.5 mr-2" />
-                        Start Investigation
-                      </Button>
-
-                      <Button
-                        onClick={() => handleVisualizeTransaction(alertDetail.id)}
-                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
-                        style={{
-                          backgroundColor: DRAWER.surface,
-                          color: DRAWER.accent,
-                          border: `1px solid ${DRAWER.accent}`,
-                          boxShadow: `3px 3px 0px rgba(163,230,53,0.25)`,
-                        }}
-                      >
-                        <Activity className="h-3.5 w-3.5 mr-2" />
-                        Visualize Transaction
-                      </Button>
-
-                      <Button
-                        onClick={() => { setDrawerOpen(false); navigate(`/evidence?account=${alertDetail.accountId}`); }}
-                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105 mt-3"
-                        style={{
-                          backgroundColor: "#130537",
-                          color: "#e8e8e2",
-                          border: `1px solid #a3e635`,
-                          boxShadow: `3px 3px 0px #a3e635`,
-                        }}
-                      >
-                        <Shield className="h-3.5 w-3.5 mr-2 text-[#a3e635]" />
-                        Escalate to FIU Evidence Case
-                      </Button>
-
                       <div>
                         <DrawerSectionLabel>{`// Update Status`}</DrawerSectionLabel>
                         <div
@@ -875,6 +923,48 @@ export default function Alerts() {
                           })}
                         </div>
                       </div>
+
+                      <Button
+                        onClick={() => handleStartInvestigation(alertDetail.id)}
+                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
+                        style={{
+                          backgroundColor: DRAWER.accent,
+                          color: DRAWER.accentDark,
+                          border: `1px solid ${DRAWER.accentDark}`,
+                          boxShadow: `3px 3px 0px ${DRAWER.accentDark}`,
+                        }}
+                      >
+                        <Network className="h-3.5 w-3.5 mr-2" />
+                        Start Investigation
+                      </Button>
+
+                      <Button
+                        onClick={() => handleVisualizeTransaction(alertDetail.id)}
+                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
+                        style={{
+                          backgroundColor: DRAWER.surface,
+                          color: DRAWER.accent,
+                          border: `1px solid ${DRAWER.accent}`,
+                          boxShadow: `3px 3px 0px rgba(163,230,53,0.25)`,
+                        }}
+                      >
+                        <Activity className="h-3.5 w-3.5 mr-2" />
+                        Visualize Transaction
+                      </Button>
+
+                      <Button
+                        onClick={() => { setDrawerOpen(false); navigate(`/evidence?account=${alertDetail.accountId}&alertId=${alertDetail.alertId}`); }}
+                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105 mt-3"
+                        style={{
+                          backgroundColor: "#130537",
+                          color: "#e8e8e2",
+                          border: `1px solid #a3e635`,
+                          boxShadow: `3px 3px 0px #a3e635`,
+                        }}
+                      >
+                        <Shield className="h-3.5 w-3.5 mr-2 text-[#a3e635]" />
+                        Escalate to FIU Evidence Case
+                      </Button>
                     </section>
 
                     {/* ── Related Transactions ── */}
