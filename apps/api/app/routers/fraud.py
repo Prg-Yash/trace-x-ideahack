@@ -35,6 +35,8 @@ from fraud_detector import (  # type: ignore[import-not-found]
     explain_smurfing,
     explain_kyc_mismatch,
     explain_account,
+    mask_account_number_py,
+    mask_customer_name_py,
     refresh_data,
     score_account,
     trace_account,
@@ -316,8 +318,10 @@ async def get_alerts_quick(limit: int = 200, branch_code: Optional[str] = None, 
             amount = None
             
         raw_cname = rec.get("customer_name") or f"Entity ({acc_id})"
-        cust_name = re.sub(r"\s*\(\d+\)$", "", str(raw_cname)).strip()
-        masked_acc = rec.get("masked_account_number") or acc_id
+        cust_name = mask_customer_name_py(re.sub(r"\s*\(\d+\)$", "", str(raw_cname)).strip())
+        masked_acc = rec.get("masked_account_number")
+        if not masked_acc or str(masked_acc) == str(acc_id):
+            masked_acc = mask_account_number_py(acc_id)
 
         dedup = f"{acc_id}-{pattern}"
         if dedup in seen:

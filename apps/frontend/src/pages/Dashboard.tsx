@@ -15,6 +15,7 @@ import { useStats, useAlertsQuick } from "@/hooks/useApi";
 import { useAuth } from "@/context/AuthContext";
 import AdminDashboard from "./AdminDashboard";
 import { useState } from "react";
+import { maskAccountNumber, maskCustomerName } from "@/lib/pii";
 
 /* ── DESIGN TOKENS ── */
 const TOOLTIP_STYLE = {
@@ -143,15 +144,16 @@ export function DashboardContent() {
     assignee: null,
     description: null,
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    accountName: a.customer_name || a.account_id,
-    accountNumber: a.account_id,
+    accountName: maskCustomerName(a.customer_name || a.account_id),
+    accountNumber: a.masked_account_number || maskAccountNumber(a.account_id),
+    rawAccountId: a.account_id,
   }));
 
   const topAccounts = (alertsData?.alerts ?? []).slice(0, 5).map((a, i) => ({
     id: i + 1,
-    accountName: a.customer_name || a.account_id,
-    accountNumber: a.account_id,
+    rawAccountId: a.account_id,
+    accountName: maskCustomerName(a.customer_name || a.account_id),
+    accountNumber: a.masked_account_number || maskAccountNumber(a.account_id),
     branchName: (a as any).branch_name || "Main Branch",
     riskScore: Math.round(a.score * 100),
     riskLevel: a.risk_level,

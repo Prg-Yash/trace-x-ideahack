@@ -17,6 +17,7 @@ import {
 } from "@/data/staticData";
 import { useScore, useExplain, useAccounts, useAccountNotes } from "@/hooks/useApi";
 import { addAccountNote } from "@/lib/api";
+import { maskAccountNumber, maskCustomerName } from "@/lib/pii";
 
 const RISK: Record<string, { badge: string; bar: string; score: string; leftBar: string }> = {
   CRITICAL: { badge: "bg-red-500/10 text-red-400 border-red-500/25",   bar: "#EF4444", score: "text-red-400",   leftBar: "#EF4444" },
@@ -73,12 +74,13 @@ export default function Accounts() {
   const mergedAccounts = liveAccounts?.length
     ? liveAccounts.map((a, i) => ({
         id: i + 1,
-        accountName: a.customer_name || a.account_id,
-        accountNumber: a.account_id,
+        rawAccountId: a.account_id,
+        accountName: maskCustomerName(a.customer_name || a.account_id),
+        accountNumber: a.masked_account_number || maskAccountNumber(a.account_id),
         accountType: a.account_type || "Corporate Checking",
         riskLevel: (a.risk_category || "HIGH").toUpperCase() as "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
         riskScore: a.risk_score ?? (a.is_fraud ? 92 : 15),
-        status: (a.status || "ACTIVE") as "ACTIVE" | "RESTRICTED" | "SUSPENDED" | "CLOSED",
+        status: (a.status || "ACTIVE") as "ACTIVE" | "RESTRICTED" | "SUSPENDED" | "CLOSED" | "UNDER_REVIEW",
         balance: a.current_balance || a.avg_monthly_volume || 142000,
         kycTier: (a.kyc_tier || 2) as 1 | 2 | 3,
         branch: a.branch_name || a.branch_code || "Main Branch",
@@ -96,7 +98,7 @@ export default function Accounts() {
   const selectedAccount = selectedId ? mergedAccounts.find(a => a.id === selectedId) ?? null : null;
 
   // Live ML risk score + SHAP explanation for the selected account
-  const liveAccountId = selectedAccount?.accountNumber ?? null;
+  const liveAccountId = selectedAccount?.rawAccountId ?? null;
   const { data: scoreData, loading: scoreLoading } = useScore(liveAccountId);
   const { data: explainData, loading: explainLoading } = useExplain(liveAccountId);
 

@@ -20,6 +20,7 @@ import {
 } from "@/data/staticData";
 import { useReport, useAlertsQuick } from "@/hooks/useApi";
 import * as XLSX from "xlsx";
+import { maskAccountNumber, maskCustomerName, maskPAN } from "@/lib/pii";
 
 function downloadBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
@@ -52,7 +53,7 @@ function caseToCSV(detail: any) {
   // Fund flow table
   if (Array.isArray(detail.fundFlowSummary) && detail.fundFlowSummary.length) {
     rows.push(["Step", "From", "To", "Amount", "Method", "Date"]);
-    detail.fundFlowSummary.forEach((s: any) => rows.push([String(s.step), s.fromAccount, s.toAccount, String(s.amount), s.method || "Wire Transfer", !s.timestamp || isNaN(new Date(s.timestamp).getTime()) ? (s.timestamp || "06/28/2026") : new Date(s.timestamp).toLocaleDateString()]));
+    detail.fundFlowSummary.forEach((s: any) => rows.push([String(s.step), maskAccountNumber(s.fromAccount), maskAccountNumber(s.toAccount), String(s.amount), s.method || "Wire Transfer", !s.timestamp || isNaN(new Date(s.timestamp).getTime()) ? (s.timestamp || "06/28/2026") : new Date(s.timestamp).toLocaleDateString()]));
     rows.push([""]); // spacer
   }
 
@@ -88,18 +89,18 @@ function exportCSV(detail: any) {
 
 function exportPDF(detail: any) {
   try {
-    const primaryAcc = detail.case?.suspiciousAccounts?.[0] || "ACC_00001";
+    const primaryAcc = maskAccountNumber(detail.case?.suspiciousAccounts?.[0] || "ACC_00001");
     const today = new Date().toISOString().split("T")[0];
     const suspDate = detail.fiuReportData?.reportDate || today;
     const filingDeadline = detail.fiuReportData?.filingDeadline || today;
     const reportingEntity = detail.fiuReportData?.reportingEntity || "Union Bank of India";
     const reNumber = detail.fiuReportData?.reportingEntityRE || "RE0002341";
     const batchRef = `TRACEX-STR-${today.replace(/-/g, "")}-001`;
-    const customerName = detail.customerName || primaryAcc;
+    const customerName = maskCustomerName(detail.customerName || detail.case?.suspiciousAccounts?.[0] || "ACC_00001");
     const ifscBase = detail.ifscBase || "UBIN0554678";
     const branchCode = detail.branchCode || "MH042";
     const branchName = detail.branchName || "Kalyan East Branch";
-    const panNumber = detail.panNumber || "ABCPS7912F";
+    const panNumber = maskPAN(detail.panNumber || "ABCPS7912F");
     const declaredLimit = Math.round((detail.declaredIncome || 1200000) / 12).toLocaleString("en-IN");
     const accountType = detail.accountType || "CURRENT";
     const riskScore = detail.riskScore || 88;
@@ -291,8 +292,8 @@ ${detail.fiuReportData?.actionRequired || 'Escalate STR Form 8 immediately to FI
                     <td>Hop ${s.step || idx + 1}</td>
                     <td style="font-family:monospace;font-size:9px">${s.utr || ('UTR' + (today || '20260629').replace(/-/g,'') + String(100000+idx).slice(1))}</td>
                     <td>${s.timestamp || today}</td>
-                    <td style="font-weight:bold;font-family:monospace">${s.fromAccount}</td>
-                    <td style="font-weight:bold;font-family:monospace">${s.toAccount}</td>
+                    <td style="font-weight:bold;font-family:monospace">${maskAccountNumber(s.fromAccount)}</td>
+                    <td style="font-weight:bold;font-family:monospace">${maskAccountNumber(s.toAccount)}</td>
                     <td style="font-size:9px;font-family:monospace">${s.ifsc || ifscBase}</td>
                     <td><span class="risk-badge risk-high">${s.method || 'RTGS'}</span></td>
                     <td style="color:#b91c1c;font-weight:bold">${typeof s.amount === 'number' ? '\u20b9'+s.amount.toLocaleString('en-IN') : s.amount}</td>
@@ -438,8 +439,8 @@ export default function Evidence() {
     return liveAlertsData.alerts.slice(0, 8).map((a, i) => ({
       id: i + 1,
       caseId: `CASE-2026-${String(i + 1).padStart(3, "0")}`,
-      title: `FIU Investigation: ${a.flagged_for[0] || "Suspicious Activity"} — ${a.account_id}`,
-      description: `Automated alert detection for ${a.account_id}`,
+      title: `FIU Investigation: ${a.flagged_for[0] || "Suspicious Activity"} — ${maskCustomerName(a.customer_name || a.account_id)} (${maskAccountNumber(a.account_id)})`,
+      description: `Automated alert detection for ${maskAccountNumber(a.account_id)}`,
       investigator: "Agent Investigator",
       alertId: a.alert_id || `ALT-${a.account_id}-${(a.flagged_for?.[0] || "fraud").toLowerCase()}`,
       status: a.status || (a.risk_level === "CRITICAL" ? "IN_PROGRESS" : "OPEN"),
@@ -491,8 +492,8 @@ export default function Evidence() {
           const newCase: EvidenceCase = {
             id: newId,
             caseId: `CASE-2026-${String(currentCases.length + 1).padStart(3, "0")}`,
-            title: `FIU Investigation: Escalated Alert (${cleanName})`,
-            description: `Escalated investigation for ${cleanName}`,
+            title: `FIU Investigation: Escalated Alert (${maskCustomerName(cleanName)})`,
+            description: `Escalated investigation for ${maskAccountNumber(acc)}`,
             investigator: "Agent Investigator",
             alertId: `ALT-${cleanName}`,
             status: "IN_PROGRESS",
@@ -589,10 +590,10 @@ export default function Evidence() {
       const suspDateFormatted = suspicionDate.toLocaleDateString("en-IN");
       const filingDateFormatted = filingDeadline.toLocaleDateString("en-IN");
       const rawCustomerName = liveReport.account?.customer_name || liveReport.customer_name || `Customer ${primaryAccId}`;
-      const customerName = rawCustomerName.replace(/\s*\(\d+\)$/, "");
+      const customerName = maskCustomerName(rawCustomerName.replace(/\s*\(\d+\)$/, ""));
       const branchCode = liveReport.account?.branch_code || `MH${String(Math.abs(accNum % 999)).padStart(3, "0")}`;
       const branchName = liveReport.account?.branch_name || "Kalyan East Branch";
-      const panNumber = liveReport.account?.pan_number || "ABCPS7912F";
+      const panNumber = maskPAN(liveReport.account?.pan_number || "ABCPS7912F");
       const dob = liveReport.account?.dob || "1976-01-03";
       const address = liveReport.account?.address || "Connaught Place, Outer Circle, New Delhi, DL - 110001";
       const declaredIncome = liveReport.account?.declared_annual_income || 1200000;
@@ -610,7 +611,7 @@ export default function Evidence() {
       const riskScore = liveReport.score ? Math.round(liveReport.score.combined_score * 100) : 88;
       const riskLevel = liveReport.score?.risk_level || "CRITICAL";
       const totalTxnAmt = dynamicTotalAmount || 500000;
-      const narration = `Account ${primaryAccId} registered to ${customerName} at ${branchCode} branch. TRACE-X ML engine assigned combined risk score of ${riskScore}/100 (${riskLevel}). Detections confirmed: ${typologyCodes}.
+      const narration = `Account ${maskAccountNumber(primaryAccId)} registered to ${customerName} at ${branchCode} branch. TRACE-X ML engine assigned combined risk score of ${riskScore}/100 (${riskLevel}). Detections confirmed: ${typologyCodes}.
 
 Fund movement analysis reveals rapid sequential transfers across ${fundFlow.length + 1} linked domestic accounts within a 48-hour window. Transaction velocity and amount conservation pattern are consistent with deliberate layering to obscure the beneficial owner and evade mandatory CTR reporting thresholds under Section 12 of the PMLA 2002.
 
@@ -877,6 +878,12 @@ All transactions settled via regulated Indian payment rails (RTGS/NEFT/IMPS) and
                       className="px-3 py-1.5 text-[11px] font-bold border-2 border-[#130537] transition-all flex items-center gap-1.5 bg-[#ffffff]"
                     >
                       <Download className="h-3 w-3" /> XLSX
+                    </button>
+                    <button
+                      onClick={() => activeCaseDetail && exportPDF(activeCaseDetail)}
+                      className="px-3.5 py-1.5 text-[11px] font-extrabold border-2 border-[#130537] transition-all flex items-center gap-1.5 bg-[#a3e635] text-[#130537] hover:bg-[#8cc629] shadow-sm"
+                    >
+                      <Download className="h-3 w-3" /> Generate FIU Report PDF
                     </button>
                     {(() => {
                       if (!activeCaseDetail?.case?.alertId) return null;
