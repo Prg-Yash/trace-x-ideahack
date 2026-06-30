@@ -77,7 +77,17 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-5">
-        {navSections.map((section) => (
+        {(() => {
+          const sectionsToRender = [...navSections];
+          if (user?.role === "Admin") {
+            sectionsToRender.push({
+              label: "Admin",
+              items: [
+                { name: "User Management", href: "/users", icon: Users }
+              ]
+            });
+          }
+          return sectionsToRender.map((section) => (
           <div key={section.label}>
             <p
               className="text-[9px] font-bold uppercase tracking-[0.25em] px-2 mb-2"
@@ -132,7 +142,8 @@ export function Sidebar() {
               })}
             </div>
           </div>
-        ))}
+        ));
+        })()}
       </nav>
 
       {/* Status + User */}
@@ -168,18 +179,12 @@ export function Sidebar() {
                 {user?.username?.substring(0, 2).toUpperCase() || "FI"}
               </span>
             </div>
-            <div className="min-w-0">
-              <p
-                className="text-[12px] font-semibold leading-tight"
-                style={{ color: "var(--color-sidebar-foreground)" }}
-              >
-                {user?.username || "A. Investigator"}
+            <div className="min-w-0 flex flex-col justify-center">
+              <p className="text-[12px] font-bold text-[#e8e8e2] truncate" title={user?.name}>
+                {user?.name || "Guest"}
               </p>
-              <p
-                className="text-[10px] leading-tight"
-                style={{ color: "rgba(232,232,226,0.35)" }}
-              >
-                {user?.role === "admin" ? "System Admin" : "FIU · Analyst"}
+              <p className="text-[9px] font-medium text-[rgba(232,232,226,0.6)] uppercase tracking-wider truncate" title={user?.role}>
+                {user?.role || "Unknown"}
               </p>
             </div>
           </div>

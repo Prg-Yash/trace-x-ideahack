@@ -555,11 +555,11 @@ function GraphInner() {
         const ch = traceChannels[i] && traceChannels[i] !== "SWIFT" && traceChannels[i] !== "WIRE" && traceChannels[i] !== "CRYPTO" ? traceChannels[i] : defaultChannel;
         let source = chain[i];
         let target = chain[i + 1];
-        const isConvergent = ["SMURFING", "DORMANT", "DORMANT_ACTIVATION"].includes(liveTrace?.fraud_type?.toUpperCase() || "") || 
-                             ["SMURFING", "DORMANT"].includes(alertPattern?.toUpperCase() || "");
+        const isConvergent = ["SMURFING", "DORMANT", "DORMANT_ACTIVATION"].includes(liveTrace?.fraud_type?.toUpperCase() || "") ||
+          ["SMURFING", "DORMANT"].includes(alertPattern?.toUpperCase() || "");
         if (isConvergent) {
-            source = chain[i + 1];
-            target = chain[0];
+          source = chain[i + 1];
+          target = chain[0];
         }
         edges.push({
           id: `e-${source}-${target}-${i}`,
@@ -606,12 +606,12 @@ function GraphInner() {
       };
       return { nodes: uniqueNodes, edges, stats };
     }
-    return { 
-      nodes: [], 
-      edges: [], 
-      stats: { totalNodes: 0, totalEdges: 0, flaggedNodes: 0, flaggedEdges: 0, detectedClusters: 0 } 
+    return {
+      nodes: [],
+      edges: [],
+      stats: { totalNodes: 0, totalEdges: 0, flaggedNodes: 0, flaggedEdges: 0, detectedClusters: 0 }
     };
-  // Only re-run when account, trace data, or score risk level changes — NOT on every score update
+    // Only re-run when account, trace data, or score risk level changes — NOT on every score update
   }, [routeAccountId, liveAlertsQuick, traceQueryId, liveTrace, liveScore?.combined_score, liveScore?.detections?.kyc_mismatch?.detected, urlPattern]);
 
   const graphEdges = useMemo(
@@ -1340,18 +1340,18 @@ function GraphInner() {
                               })()}
 
                               {/* Interactive AI Briefing Box */}
-                              <div style={{ marginTop: 10, padding: "8px 10px", background: "linear-gradient(135deg, rgba(30, 27, 75, 0.7) 0%, rgba(15, 23, 42, 0.9) 100%)", borderRadius: 5, border: "1px solid rgba(129, 140, 248, 0.3)", position: "relative", overflow: "hidden" }}>
-                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: aiBriefingState[p.id]?.text !== undefined ? 6 : 0 }}>
+                              <div style={{ marginTop: 10, padding: "10px", background: SURF_1, borderRadius: 0, border: `2px solid ${BORDER}`, position: "relative", overflow: "hidden", boxShadow: `2px 2px 0px ${BORDER2}` }}>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: aiBriefingState[p.id]?.text !== undefined ? 8 : 0, borderBottom: aiBriefingState[p.id]?.text !== undefined ? `1px dashed ${BORDER2}` : "none", paddingBottom: aiBriefingState[p.id]?.text !== undefined ? 8 : 0 }}>
                                   <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                                    <span style={{ fontSize: 11 }}>✨</span>
-                                    <span style={{ fontSize: 8.5, fontWeight: 800, background: "linear-gradient(90deg, #a5b4fc, #c084fc)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", letterSpacing: "0.05em" }}>GENERATIVE AI INVESTIGATOR BRIEFING</span>
+                                    <span style={{ fontSize: 12 }}>✨</span>
+                                    <span style={{ fontSize: 9.5, fontWeight: 800, color: TEXT_PRI, letterSpacing: "0.05em", textTransform: "uppercase" }}>GENERATIVE AI BRIEFING</span>
                                   </div>
                                   <button
                                     onClick={async (e) => {
                                       e.stopPropagation();
                                       if (aiBriefingState[p.id]?.loading) return;
                                       setAiBriefingState(prev => ({ ...prev, [p.id]: { loading: true, text: "" } }));
-                                      
+
                                       let fullNarrative = "";
                                       try {
                                         const targetAcc = p.affectedAccounts?.[0] || "ACC_00001";
@@ -1382,7 +1382,46 @@ function GraphInner() {
                                           description: shapDescriptions[f.label] || "Behavioral anomaly detected by ML model.",
                                         }));
 
-                                        const res = await fetch(`${BASE}/narrative/${targetAcc}`, {
+                                        const focused_pattern = p.patternType;
+                                        const focused_label = focused_pattern || (allPatterns[0] ? allPatterns[0].patternType : "SUSPICIOUS ACTIVITY");
+
+                                        const patterns_block = allPatterns ? allPatterns.map(ap =>
+                                          `  - ${ap.patternType || 'UNKNOWN'} (Confidence: ${(ap.confidence || 0).toFixed(1)}%, Accounts: ${(ap.affectedAccounts || []).length}, Exposure: ₹${(ap.totalAmount || 0).toLocaleString()}, Description: ${ap.description || 'N/A'})`
+                                        ).join("\n") : `  - ${focused_pattern || 'SUSPICIOUS ACTIVITY'}`;
+
+                                        const shap_block = shapForAI && shapForAI.length > 0 ? shapForAI.map((f: any) =>
+                                          `  - ${f.label || 'Unknown Feature'}: SHAP impact = ${f.shap_value > 0 ? '+' : ''}${parseFloat(f.shap_value).toFixed(4)} (${f.direction === 'RISK' ? 'RISK FACTOR' : 'PROTECTIVE'}), plain English meaning: ${f.description || 'behavioral anomaly detected by ML model'}`
+                                        ).join("\n") : "  (No SHAP data provided)";
+
+                                        const prompt = `You are a senior Anti-Money Laundering (AML) Investigator at a Financial Intelligence Unit (FIU-IND).
+
+You are writing an AI-generated Investigator Briefing for Account: ${targetAcc}
+
+══ DETECTED FRAUD TYPOLOGIES ══
+${patterns_block}
+
+══ AI SHAP FEATURE ATTRIBUTION (What made the ML model flag this) ══
+${shap_block}
+
+══ YOUR TASK ══
+Write a tight, factual investigator briefing focused on the primary typology '${focused_label}'.
+Mention any co-occurring typologies (e.g., KYC Mismatch alongside Layering) as compounding risk.
+For EACH SHAP feature listed above, briefly explain in plain English what it means in this specific case (e.g., "The account transferred funds across 4 hops within 6 hours — a classic layering velocity signature").
+
+FORMAT: Respond with EXACTLY 3 bullet points starting with '• ':
+  Bullet 1: What the primary typology evidence shows (use actual numbers/confidence)
+  Bullet 2: What the top SHAP features reveal in plain English (e.g., "The ML model primarily flagged this due to...")
+  Bullet 3: Co-occurring typologies and recommended FIU action
+
+RULES:
+- Do NOT write paragraphs. Bullet points only.
+- Use ₹ for all amounts.
+- Be specific, cite confidence scores, SHAP values in plain terms.
+- Write as if briefing a senior judge or RBI examiner — professional and precise.
+- No intro phrases like "Here is the briefing" or "Based on analysis".`;
+
+                                        const apiUrl = (import.meta.env.VITE_SCRIPT_API_ENDPOINT || "https://openrouter.ai/api/v1") + "/chat/completions";
+                                        const res = await fetch(apiUrl, {
                                           method: "POST",
                                           headers: { "Content-Type": "application/json" },
                                           body: JSON.stringify({
@@ -1397,14 +1436,15 @@ function GraphInner() {
                                             shap_features: shapForAI,
                                           }),
                                         });
+
                                         if (res.ok) {
                                           const data = await res.json();
-                                          if (data.narrative && !data.error) fullNarrative = data.narrative;
+                                          if (data.narrative && !data.error) fullNarrative = data.narrative.trim();
                                         }
                                       } catch (err) {
                                         // Fallback if API offline
                                       }
-                                      
+
                                       if (!fullNarrative) {
                                         fullNarrative = `• Typology Confirmation: AI analysis confirmed ${p.patternType} pattern (${p.confidence.toFixed(1)}% confidence) across ${p.affectedAccounts.length} linked accounts with total exposure of ₹${p.totalAmount.toLocaleString()}.\n• SHAP Attribution: High ML attribution scores driven by rapid multi-hop velocity and cross-channel rail switching — classic layering evasion signals.\n• Recommended Action: Immediate account freeze on all ${p.affectedAccounts.length} entities and SAR Form 8 submission to FIU-IND.`;
                                       }
@@ -1423,31 +1463,32 @@ function GraphInner() {
                                     }}
                                     disabled={aiBriefingState[p.id]?.loading}
                                     style={{
-                                      background: aiBriefingState[p.id]?.text ? "rgba(255, 255, 255, 0.1)" : "linear-gradient(90deg, #6366f1, #a855f7)",
-                                      color: "#ffffff",
-                                      border: aiBriefingState[p.id]?.text ? "1px solid rgba(255, 255, 255, 0.2)" : "none",
-                                      borderRadius: 4,
-                                      padding: "3px 8px",
-                                      fontSize: 8.5,
-                                      fontWeight: 700,
+                                      background: aiBriefingState[p.id]?.text ? SURF_2 : ACCENT,
+                                      color: TEXT_PRI,
+                                      border: `1px solid ${BORDER}`,
+                                      borderRadius: 0,
+                                      padding: "4px 8px",
+                                      fontSize: 9,
+                                      fontWeight: 800,
+                                      textTransform: "uppercase",
                                       cursor: aiBriefingState[p.id]?.loading ? "wait" : "pointer",
-                                      boxShadow: aiBriefingState[p.id]?.text ? "none" : "0 2px 6px rgba(99, 102, 241, 0.4)",
+                                      boxShadow: aiBriefingState[p.id]?.text ? "none" : `2px 2px 0px ${BORDER}`,
                                       display: "flex",
                                       alignItems: "center",
                                       gap: 4,
                                       transition: "all 0.2s"
                                     }}
                                   >
-                                    {aiBriefingState[p.id]?.loading ? "⏳ Generating AI Briefing..." : aiBriefingState[p.id]?.text ? "🔄 Regenerate" : "⚡ Ask AI to Explain"}
+                                    {aiBriefingState[p.id]?.loading ? "⏳ GENERATING..." : aiBriefingState[p.id]?.text ? "🔄 REGENERATE" : "⚡ ASK AI TO EXPLAIN"}
                                   </button>
                                 </div>
                                 {aiBriefingState[p.id]?.loading && (
-                                  <div style={{ padding: "12px 0", textAlign: "center" }}>
-                                    <p style={{ fontSize: 8.5, color: "#a5b4fc", margin: 0 }} className="animate-pulse">Synthesizing multi-hop neural attribution evidence...</p>
+                                  <div style={{ padding: "16px 0", textAlign: "center" }}>
+                                    <p style={{ fontSize: 9, color: TEXT_MUT, margin: 0, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }} className="animate-pulse">Synthesizing multi-hop neural attribution evidence...</p>
                                   </div>
                                 )}
                                 {aiBriefingState[p.id]?.text !== undefined && aiBriefingState[p.id]?.text !== null && !aiBriefingState[p.id]?.loading && (
-                                  <p style={{ fontSize: 8.5, color: "#cbd5e1", margin: 0, lineHeight: 1.4, textAlign: "left", minHeight: 24 }}>
+                                  <p style={{ fontSize: 10.5, color: TEXT_PRI, margin: 0, lineHeight: 1.6, textAlign: "left", minHeight: 32, whiteSpace: "pre-wrap", fontWeight: 600, paddingTop: 4 }}>
                                     {aiBriefingState[p.id]?.text || "▌"}
                                   </p>
                                 )}

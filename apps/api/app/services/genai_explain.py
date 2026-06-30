@@ -1,14 +1,14 @@
 import os
 import json
-import google.generativeai as genai
+import httpx
 from typing import Dict, List, Optional
 
-# Configure Gemini
-API_KEY = os.getenv("GEMINI_API_KEY", "")
-if API_KEY:
-    genai.configure(api_key=API_KEY)
-else:
-    print("Warning: GEMINI_API_KEY not set. Narratives will fail.")
+# Configure OpenRouter
+API_KEY = os.getenv("OPEN_ROUTER_API_KEY", "")
+API_ENDPOINT = os.getenv("SCRIPT_API_ENDPOINT", "https://openrouter.ai/api/v1")
+
+if not API_KEY:
+    print("Warning: OPEN_ROUTER_API_KEY not set. Narratives will fail.")
 
 
 async def generate_narrative(
@@ -19,7 +19,7 @@ async def generate_narrative(
 ) -> Dict:
     """Generate a rich, accurate AI briefing using all available context."""
     if not API_KEY:
-        return {"error": "GEMINI_API_KEY not configured"}
+        return {"error": "OPEN_ROUTER_API_KEY not configured"}
 
     try:
         # ── Build pattern context block ──────────────────────────────────────
@@ -80,13 +80,30 @@ RULES:
 """
 
         try:
-            model = genai.GenerativeModel("gemini-2.5-flash")
-            response = model.generate_content(prompt)
-        except Exception:
-            model = genai.GenerativeModel("gemini-2.0-flash")
-            response = model.generate_content(prompt)
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{API_ENDPOINT}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "openai/gpt-4o-mini",
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                    timeout=30.0,
+                )
+                response.raise_for_status()
+                data = response.json()
+                text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                if not text:
+                    raise ValueError("Empty response from OpenRouter")
+        except Exception as api_err:
+            print(f"OpenRouter API error: {api_err}")
+            return {"error": str(api_err)}
 
-        return {"account_id": account_id, "narrative": response.text.strip()}
+        return {"account_id": account_id, "narrative": text}
     except Exception as e:
         print(f"AI Explain error: {e}")
         return {"error": str(e)}
+

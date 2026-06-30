@@ -253,6 +253,8 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import asyncio
 
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 def _fetch_postgres_account_stats(account_id: str) -> Optional[Dict]:

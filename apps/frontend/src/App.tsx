@@ -7,6 +7,7 @@ import { InvestigationProvider } from "@/context/InvestigationContext";
 import { AuthProvider } from "@/context/AuthContext";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import NotFound from "@/pages/not-found";
+import { CommandPalette } from "@/components/chat/CommandPalette";
 
 import Home from "@/pages/Home";
 import Login from "@/pages/Login";
@@ -18,10 +19,12 @@ import Accounts from "@/pages/Accounts";
 import Evidence from "@/pages/Evidence";
 import LiveStream from "@/pages/LiveStream";
 import BranchRisk from "@/pages/BranchRisk";
+import TransactionTimeMachine from "@/pages/TransactionTimeMachine";
 import RiskMap from "@/pages/RiskMap";
+import UserManagement from "@/pages/UserManagement";
 
-class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: Error | null}> {
-  constructor(props: {children: React.ReactNode}) {
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
+  constructor(props: { children: React.ReactNode }) {
     super(props);
     this.state = { hasError: false, error: null };
   }
@@ -58,6 +61,8 @@ function ProtectedRoutes() {
         <Route path="/risk-map" component={RiskMap} />
         <Route path="/accounts" component={Accounts} />
         <Route path="/evidence" component={Evidence} />
+        <Route path="/users" component={UserManagement} />
+        <Route path="/transaction-time-machine/:alertId" component={TransactionTimeMachine} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>
@@ -70,9 +75,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/login" component={Login} />
       <Route>
-        <ProtectedRoute>
-          <ProtectedRoutes />
-        </ProtectedRoute>
+        <ProtectedRoutes />
       </Route>
     </Switch>
   );
@@ -90,6 +93,7 @@ function App() {
           </AuthProvider>
         </WouterRouter>
         <Toaster />
+        <CommandPalette />
       </TooltipProvider>
     </ErrorBoundary>
   );

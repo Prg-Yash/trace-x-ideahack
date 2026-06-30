@@ -89,10 +89,10 @@ export function useScore(accountId: string | null) {
 }
 
 /** Graph trace for an account */
-export function useTrace(accountId: string | null) {
+export function useTrace(accountId: string | null, hint = "") {
   return useQuery<TraceResult>(
-    () => fetchTrace(accountId!),
-    [accountId],
+    () => fetchTrace(accountId!, hint),
+    [accountId, hint],
     { skip: !accountId }
   );
 }

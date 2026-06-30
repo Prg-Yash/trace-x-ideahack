@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel
 
@@ -27,7 +27,6 @@ for path in (PY_SCHEMAS_DIR, AI_ML_DIR):
 # ── Fraud Detector Imports ──────────────────────────────────────────────────────
 from fraud_detector import (  # type: ignore[import-not-found]
     REL_TYPE,
-    DATABASE_URL,
     _coerce,
     build_evidence_package,
     detect_layering,
@@ -46,6 +45,7 @@ from fraud_detector import (  # type: ignore[import-not-found]
 from trace_x_schemas.models import Account, Transaction
 from app.core.config import settings
 from app.routers.data import get_db_connection
+from app.core.deps import get_current_user
 
 router = APIRouter(tags=["fraud"])
 
@@ -76,7 +76,8 @@ async def _cypher(query: str, limit: int = 500, **params) -> List[Dict]:
 async def _pg_fetchone(sql: str, params=None) -> Dict:
     def _run():
         import psycopg2
-        with psycopg2.connect(DATABASE_URL) as conn:
+        from app.core.config import settings
+        with psycopg2.connect(settings.DATABASE_URL) as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(sql, params)
                 return cur.fetchone()
@@ -159,7 +160,8 @@ async def _fetch_alert_amounts() -> dict:
     """Fetch volume_30d from Postgres for all fraud accounts as the alert 'amount'."""
     def _run():
         import psycopg2
-        with psycopg2.connect(DATABASE_URL) as conn:
+        from app.core.config import settings
+        with psycopg2.connect(settings.DATABASE_URL) as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT a.account_id, COALESCE(s.volume_30d, 0) AS volume_30d
@@ -176,8 +178,29 @@ async def _fetch_alert_amounts() -> dict:
         return {}
 
 
+async def _fetch_alert_status_pg() -> dict:
+    """Fetch status and assigned_to from Postgres alerts table."""
+    def _run():
+        import psycopg2
+        from app.core.config import settings
+        with psycopg2.connect(settings.DATABASE_URL) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT a.alert_id, a.status, u.full_name as assigned_to_name, a.assigned_to as assignee_id
+                    FROM alerts a
+                    LEFT JOIN users u ON a.assigned_to::text = u.id::text
+                """)
+                rows = cur.fetchall()
+                return {r["alert_id"]: {"status": r["status"], "assigned_to_name": r["assigned_to_name"], "assignee_id": r["assignee_id"]} for r in rows}
+    try:
+        return await asyncio.to_thread(_run)
+    except Exception as e:
+        print("PG alert status error:", e)
+        return {}
+
+
 @router.get("/alerts/quick")
-async def get_alerts_quick(limit: int = 200):
+async def get_alerts_quick(limit: int = 200, current_user: dict = Depends(get_current_user)):
     """Read pre-generated Alert nodes from Neo4j. Instant — no ML inference."""
     query = """
         MATCH (a:Account)-[:FLAGGED_IN]->(al:Alert)
@@ -195,9 +218,10 @@ async def get_alerts_quick(limit: int = 200):
         ORDER BY al.fraud_probability DESC
     """
     try:
-        records, amounts_map = await asyncio.gather(
+        records, amounts_map, status_map = await asyncio.gather(
             _cypher(query, limit=limit),
             _fetch_alert_amounts(),
+            _fetch_alert_status_pg(),
         )
     except Exception as e:
         print("Neo4j alerts/quick error:", e)
@@ -211,6 +235,22 @@ async def get_alerts_quick(limit: int = 200):
         score   = float(rec.get("fraud_prob") or 0.8)
         tier    = str(rec.get("tier") or PATTERN_RISK.get(pattern, "HIGH"))
         
+        # We need a stable pseudo-alert-id if none provided (from old Neo4j data)
+        # But for live alerts, Neo4j should have `al.id` or we can generate it. 
+        # Wait, the query doesn't return `al.id`, it just returns account_id and pattern.
+        # Let's derive alert_id from account_id and pattern to match PG.
+        alert_id = f"ALT-{acc_id}-{pattern.upper()}"
+        
+        pg_status_info = status_map.get(alert_id, {})
+        status = pg_status_info.get("status") or "NEW"
+        assignee_id = pg_status_info.get("assignee_id")  # UUID stored in alerts.assigned_to
+        assigned_to_name = pg_status_info.get("assigned_to_name")  # human-readable name
+        
+        # Filter based on role
+        if current_user["role"] == "Investigator":
+            if not assignee_id or str(assignee_id) != str(current_user["id"]):
+                continue
+                
         # Use real volume_30d from Postgres, or sum of amounts from Neo4j for Live Simulator alerts
         neo4j_amounts = rec.get("amounts")
         if neo4j_amounts:
@@ -221,7 +261,6 @@ async def get_alerts_quick(limit: int = 200):
         if not amount:
             amount = None
             
-        status  = str(rec.get("status") or "OPEN")
         raw_cname = rec.get("customer_name") or f"Entity ({acc_id})"
         cust_name = re.sub(r"\s*\(\d+\)$", "", str(raw_cname)).strip()
         branch  = rec.get("branch_name") or "Main Branch"
@@ -237,12 +276,12 @@ async def get_alerts_quick(limit: int = 200):
         
         created_str = str(rec.get("created_at") or "")
         if not created_str:
-            # Generate a stable past timestamp based on account_id so it doesn't jump
             stable_seed = sum(ord(c) for c in acc_id)
             stable_dt = datetime.utcnow() - timedelta(days=stable_seed % 14, hours=stable_seed % 24)
             created_str = stable_dt.isoformat() + "Z"
 
         alerts.append(_coerce({
+            "alert_id":     alert_id,
             "account_id":   acc_id,
             "customer_name": cust_name,
             "branch_name":  branch,
@@ -252,6 +291,7 @@ async def get_alerts_quick(limit: int = 200):
             "score":        round(score, 4),
             "total_amount": round(amount, 2) if amount is not None else None,
             "status":       status,
+            "assigned_to":  assigned_to_name,
             "created_at":   created_str,
             "detections":   {pattern: {"detected": True, "confidence": round(score, 4)}},
         }))

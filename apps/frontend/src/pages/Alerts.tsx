@@ -6,7 +6,7 @@ import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle, Search, X, Clock, User,
-  ChevronRight, ChevronDown, CheckCircle2, Network, Shield,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, CheckCircle2, Network, Shield, Activity,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,11 @@ import {
 } from "@/data/staticData";
 import { getInvestigationAlertById } from "@/data/investigationData";
 import { useInvestigation } from "@/context/InvestigationContext";
+import { useAuth } from "../context/AuthContext";
+import { StatusBadge } from "../components/ui/status-badge";
 import { useAlertsQuick, useTrace } from "@/hooks/useApi";
+import { assignAlert, fetchInvestigators } from "@/lib/api";
+
 
 /* ── STYLES ── */
 const SEV: Record<string, { badge: string; dot: string; leftBar: string; drawerBg: string }> = {
@@ -101,16 +105,43 @@ function DrawerSectionLabel({ children }: { children: ReactNode }) {
   );
 }
 
+const statusOptions = ["NEW", "OPEN", "INVESTIGATING", "CLOSED_FALSE_POSITIVE", "CLOSED_TRUE_POSITIVE"];
+
 export default function Alerts() {
   const [, navigate] = useLocation();
   const { setInvestigation } = useInvestigation();
   const [search, setSearch] = useState("");
   const [severity, setSeverity] = useState("");
-  const [status, setStatus] = useState("OPEN");
+  const [status, setStatus] = useState("ALL");
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedAssignee, setSelectedAssignee] = useState<string>("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showTimeline, setShowTimeline] = useState(false);
+  const { user } = useAuth();
+  const [viewMode, setViewMode] = useState<"ALL" | "MY_CASES">("ALL");
+  const [, setTick] = useState(0);
+
+  // Admin states
+  const [investigators, setInvestigators] = useState<{ id: string; username: string; full_name: string }[]>([]);
+
+  useEffect(() => {
+    if (user?.role === "Admin") {
+      fetchInvestigators().then(setInvestigators).catch(console.error);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    // Audit log sync removed, using API polling or refetch on action
+  }, []);
+
   const [statusOverrides, setStatusOverrides] = useState<Record<number, string>>({});
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, severity, status, pageSize]);
+
 
   const [optimisticAlerts, setOptimisticAlerts] = useState<Alert[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
@@ -210,10 +241,10 @@ export default function Alerts() {
         alertId: a.alert_id || `ALT-${a.account_id}-${(a.flagged_for?.[0] || "fraud").toLowerCase()}`,
         accountId: a.account_id,
         severity: (a.risk_level || a.severity) as string,
-        status: "OPEN",
+        status: a.status || "OPEN",
         pattern: a.flagged_for?.[0] ?? a.pattern_type ?? "UNKNOWN",
         amount: a.total_amount ?? Math.round((a.score || a.fraud_probability || 0.9) * 5_000_000),
-        assignee: null,
+        assignee: a.assigned_to || null,
         description: `Fraud pattern detected: ${(a.flagged_for || []).join(", ")}`,
         createdAt: createdAtStr,
         updatedAt: new Date().toISOString(),
@@ -234,16 +265,28 @@ export default function Alerts() {
     }
   };
 
+  const handleVisualizeTransaction = (alertId: number) => {
+    const alert = mergedAlerts.find(a => a.id === alertId);
+    if (alert) {
+      setDrawerOpen(false);
+      navigate(`/transaction-time-machine/${encodeURIComponent(alert.alertId)}`);
+    }
+  };
+
   const handleOpen = (id: number) => {
     setSelectedId(id);
     setDrawerOpen(true);
     setShowTimeline(false);
   };
 
-  const filteredAlerts = mergedAlerts.filter(a => {
-    const effectiveStatus = statusOverrides[a.id] ?? a.status;
+  const filteredAlerts = mergedAlerts.filter((a: any) => {
+    // Check view mode filter
+    if (viewMode === "MY_CASES" && !a.assignee) {
+      return false;
+    }
+
     const matchSeverity = !severity || severity === "ALL" || a.severity === severity;
-    const matchStatus = !status || status === "ALL" || effectiveStatus === status;
+    const matchStatus = !status || status === "ALL" || (a.status || "OPEN") === status;
     const matchSearch = !search || [a.alertId, a.accountName, a.pattern].some(f =>
       f.toLowerCase().includes(search.toLowerCase())
     );
@@ -251,11 +294,19 @@ export default function Alerts() {
   });
 
   const alerts = filteredAlerts;
+  const totalPages = Math.max(1, Math.ceil(alerts.length / pageSize));
+  const effectivePage = Math.min(currentPage, totalPages);
+
+  const paginatedAlerts = useMemo(() => {
+    const start = (effectivePage - 1) * pageSize;
+    return alerts.slice(start, start + pageSize);
+  }, [alerts, effectivePage, pageSize]);
+
   const alertDetail = selectedId ? mergedAlerts.find(a => a.id === selectedId) : null;
-  const { data: liveTrace } = useTrace(alertDetail?.accountId || null);
+  const { data: liveTrace } = useTrace(alertDetail?.rawAccountId || alertDetail?.alertId || null);
   const timeline = useMemo(() => {
     if (!alertDetail) return [];
-    
+
     let createdTime = new Date(alertDetail.createdAt).getTime();
     if (isNaN(createdTime)) {
       const asNum = Number(alertDetail.createdAt);
@@ -273,14 +324,14 @@ export default function Alerts() {
       const txns = [];
       const chain = liveTrace.chain;
       const amounts = liveTrace.amounts || [];
-      const isConvergent = ["SMURFING", "DORMANT", "DORMANT_ACTIVATION"].includes(liveTrace?.fraud_type?.toUpperCase() || "") || 
-                           ["SMURFING", "DORMANT"].includes(alertDetail?.pattern?.toUpperCase() || "");
+      const isConvergent = ["SMURFING", "DORMANT", "DORMANT_ACTIVATION"].includes(liveTrace?.fraud_type?.toUpperCase() || "") ||
+        ["SMURFING", "DORMANT"].includes(alertDetail?.pattern?.toUpperCase() || "");
       for (let i = 0; i < chain.length - 1; i++) {
         let fromAccount = chain[i];
         let toAccount = chain[i + 1];
         if (isConvergent) {
-            fromAccount = chain[i + 1];
-            toAccount = chain[0];
+          fromAccount = chain[i + 1];
+          toAccount = chain[0];
         }
         txns.push({
           id: `TXN-LIVE-${i}`,
@@ -293,7 +344,7 @@ export default function Alerts() {
       }
       return txns;
     }
-    return alertDetail ? getTransactionsByAccountId(alertDetail.accountId) : [];
+    return alertDetail ? getTransactionsByAccountId(alertDetail.id) : [];
   }, [liveTrace, alertDetail]);
 
   return (
@@ -360,14 +411,33 @@ export default function Alerts() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">All Statuses</SelectItem>
-              <SelectItem value="OPEN">Open</SelectItem>
+              <SelectItem value="NEW">New</SelectItem>
               <SelectItem value="UNDER_INVESTIGATION">Under Investigation</SelectItem>
-              <SelectItem value="CLOSED">Closed</SelectItem>
+              <SelectItem value="PENDING_APPROVAL">Pending Approval</SelectItem>
+              <SelectItem value="FILED">Filed</SelectItem>
             </SelectContent>
           </Select>
-          {(severity || status || search) && (
+
+          {user?.role !== "Admin" && (
+            <div className="flex border-2 border-[var(--border)] rounded-none overflow-hidden h-9">
+              <button
+                onClick={() => setViewMode("ALL")}
+                className={`px-4 text-[11px] font-bold uppercase tracking-wider transition-colors ${viewMode === "ALL" ? "bg-[var(--foreground)] text-[var(--background)]" : "bg-transparent text-[var(--foreground)] hover:bg-[rgba(255,255,255,0.05)]"}`}
+              >
+                All Cases
+              </button>
+              <button
+                onClick={() => setViewMode("MY_CASES")}
+                className={`px-4 text-[11px] font-bold uppercase tracking-wider transition-colors border-l-2 border-[var(--border)] ${viewMode === "MY_CASES" ? "bg-[var(--foreground)] text-[var(--background)]" : "bg-transparent text-[var(--foreground)] hover:bg-[rgba(255,255,255,0.05)]"}`}
+              >
+                My Cases
+              </button>
+            </div>
+          )}
+
+          {(severity || status !== "ALL" || search || viewMode !== "ALL") && (
             <button
-              onClick={() => { setSeverity(""); setStatus(""); setSearch(""); }}
+              onClick={() => { setSeverity(""); setStatus("ALL"); setSearch(""); setViewMode("ALL"); setCurrentPage(1); }}
               className="flex items-center gap-1 px-3 h-9 text-[12px] font-bold uppercase tracking-widest transition-colors"
               style={{ border: "2px solid var(--border)", color: "rgba(19, 5, 55, 0.5)", backgroundColor: "transparent" }}
               onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "#a3e635"; (e.currentTarget as HTMLButtonElement).style.color = "#a3e635"; }}
@@ -377,27 +447,29 @@ export default function Alerts() {
             </button>
           )}
         </div>
-      </motion.div>
+      </motion.div >
 
       {/* ── SUMMARY BADGES ── */}
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.12 }}
-        className="flex gap-2.5 flex-wrap items-center">
+      < motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.12 }}
+        className="flex gap-2.5 flex-wrap items-center" >
         <span className="text-[12px] font-bold uppercase tracking-widest" style={{ color: "rgba(19, 5, 55, 0.45)" }}>
           {alerts.length} alerts total
         </span>
-        {["CRITICAL", "HIGH", "MEDIUM", "LOW"].map(sev => {
-          const count = alerts.filter(a => a.severity === sev).length;
-          if (!count) return null;
-          return (
-            <Badge key={sev} variant="outline" className={`${SEV[sev]?.badge} border text-[11px] px-2 rounded-none`}>
-              {count} {sev}
-            </Badge>
-          );
-        })}
-      </motion.div>
+        {
+          ["CRITICAL", "HIGH", "MEDIUM", "LOW"].map(sev => {
+            const count = alerts.filter(a => a.severity === sev).length;
+            if (!count) return null;
+            return (
+              <Badge key={sev} variant="outline" className={`${SEV[sev]?.badge} border text-[11px] px-2 rounded-none`}>
+                {count} {sev}
+              </Badge>
+            );
+          })
+        }
+      </motion.div >
 
       {/* ── TABLE ── */}
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.16 }}>
+      < motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.16 }}>
         <div style={cardStyle}>
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
@@ -430,9 +502,10 @@ export default function Alerts() {
                     </td>
                   </tr>
                 ) : (
-                  alerts.map((alert, i) => {
+                  paginatedAlerts.map((alert: any, i) => {
                     const s = SEV[alert.severity];
-                    const effectiveStatus = statusOverrides[alert.id] ?? alert.status;
+                    const alertStatus = alert.status || "NEW";
+                    const alertAssignedTo = alert.assignedTo || null;
                     return (
                       <motion.tr
                         key={alert.id}
@@ -448,27 +521,44 @@ export default function Alerts() {
                         <td className="px-4 py-3 font-mono text-[11px]" style={{ color: "#a3e635" }}>{alert.alertId}</td>
                         <td className="px-4 py-3">
                           <p className="font-semibold" style={{ color: "var(--foreground)" }}>{alert.accountName}</p>
-                          <p className="text-[11px] font-mono" style={{ color: "rgba(19, 5, 55, 0.4)" }}>{alert.accountNumber}</p>
+                          <p className="text-[10px]" style={{ color: "rgba(19, 5, 55, 0.45)" }}>{alert.accountNumber}</p>
                         </td>
-                        <td className="px-4 py-3" style={{ color: "rgba(19, 5, 55, 0.5)" }}>{alert.pattern}</td>
+                        <td className="px-4 py-3 font-mono text-[11px]">{alert.pattern}</td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className={`h-1.5 w-1.5 rounded-full ${s?.dot}`} />
-                            <Badge variant="outline" className={`${s?.badge} border text-[10px] px-1.5 py-0 rounded-none`}>
-                              {alert.severity}
-                            </Badge>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <Badge variant="outline" className={`${STATUS[effectiveStatus] ?? ""} border text-[10px] px-1.5 py-0 rounded-none`}>
-                            {effectiveStatus.replace("_", " ")}
+                          <Badge variant="outline" className={`${s?.badge ?? ""} border text-[10px] px-1.5 py-0 rounded-none`}>
+                            {alert.severity}
                           </Badge>
                         </td>
-                        <td className="px-4 py-3 text-right font-black tabular-nums font-mono text-[12px]" style={{ color: "var(--foreground)" }}>
-                          ₹{(alert.amount / 1000).toFixed(0)}K
+                        <td className="px-4 py-3">
+                          <StatusBadge status={alertStatus} />
                         </td>
-                        <td className="px-4 py-3 text-[12px]" style={{ color: "rgba(19, 5, 55, 0.5)" }}>
-                          {alert.assignee ?? <span style={{ color: "rgba(19, 5, 55, 0.35)", fontStyle: "italic" }}>Unassigned</span>}
+                        <td className="px-4 py-3 text-right font-mono text-[12px] font-semibold">
+                          ${alert.amount.toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-right text-[11px]">
+                          {alertAssignedTo ? (
+                            <span className="font-semibold text-slate-700">{alertAssignedTo}</span>
+                          ) : alertStatus === "NEW" && user?.role === "Investigator" ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-6 text-[10px] rounded-none border-blue-500/30 text-blue-600 hover:bg-blue-500/10"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                try {
+                                  await assignAlert(alert.alertId);
+                                  toast.success("Assigned to you successfully.");
+                                  if (refetchAlerts) refetchAlerts();
+                                } catch (err) {
+                                  toast.error("Failed to assign alert.");
+                                }
+                              }}
+                            >
+                              Assign to Me
+                            </Button>
+                          ) : (
+                            <span style={{ color: "rgba(19, 5, 55, 0.35)", fontStyle: "italic" }}>--</span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-[11px] tabular-nums" style={{ color: "rgba(19, 5, 55, 0.4)" }}>
                           {new Date(alert.createdAt).toLocaleDateString()}
@@ -483,11 +573,179 @@ export default function Alerts() {
               </tbody>
             </table>
           </div>
+
+          {/* ── PAGINATION CONTROLS ── */}
+          {!alertsLoading && alerts.length > 0 && (
+            <div
+              className="flex flex-col sm:flex-row items-center justify-between px-5 py-4 gap-4"
+              style={{
+                borderTop: "2px solid var(--border)",
+                backgroundColor: "rgba(19, 5, 55, 0.015)",
+              }}
+            >
+              <div className="flex items-center gap-2 text-[11px] font-mono font-semibold" style={{ color: "rgba(19, 5, 55, 0.6)" }}>
+                <span>SHOWING</span>
+                <span className="px-1.5 py-0.5 bg-[#a3e635]/20 text-[#130537] font-black border border-[#a3e635]/50">
+                  {(effectivePage - 1) * pageSize + 1}
+                </span>
+                <span>TO</span>
+                <span className="px-1.5 py-0.5 bg-[#a3e635]/20 text-[#130537] font-black border border-[#a3e635]/50">
+                  {Math.min(effectivePage * pageSize, alerts.length)}
+                </span>
+                <span>OF</span>
+                <span className="font-black text-[12px]" style={{ color: "var(--foreground)" }}>
+                  {alerts.length}
+                </span>
+                <span className="uppercase tracking-wider">ALERTS</span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "rgba(19, 5, 55, 0.45)" }}>
+                    Rows per page:
+                  </span>
+                  <Select
+                    value={String(pageSize)}
+                    onValueChange={(val) => {
+                      setPageSize(Number(val));
+                      setCurrentPage(1);
+                    }}
+                  >
+                    <SelectTrigger
+                      className="h-8 w-20 text-[11px] font-mono font-bold rounded-none"
+                      style={{
+                        backgroundColor: "var(--card)",
+                        border: "2px solid var(--border)",
+                        color: "var(--foreground)",
+                      }}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="15">15</SelectItem>
+                      <SelectItem value="25">25</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    disabled={effectivePage === 1}
+                    onClick={() => setCurrentPage(1)}
+                    className="h-8 w-8 rounded-none border-2 disabled:opacity-30 transition-all"
+                    style={{
+                      borderColor: "var(--border)",
+                      backgroundColor: effectivePage === 1 ? "rgba(19, 5, 55, 0.05)" : "var(--card)",
+                    }}
+                    title="First Page"
+                  >
+                    <ChevronsLeft className="h-3.5 w-3.5" />
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    disabled={effectivePage === 1}
+                    onClick={() => setCurrentPage(effectivePage - 1)}
+                    className="h-8 w-8 rounded-none border-2 disabled:opacity-30 transition-all"
+                    style={{
+                      borderColor: "var(--border)",
+                      backgroundColor: effectivePage === 1 ? "rgba(19, 5, 55, 0.05)" : "var(--card)",
+                    }}
+                    title="Previous Page"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </Button>
+
+                  {(() => {
+                    const pages: (number | string)[] = [];
+                    if (totalPages <= 5) {
+                      for (let p = 1; p <= totalPages; p++) pages.push(p);
+                    } else {
+                      if (effectivePage <= 3) {
+                        pages.push(1, 2, 3, 4, "...", totalPages);
+                      } else if (effectivePage >= totalPages - 2) {
+                        pages.push(1, "...", totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
+                      } else {
+                        pages.push(1, "...", effectivePage - 1, effectivePage, effectivePage + 1, "...", totalPages);
+                      }
+                    }
+
+                    return pages.map((p, idx) => {
+                      if (p === "...") {
+                        return (
+                          <span
+                            key={`ellipsis-${idx}`}
+                            className="h-8 w-8 flex items-center justify-center font-mono text-[11px] font-bold"
+                            style={{ color: "rgba(19, 5, 55, 0.4)" }}
+                          >
+                            •••
+                          </span>
+                        );
+                      }
+                      const pageNum = p as number;
+                      const isCurrent = pageNum === effectivePage;
+                      return (
+                        <button
+                          key={pageNum}
+                          type="button"
+                          onClick={() => setCurrentPage(pageNum)}
+                          className="h-8 min-w-[32px] px-2 text-[11px] font-mono font-black transition-all"
+                          style={{
+                            border: isCurrent ? "2px solid #130537" : "2px solid var(--border)",
+                            backgroundColor: isCurrent ? "#a3e635" : "var(--card)",
+                            color: isCurrent ? "#130537" : "var(--foreground)",
+                            boxShadow: isCurrent ? "2px 2px 0px #130537" : "none",
+                          }}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    });
+                  })()}
+
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    disabled={effectivePage === totalPages}
+                    onClick={() => setCurrentPage(effectivePage + 1)}
+                    className="h-8 w-8 rounded-none border-2 disabled:opacity-30 transition-all"
+                    style={{
+                      borderColor: "var(--border)",
+                      backgroundColor: effectivePage === totalPages ? "rgba(19, 5, 55, 0.05)" : "var(--card)",
+                    }}
+                    title="Next Page"
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    disabled={effectivePage === totalPages}
+                    onClick={() => setCurrentPage(totalPages)}
+                    className="h-8 w-8 rounded-none border-2 disabled:opacity-30 transition-all"
+                    style={{
+                      borderColor: "var(--border)",
+                      backgroundColor: effectivePage === totalPages ? "rgba(19, 5, 55, 0.05)" : "var(--card)",
+                    }}
+                    title="Last Page"
+                  >
+                    <ChevronsRight className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-      </motion.div>
+      </motion.div >
 
       {/* ── DETAIL DRAWER ── */}
-      <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
+      < Sheet open={drawerOpen} onOpenChange={setDrawerOpen} >
         <SheetContent
           className="w-full sm:max-w-[480px] overflow-y-auto p-0 gap-0 [&>button]:text-[rgba(232,232,226,0.45)] [&>button]:hover:text-[#a3e635] [&>button]:right-5 [&>button]:top-5"
           style={{
@@ -501,8 +759,9 @@ export default function Alerts() {
           ) : (
             (() => {
               const s = SEV[alertDetail.severity];
-              const effectiveStatus = statusOverrides[alertDetail.id] ?? alertDetail.status;
-              const statusOptions = ["OPEN", "UNDER_INVESTIGATION", "CLOSED"] as const;
+              const alertStatus = alertDetail.status || "NEW";
+              const alertAssignedTo = alertDetail.assignee || null;
+              const effectiveStatus = statusOverrides[alertDetail.id] || alertStatus;
 
               return (
                 <div className="flex flex-col min-h-full">
@@ -543,12 +802,7 @@ export default function Alerts() {
                         >
                           {alertDetail.severity}
                         </Badge>
-                        <Badge
-                          variant="outline"
-                          className={`${STATUS[effectiveStatus] ?? ""} border text-[10px] font-bold px-2 py-0.5 rounded-none`}
-                        >
-                          {effectiveStatus.replace("_", " ")}
-                        </Badge>
+                        <StatusBadge status={alertStatus} />
                       </div>
                     </div>
                   </header>
@@ -560,7 +814,7 @@ export default function Alerts() {
                         {[
                           ["Pattern", alertDetail.pattern],
                           ["Amount", `₹${alertDetail.amount.toLocaleString()}`],
-                          ["Assignee", alertDetail.assignee ?? "Unassigned"],
+                          ["Assignee", alertAssignedTo ?? "--"],
                           ["Created", new Date(alertDetail.createdAt).toLocaleString()],
                         ].map(([label, value]) => (
                           <div key={label} className="min-w-0">
@@ -596,33 +850,49 @@ export default function Alerts() {
 
                     {/* ── Actions ── */}
                     <section className="py-6 space-y-5">
-                      <Button
-                        onClick={() => handleStartInvestigation(alertDetail.id)}
-                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
-                        style={{
-                          backgroundColor: DRAWER.accent,
-                          color: DRAWER.accentDark,
-                          border: `1px solid ${DRAWER.accentDark}`,
-                          boxShadow: `3px 3px 0px ${DRAWER.accentDark}`,
-                        }}
-                      >
-                        <Network className="h-3.5 w-3.5 mr-2" />
-                        Start Investigation
-                      </Button>
-
-                      <Button
-                        onClick={() => { setDrawerOpen(false); navigate(`/evidence?account=${alertDetail.accountId}`); }}
-                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105 mt-3"
-                        style={{
-                          backgroundColor: "#130537",
-                          color: "#e8e8e2",
-                          border: `1px solid #a3e635`,
-                          boxShadow: `3px 3px 0px #a3e635`,
-                        }}
-                      >
-                        <Shield className="h-3.5 w-3.5 mr-2 text-[#a3e635]" />
-                        Escalate to FIU Evidence Case
-                      </Button>
+                      {user?.role === "Admin" && (alertStatus === "NEW" || alertStatus === "OPEN") && (
+                        <div className="space-y-3">
+                          <label className="text-[11px] font-bold uppercase text-white/60">Assign Alert</label>
+                          <div className="flex gap-2">
+                            <Select value={selectedAssignee} onValueChange={setSelectedAssignee}>
+                              <SelectTrigger
+                                className="w-full h-9 rounded-none border text-[12px] uppercase tracking-wider font-bold shadow-none"
+                                style={{ backgroundColor: "transparent", borderColor: "#2A2F35", color: "white" }}
+                              >
+                                <SelectValue placeholder="Select Investigator" />
+                              </SelectTrigger>
+                              <SelectContent className="rounded-none border" style={{ backgroundColor: "#1A1F27", borderColor: "#2A2F35", color: "white" }}>
+                                {investigators.map((inv) => (
+                                  <SelectItem key={inv.id} value={inv.id} className="text-[12px] uppercase tracking-wider font-bold">
+                                    {inv.full_name} ({inv.username})
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Button
+                              disabled={!selectedAssignee}
+                              onClick={async () => {
+                                try {
+                                  await assignAlert(alertDetail.alertId, { assignee_id: selectedAssignee });
+                                  toast.success("Alert assigned successfully.");
+                                  if (refetchAlerts) refetchAlerts();
+                                  setDrawerOpen(false);
+                                } catch (err) {
+                                  toast.error("Failed to assign alert.");
+                                }
+                              }}
+                              className="h-9 rounded-none text-[11px] font-black uppercase tracking-widest px-4 transition-colors hover:brightness-110"
+                              style={{
+                                backgroundColor: "#a3e635",
+                                color: "#130537",
+                              }}
+                            >
+                              Assign
+                            </Button>
+                          </div>
+                          <DrawerDivider />
+                        </div>
+                      )}
 
                       <div>
                         <DrawerSectionLabel>{`// Update Status`}</DrawerSectionLabel>
@@ -653,6 +923,48 @@ export default function Alerts() {
                           })}
                         </div>
                       </div>
+
+                      <Button
+                        onClick={() => handleStartInvestigation(alertDetail.id)}
+                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
+                        style={{
+                          backgroundColor: DRAWER.accent,
+                          color: DRAWER.accentDark,
+                          border: `1px solid ${DRAWER.accentDark}`,
+                          boxShadow: `3px 3px 0px ${DRAWER.accentDark}`,
+                        }}
+                      >
+                        <Network className="h-3.5 w-3.5 mr-2" />
+                        Start Investigation
+                      </Button>
+
+                      <Button
+                        onClick={() => handleVisualizeTransaction(alertDetail.id)}
+                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
+                        style={{
+                          backgroundColor: DRAWER.surface,
+                          color: DRAWER.accent,
+                          border: `1px solid ${DRAWER.accent}`,
+                          boxShadow: `3px 3px 0px rgba(163,230,53,0.25)`,
+                        }}
+                      >
+                        <Activity className="h-3.5 w-3.5 mr-2" />
+                        Visualize Transaction
+                      </Button>
+
+                      <Button
+                        onClick={() => { setDrawerOpen(false); navigate(`/evidence?account=${alertDetail.accountId}&alertId=${alertDetail.alertId}`); }}
+                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105 mt-3"
+                        style={{
+                          backgroundColor: "#130537",
+                          color: "#e8e8e2",
+                          border: `1px solid #a3e635`,
+                          boxShadow: `3px 3px 0px #a3e635`,
+                        }}
+                      >
+                        <Shield className="h-3.5 w-3.5 mr-2 text-[#a3e635]" />
+                        Escalate to FIU Evidence Case
+                      </Button>
                     </section>
 
                     {/* ── Related Transactions ── */}

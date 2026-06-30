@@ -1,8 +1,8 @@
-import asyncio
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import os
 
-DATABASE_URL = "postgresql://neondb_owner:npg_19nVcEqwLskP@ep-ancient-salad-aopl31tx-pooler.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is not set")
 
 def check_pg():
     print("Checking Postgres Tables...")

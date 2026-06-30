@@ -4,6 +4,9 @@ import {
   FileText, Plus, Shield, ChevronRight,
   AlertTriangle, Download, Check, Loader2, Lock
 } from "lucide-react";
+import { useAuth } from "../context/AuthContext";
+import { AuditTimeline } from "../components/ui/AuditTimeline";
+import { draftStr, fetchAuditTrail } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -258,7 +261,7 @@ ${detail.fiuReportData?.actionRequired || 'Escalate STR Form 8 immediately to FI
             <div class="divider"></div>
             <div class="grid-4">
               <div class="field"><div class="label">Account Holder Name</div><div class="value-normal">${customerName}</div></div>
-              <div class="field"><div class="label">Masked Aadhaar / PAN</div><div class="value">XXXX-XXXX-${String(Math.abs(parseInt(primaryAcc.replace(/\D/g,''))||9) % 10000).padStart(4,'0')} / XXXXX${String(parseInt(primaryAcc.replace(/\D/g,''))||1234).slice(-4)}X</div></div>
+              <div class="field"><div class="label">Masked Aadhaar / PAN</div><div class="value">XXXX-XXXX-${String(Math.abs(parseInt(primaryAcc.replace(/\D/g,''))||9) % 10000).padStart(4,'0')} / XXXXX${String(parseInt(primaryAcc.replace(/\D/g,''))||1234).slice(-4)}</div></div>
               <div class="field"><div class="label">Branch Name &amp; Code</div><div class="value">Kalyan East Branch (${branchCode})</div></div>
               <div class="field"><div class="label">PMLA Risk Classification</div><div class="value" style="color:#b91c1c">HIGH RISK &#8212; ${riskScore}/100</div></div>
             </div>
@@ -422,9 +425,13 @@ export default function Evidence() {
   const [form, setForm] = useState({ title: "", investigator: "", alertId: "", suspiciousAccounts: "" });
   const [isCreating, setIsCreating] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const { user } = useAuth();
   const { toast } = useToast();
 
-  const { data: liveAlertsData, loading: alertsLoading } = useAlertsQuick(100);
+  const { data: liveAlertsData, loading: alertsLoading, refetch: refetchAlerts } = useAlertsQuick(100);
+
+  const [auditLog, setAuditLog] = useState<any[]>([]);
+  const [loadingAudit, setLoadingAudit] = useState(false);
 
   const liveCases = useMemo(() => {
     if (!liveAlertsData?.alerts?.length) return [];
@@ -432,6 +439,7 @@ export default function Evidence() {
       id: i + 1,
       caseId: `CASE-2026-${String(i + 1).padStart(3, "0")}`,
       title: `FIU Investigation: ${a.flagged_for[0] || "Suspicious Activity"} — ${a.account_id}`,
+      description: `Automated alert detection for ${a.account_id}`,
       investigator: "Agent Investigator",
       alertId: `ALT-${a.account_id}`,
       status: (a.risk_level === "CRITICAL" ? "IN_PROGRESS" : "OPEN") as "OPEN" | "IN_PROGRESS" | "UNDER_REVIEW" | "CLOSED",
@@ -484,6 +492,7 @@ export default function Evidence() {
             id: newId,
             caseId: `CASE-2026-${String(currentCases.length + 1).padStart(3, "0")}`,
             title: `FIU Investigation: Escalated Alert (${cleanName})`,
+            description: `Escalated investigation for ${cleanName}`,
             investigator: "Agent Investigator",
             alertId: `ALT-${cleanName}`,
             status: "IN_PROGRESS",
@@ -640,11 +649,20 @@ All transactions settled via regulated Indian payment rails (RTGS/NEFT/IMPS) and
       };
     }
 
-    if (!liveReport) {
-      return null;
-    }
-
   }, [selectedId, selectedCase, liveReport, reportLoading]);
+
+  useEffect(() => {
+    if (activeCaseDetail?.case?.alertId) {
+      setLoadingAudit(true);
+      fetchAuditTrail(activeCaseDetail.case.alertId)
+        .then(data => setAuditLog(data.audit_log || []))
+        .catch(err => {
+          console.error("Failed to fetch audit log", err);
+          setAuditLog([]);
+        })
+        .finally(() => setLoadingAudit(false));
+    }
+  }, [activeCaseDetail?.case?.alertId]);
 
   const handleCreate = () => {
     if (!form.title || !form.investigator || !form.alertId) return;
@@ -853,7 +871,6 @@ All transactions settled via regulated Indian payment rails (RTGS/NEFT/IMPS) and
                     <h2 className="text-[18px] font-black uppercase tracking-tight" style={{ color: "#130537" }}>{activeCaseDetail.case.title}</h2>
                   </div>
                   <div className="flex gap-2 flex-wrap">
-                    {/* CSV export removed per request */}
                     <button
                       onClick={() => activeCaseDetail && exportXLSX(activeCaseDetail)}
                       title="Export as native Excel (.xlsx)"
@@ -861,12 +878,39 @@ All transactions settled via regulated Indian payment rails (RTGS/NEFT/IMPS) and
                     >
                       <Download className="h-3 w-3" /> XLSX
                     </button>
-                    <button
-                      onClick={() => activeCaseDetail && exportPDF(activeCaseDetail)}
-                      className="px-3.5 py-1.5 text-[11px] font-extrabold border-2 border-[#130537] transition-all flex items-center gap-1.5 bg-[#a3e635] text-[#130537] hover:bg-[#8cc629] shadow-sm"
-                    >
-                      <Download className="h-3 w-3" /> Download FIU STR Report
-                    </button>
+                    {(() => {
+                      if (!activeCaseDetail?.case?.alertId) return null;
+                      const status = activeCaseDetail.case.status;
+                      
+                      if (user?.role === "Investigator" && (status === "NEW" || status === "OPEN" || status === "UNDER_INVESTIGATION" || status === "IN_PROGRESS")) {
+                        return (
+                          <button
+                            onClick={async () => {
+                              try {
+                                await draftStr(activeCaseDetail.case.alertId);
+                                toast({
+                                  title: "STR Drafted",
+                                  description: "STR sent to Principal Officer for sign-off.",
+                                });
+                                if (refetchAlerts) refetchAlerts();
+                                const auditData = await fetchAuditTrail(activeCaseDetail.case.alertId);
+                                setAuditLog(auditData.audit_log || []);
+                              } catch (err) {
+                                toast({
+                                  variant: "destructive",
+                                  title: "Failed to draft STR",
+                                  description: "Could not communicate with server.",
+                                });
+                              }
+                            }}
+                            className="px-3.5 py-1.5 text-[11px] font-extrabold border-2 border-[#130537] transition-all flex items-center gap-1.5 bg-[#a3e635] text-[#130537] hover:bg-[#8cc629] shadow-sm"
+                          >
+                            <FileText className="h-3 w-3" /> Draft STR
+                          </button>
+                        );
+                      }
+                      return null;
+                    })()}
                     <button
                       onClick={handleGeneratePackage}
                       disabled={isGenerating}
@@ -889,7 +933,7 @@ All transactions settled via regulated Indian payment rails (RTGS/NEFT/IMPS) and
                       <p className="text-[9px] font-bold uppercase tracking-wider mb-1" style={{ color: "rgba(19, 5, 55, 0.45)" }}>{label}</p>
                       {i === 2 ? (
                         <Badge variant="outline" className={`text-[10px] rounded-none border ${(CASE_STATUS[activeCaseDetail.case.status] || CASE_STATUS.IN_PROGRESS).badge}`}>
-                          {(CASE_STATUS[activeCaseDetail.case.status] || CASE_STATUS.IN_PROGRESS).label}
+                          {(activeCaseDetail.case.status || "OPEN").replace("_", " ")}
                         </Badge>
                       ) : (
                         <p className={`text-[13px] font-bold ${i === 1 ? "font-mono text-[#a3e635]" : i === 3 ? "font-mono text-[#130537]" : "text-[#130537]"}`}>{value}</p>
@@ -974,17 +1018,11 @@ All transactions settled via regulated Indian payment rails (RTGS/NEFT/IMPS) and
                 </div>
               )}
 
-              <div className="p-4" style={{ ...cardStyle, borderColor: "#130537" }}>
+              <div style={cardStyle} className="p-4 mt-6 mb-8">
                 <div className="pb-3 border-b-2 border-[#130537] mb-3 flex items-center justify-between">
                   <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#a3e635] flex items-center gap-2">
-                    <Shield className="h-3.5 w-3.5" /> // FIU Report Preview
+                    <Shield className="h-3.5 w-3.5" style={{ color: "#a3e635" }} /> // Audit Log
                   </h3>
-                  <div className="flex items-center gap-2">
-                    <Lock className="h-3.5 w-3.5 text-amber-600" />
-                    <Badge variant="outline" className="text-[9px] bg-amber-500/10 text-amber-600 border-amber-500/25 uppercase tracking-wider rounded-none">
-                      Confidential
-                    </Badge>
-                  </div>
                 </div>
                 <div className="space-y-3">
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">

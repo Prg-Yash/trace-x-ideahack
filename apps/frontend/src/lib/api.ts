@@ -11,13 +11,13 @@ export const BASE = rawUrl
 
 // ── generic fetch wrapper ────────────────────────────────────────────────────
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = localStorage.getItem("trace_x_token");
-  
+  const token = sessionStorage.getItem("trace-x-token");
+
   const headers: HeadersInit = {
     "Content-Type": "application/json",
     "ngrok-skip-browser-warning": "true",
   };
-  
+
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
@@ -90,6 +90,7 @@ export type ScoreResult = {
 
 export type AlertItem = {
   account_id: string;
+  customer_name?: string;
   risk_level: string;
   flagged_for: string[];
   score: number;
@@ -107,7 +108,10 @@ export type TraceResult = {
   fraud_type: string;
   chain: string[];
   amounts: number[];
+  timestamps?: string[];
+  channels?: string[];
   confidence?: number;
+  error?: string;
 };
 
 export type ShapFactor = {
@@ -247,13 +251,36 @@ export const fetchAlertsQuick = (limit = 200) =>
 export const fetchAlerts = (limit = 50) =>
   apiFetch<AlertsResponse>(`/alerts?limit=${limit}`);
 
+/** Admin investigator management */
+export const fetchInvestigators = () =>
+  apiFetch<{ id: string; username: string; full_name: string; role: string }[]>("/auth/users/investigators");
+
+export const createInvestigator = (data: any) =>
+  apiFetch<{ id: string; username: string; full_name: string; role: string }>("/auth/users/investigator", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
+export const updateInvestigatorPassword = (userId: string, newPassword: string) =>
+  apiFetch<{ message: string }>(`/auth/users/${userId}/password`, {
+    method: "PATCH",
+    body: JSON.stringify({ new_password: newPassword }),
+  });
+
+export const deleteInvestigator = (userId: string) =>
+  apiFetch<{ message: string }>(`/auth/users/${userId}`, {
+    method: "DELETE",
+  });
+
 /** Risk score for a single account */
 export const fetchScore = (accountId: string) =>
   apiFetch<ScoreResult>(`/score/${encodeURIComponent(accountId)}`);
 
-/** Graph trace for layering / round-trip */
-export const fetchTrace = (accountId: string) =>
-  apiFetch<TraceResult>(`/trace/${encodeURIComponent(accountId)}`);
+/** Graph trace for an account */
+export const fetchTrace = (accountId: string, hint = "") => {
+  const qs = hint ? `?hint=${encodeURIComponent(hint)}` : "";
+  return apiFetch<TraceResult>(`/trace/${encodeURIComponent(accountId)}${qs}`);
+};
 
 /** Full SHAP/XAI explanation package (all models) */
 export const fetchExplain = (accountId: string) =>
@@ -285,4 +312,32 @@ export const addAccountNote = (accountId: string, content: string, author = "FIN
   apiFetch<InvestigationNote>(`/accounts/${encodeURIComponent(accountId)}/notes`, {
     method: "POST",
     body: JSON.stringify({ author, content }),
+  });
+
+/** Workflow Endpoints */
+export const assignAlert = (alertId: string, data?: { assignee_id: string }) =>
+  apiFetch<{ message: string, status: string }>(`/alerts/${encodeURIComponent(alertId)}/assign`, {
+    method: "POST",
+    body: data ? JSON.stringify(data) : undefined
+  });
+
+export const draftStr = (alertId: string) =>
+  apiFetch<{ message: string, status: string }>(`/alerts/${encodeURIComponent(alertId)}/draft-str`, { method: "POST" });
+
+export const approveStr = (alertId: string) =>
+  apiFetch<{ message: string, status: string }>(`/alerts/${encodeURIComponent(alertId)}/approve-str`, { method: "POST" });
+
+export const rejectStr = (alertId: string) =>
+  apiFetch<{ message: string, status: string }>(`/alerts/${encodeURIComponent(alertId)}/reject-str`, { method: "POST" });
+
+export const fetchAuditTrail = (alertId: string) =>
+  apiFetch<{ audit_log: any[] }>(`/alerts/${encodeURIComponent(alertId)}/audit`);
+
+/** Chatbot Graph-RAG Endpoint */
+export type ChatHistoryTurn = { role: "user" | "ai"; content: string };
+
+export const sendChatMessage = (message: string, history: ChatHistoryTurn[] = []) =>
+  apiFetch<{ response: string }>("/chat", {
+    method: "POST",
+    body: JSON.stringify({ message, history }),
   });
