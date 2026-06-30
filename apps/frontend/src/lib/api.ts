@@ -291,3 +291,12 @@ export const addAccountNote = (accountId: string, content: string, author = "FIN
     method: "POST",
     body: JSON.stringify({ author, content }),
   });
+
+/** Chatbot Graph-RAG Endpoint */
+export type ChatHistoryTurn = { role: "user" | "ai"; content: string };
+
+export const sendChatMessage = (message: string, history: ChatHistoryTurn[] = []) =>
+  apiFetch<{ response: string }>("/chat", {
+    method: "POST",
+    body: JSON.stringify({ message, history }),
+  });

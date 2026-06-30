@@ -75,6 +75,8 @@
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
     "@types/dagre": "^0.7.54",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "trace-x": "file:../..",
     "xlsx": "^0.18.5"
   }

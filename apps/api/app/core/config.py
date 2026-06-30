@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     NEO4J_USER: str
     NEO4J_PASSWORD: str
     GEMINI_API_KEY: str | None = None
+    OPEN_ROUTER_API_KEY: str | None = None
 
     model_config = SettingsConfigDict(env_file=(str(ROOT_ENV), str(API_ENV)), extra="ignore")
 

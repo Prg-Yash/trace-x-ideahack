@@ -7,6 +7,7 @@ import { InvestigationProvider } from "@/context/InvestigationContext";
 import { AuthProvider } from "@/context/AuthContext";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import NotFound from "@/pages/not-found";
+import { CommandPalette } from "@/components/chat/CommandPalette";
 
 import Home from "@/pages/Home";
 import Login from "@/pages/Login";
@@ -72,9 +73,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/login" component={Login} />
       <Route>
-        <ProtectedRoute>
-          <ProtectedRoutes />
-        </ProtectedRoute>
+        <ProtectedRoutes />
       </Route>
     </Switch>
   );
@@ -92,6 +91,7 @@ function App() {
           </AuthProvider>
         </WouterRouter>
         <Toaster />
+        <CommandPalette />
       </TooltipProvider>
     </ErrorBoundary>
   );
