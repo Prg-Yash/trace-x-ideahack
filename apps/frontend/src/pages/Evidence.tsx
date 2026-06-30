@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { AuditTimeline } from "../components/ui/AuditTimeline";
-import { draftStr, fetchAuditTrail } from "@/lib/api";
+import { draftStr, approveStr, rejectStr, fetchAuditTrail, assignAlert } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -167,7 +167,7 @@ function exportPDF(detail: any) {
               <div class="field"><div class="label">Reporting Entity (RE) Name</div><div class="value">${reportingEntity}</div></div>
               <div class="field"><div class="label">RE Type</div><div class="value">Scheduled Commercial Bank</div></div>
               <div class="field"><div class="label">FINnet RE Registration No.</div><div class="value">${reNumber}</div></div>
-              <div class="field"><div class="label">Principal Officer (PO)</div><div class="value">${detail.case?.investigator || 'Rajesh Kumar, CCO'}</div></div>
+              <div class="field"><div class="label">Branch Manager (BM)</div><div class="value">${detail.case?.investigator || 'Rajesh Kumar, BM'}</div></div>
             </div>
           </div>
         </div>
@@ -441,8 +441,8 @@ export default function Evidence() {
       title: `FIU Investigation: ${a.flagged_for[0] || "Suspicious Activity"} — ${a.account_id}`,
       description: `Automated alert detection for ${a.account_id}`,
       investigator: "Agent Investigator",
-      alertId: `ALT-${a.account_id}`,
-      status: (a.risk_level === "CRITICAL" ? "IN_PROGRESS" : "OPEN") as "OPEN" | "IN_PROGRESS" | "UNDER_REVIEW" | "CLOSED",
+      alertId: a.alert_id || `ALT-${a.account_id}-${(a.flagged_for?.[0] || "fraud").toLowerCase()}`,
+      status: a.status || (a.risk_level === "CRITICAL" ? "IN_PROGRESS" : "OPEN"),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       suspiciousAccounts: [a.account_id],
@@ -882,31 +882,101 @@ All transactions settled via regulated Indian payment rails (RTGS/NEFT/IMPS) and
                       if (!activeCaseDetail?.case?.alertId) return null;
                       const status = activeCaseDetail.case.status;
                       
-                      if (user?.role === "Investigator" && (status === "NEW" || status === "OPEN" || status === "UNDER_INVESTIGATION" || status === "IN_PROGRESS")) {
+                      if (user?.role === "Investigator") {
+                        if (status === "NEW" || status === "OPEN") {
+                          return (
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await assignAlert(activeCaseDetail.case.alertId);
+                                  toast({
+                                    title: "Case Assigned",
+                                    description: "You have taken ownership of this case.",
+                                  });
+                                  if (refetchAlerts) refetchAlerts();
+                                  const auditData = await fetchAuditTrail(activeCaseDetail.case.alertId);
+                                  setAuditLog(auditData.audit_log || []);
+                                } catch (err) {
+                                  toast({ variant: "destructive", title: "Failed to assign case", description: "Could not communicate with server." });
+                                }
+                              }}
+                              className="px-3.5 py-1.5 text-[11px] font-extrabold border-2 border-[#130537] transition-all flex items-center gap-1.5 bg-[#60a5fa] text-[#130537] hover:bg-[#3b82f6] shadow-sm"
+                            >
+                              <Lock className="h-3 w-3" /> Assign to Me
+                            </button>
+                          );
+                        }
+                        if (status === "UNDER_INVESTIGATION" || status === "IN_PROGRESS") {
+                          return (
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await draftStr(activeCaseDetail.case.alertId);
+                                  toast({
+                                    title: "STR Drafted",
+                                    description: "STR sent to Branch Manager for sign-off.",
+                                  });
+                                  if (refetchAlerts) refetchAlerts();
+                                  const auditData = await fetchAuditTrail(activeCaseDetail.case.alertId);
+                                  setAuditLog(auditData.audit_log || []);
+                                } catch (err) {
+                                  toast({
+                                    variant: "destructive",
+                                    title: "Failed to draft STR",
+                                    description: "Could not communicate with server.",
+                                  });
+                                }
+                              }}
+                              className="px-3.5 py-1.5 text-[11px] font-extrabold border-2 border-[#130537] transition-all flex items-center gap-1.5 bg-[#a3e635] text-[#130537] hover:bg-[#8cc629] shadow-sm"
+                            >
+                              <FileText className="h-3 w-3" /> Draft STR
+                            </button>
+                          );
+                        }
+                      }
+                      
+                      if ((user?.role === "Admin" || user?.role === "Branch Manager") && status === "PENDING_APPROVAL") {
                         return (
-                          <button
-                            onClick={async () => {
-                              try {
-                                await draftStr(activeCaseDetail.case.alertId);
-                                toast({
-                                  title: "STR Drafted",
-                                  description: "STR sent to Principal Officer for sign-off.",
-                                });
-                                if (refetchAlerts) refetchAlerts();
-                                const auditData = await fetchAuditTrail(activeCaseDetail.case.alertId);
-                                setAuditLog(auditData.audit_log || []);
-                              } catch (err) {
-                                toast({
-                                  variant: "destructive",
-                                  title: "Failed to draft STR",
-                                  description: "Could not communicate with server.",
-                                });
-                              }
-                            }}
-                            className="px-3.5 py-1.5 text-[11px] font-extrabold border-2 border-[#130537] transition-all flex items-center gap-1.5 bg-[#a3e635] text-[#130537] hover:bg-[#8cc629] shadow-sm"
-                          >
-                            <FileText className="h-3 w-3" /> Draft STR
-                          </button>
+                          <>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await approveStr(activeCaseDetail.case.alertId);
+                                  toast({
+                                    title: "STR Approved",
+                                    description: "The STR has been successfully filed with the FIU.",
+                                  });
+                                  if (refetchAlerts) refetchAlerts();
+                                  const auditData = await fetchAuditTrail(activeCaseDetail.case.alertId);
+                                  setAuditLog(auditData.audit_log || []);
+                                } catch (err) {
+                                  toast({ variant: "destructive", title: "Failed to approve STR", description: "Server error." });
+                                }
+                              }}
+                              className="px-3.5 py-1.5 text-[11px] font-extrabold border-2 border-[#130537] transition-all flex items-center gap-1.5 bg-[#a3e635] text-[#130537] hover:bg-[#8cc629] shadow-sm"
+                            >
+                              <Check className="h-3 w-3" /> Approve & File
+                            </button>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await rejectStr(activeCaseDetail.case.alertId);
+                                  toast({
+                                    title: "STR Rejected",
+                                    description: "Case has been returned to the investigator.",
+                                  });
+                                  if (refetchAlerts) refetchAlerts();
+                                  const auditData = await fetchAuditTrail(activeCaseDetail.case.alertId);
+                                  setAuditLog(auditData.audit_log || []);
+                                } catch (err) {
+                                  toast({ variant: "destructive", title: "Failed to reject STR", description: "Server error." });
+                                }
+                              }}
+                              className="px-3.5 py-1.5 text-[11px] font-extrabold border-2 border-[#130537] transition-all flex items-center gap-1.5 bg-[#ff4d4f] text-white hover:bg-[#ff7875] shadow-sm"
+                            >
+                              Reject
+                            </button>
+                          </>
                         );
                       }
                       return null;
@@ -994,9 +1064,9 @@ All transactions settled via regulated Indian payment rails (RTGS/NEFT/IMPS) and
                     </h3>
                   </div>
                   <div className="space-y-2.5">
-                    {activeCaseDetail.findings.map((finding) => (
+                    {activeCaseDetail.findings.map((finding, idx) => (
                       <div
-                        key={finding.id}
+                        key={finding.category + idx}
                         style={surfaceStyle}
                         className="p-3"
                       >

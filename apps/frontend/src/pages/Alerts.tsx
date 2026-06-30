@@ -105,7 +105,7 @@ function DrawerSectionLabel({ children }: { children: ReactNode }) {
   );
 }
 
-const statusOptions = ["NEW", "OPEN", "INVESTIGATING", "CLOSED_FALSE_POSITIVE", "CLOSED_TRUE_POSITIVE"];
+const statusOptions = ["NEW", "OPEN", "INVESTIGATING", "PENDING_REVIEW", "CLOSED"];
 
 export default function Alerts() {
   const [, navigate] = useLocation();
@@ -122,10 +122,10 @@ export default function Alerts() {
   const [, setTick] = useState(0);
 
   // Admin states
-  const [investigators, setInvestigators] = useState<{ id: string; username: string; full_name: string }[]>([]);
+  const [investigators, setInvestigators] = useState<{ id: string; username: string; full_name: string; branch_code?: string }[]>([]);
 
   useEffect(() => {
-    if (user?.role === "Admin") {
+    if (user?.role === "Admin" || user?.role === "Branch Manager") {
       fetchInvestigators().then(setInvestigators).catch(console.error);
     }
   }, [user]);
@@ -245,12 +245,14 @@ export default function Alerts() {
         pattern: a.flagged_for?.[0] ?? a.pattern_type ?? "UNKNOWN",
         amount: a.total_amount ?? Math.round((a.score || a.fraud_probability || 0.9) * 5_000_000),
         assignee: a.assigned_to || null,
+        assigneeId: a.assignee_id || null,
         description: `Fraud pattern detected: ${(a.flagged_for || []).join(", ")}`,
         createdAt: createdAtStr,
         updatedAt: new Date().toISOString(),
         accountName: (a.customer_name || a.account_id).replace(/\s*\(\d+\)$/, ""),
         accountNumber: `${a.account_id} (${a.branch_name || "Main Branch"})`,
         rawAccountId: a.account_id,
+        branchCode: a.branch_code,
       };
     })
     : [];
@@ -538,7 +540,7 @@ export default function Alerts() {
                         <td className="px-4 py-3 text-right text-[11px]">
                           {alertAssignedTo ? (
                             <span className="font-semibold text-slate-700">{alertAssignedTo}</span>
-                          ) : alertStatus === "NEW" && user?.role === "Investigator" ? (
+                          ) : (alertStatus === "NEW" || alertStatus === "OPEN") && user?.role === "Investigator" ? (
                             <Button
                               size="sm"
                               variant="outline"
@@ -850,7 +852,7 @@ export default function Alerts() {
 
                     {/* ── Actions ── */}
                     <section className="py-6 space-y-5">
-                      {user?.role === "Admin" && (alertStatus === "NEW" || alertStatus === "OPEN") && (
+                      {(user?.role === "Admin" || user?.role === "Branch Manager") && (alertStatus === "NEW" || alertStatus === "OPEN") && (
                         <div className="space-y-3">
                           <label className="text-[11px] font-bold uppercase text-white/60">Assign Alert</label>
                           <div className="flex gap-2">
@@ -862,7 +864,7 @@ export default function Alerts() {
                                 <SelectValue placeholder="Select Investigator" />
                               </SelectTrigger>
                               <SelectContent className="rounded-none border" style={{ backgroundColor: "#1A1F27", borderColor: "#2A2F35", color: "white" }}>
-                                {investigators.map((inv) => (
+                                {investigators.filter(inv => inv.branch_code === alertDetail.branchCode).map((inv) => (
                                   <SelectItem key={inv.id} value={inv.id} className="text-[12px] uppercase tracking-wider font-bold">
                                     {inv.full_name} ({inv.username})
                                   </SelectItem>
@@ -894,77 +896,82 @@ export default function Alerts() {
                         </div>
                       )}
 
-                      <div>
-                        <DrawerSectionLabel>{`// Update Status`}</DrawerSectionLabel>
-                        <div
-                          className="flex w-full overflow-hidden"
-                          style={{ border: `1px solid ${DRAWER.border}` }}
-                        >
-                          {statusOptions.map((statusKey, index) => {
-                            const isActive = effectiveStatus === statusKey;
-                            return (
-                              <button
-                                key={statusKey}
-                                type="button"
-                                onClick={() =>
-                                  setStatusOverrides(prev => ({ ...prev, [alertDetail.id]: statusKey }))
-                                }
-                                className="flex-1 px-2 py-2.5 text-[9px] font-bold uppercase tracking-[0.12em] transition-colors"
-                                style={{
-                                  borderRight: index < statusOptions.length - 1 ? `1px solid ${DRAWER.border}` : undefined,
-                                  backgroundColor: isActive ? "rgba(163,230,53,0.12)" : DRAWER.surface,
-                                  color: isActive ? DRAWER.accent : DRAWER.textMuted,
-                                  boxShadow: isActive ? "inset 0 -2px 0 #a3e635" : undefined,
-                                }}
-                              >
-                                {statusKey.replace("_", " ")}
-                              </button>
-                            );
-                          })}
+                      {user?.role === "Investigator" && (alertStatus === "NEW" || alertStatus === "OPEN") && (
+                        <div className="space-y-3 mb-4">
+                          <Button
+                            onClick={async () => {
+                              try {
+                                await assignAlert(alertDetail.alertId);
+                                toast.success("Case Assigned to You");
+                                if (refetchAlerts) refetchAlerts();
+                                setDrawerOpen(false);
+                              } catch (err) {
+                                toast.error("Failed to assign case.");
+                              }
+                            }}
+                            className="w-full h-11 rounded-none text-[11px] font-black uppercase tracking-widest transition-colors hover:brightness-110"
+                            style={{
+                              backgroundColor: "#60a5fa",
+                              color: "#130537",
+                              border: `1px solid #130537`,
+                              boxShadow: `3px 3px 0px #130537`,
+                            }}
+                          >
+                            <User className="h-4 w-4 mr-2" />
+                            Assign to Me
+                          </Button>
                         </div>
-                      </div>
+                      )}
 
-                      <Button
-                        onClick={() => handleStartInvestigation(alertDetail.id)}
-                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
-                        style={{
-                          backgroundColor: DRAWER.accent,
-                          color: DRAWER.accentDark,
-                          border: `1px solid ${DRAWER.accentDark}`,
-                          boxShadow: `3px 3px 0px ${DRAWER.accentDark}`,
-                        }}
-                      >
-                        <Network className="h-3.5 w-3.5 mr-2" />
-                        Start Investigation
-                      </Button>
+                      {/* Only allow actions if not an investigator, or if assigned to the investigator */}
+                      {!(user?.role === "Investigator" && alertDetail.assigneeId !== user?.id) && (
+                        <>
+                          {!["PENDING_APPROVAL", "FIU_SUBMITTED", "FILED", "CLOSED"].includes((alertDetail.status || "").toUpperCase()) && (
+                            <Button
+                              onClick={() => handleStartInvestigation(alertDetail.id)}
+                              className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
+                              style={{
+                                backgroundColor: DRAWER.accent,
+                                color: DRAWER.accentDark,
+                                border: `1px solid ${DRAWER.accentDark}`,
+                                boxShadow: `3px 3px 0px ${DRAWER.accentDark}`,
+                                marginBottom: "12px",
+                              }}
+                            >
+                              <Network className="h-3.5 w-3.5 mr-2" />
+                              Start Investigation
+                            </Button>
+                          )}
 
-                      <Button
-                        onClick={() => handleVisualizeTransaction(alertDetail.id)}
-                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
-                        style={{
-                          backgroundColor: DRAWER.surface,
-                          color: DRAWER.accent,
-                          border: `1px solid ${DRAWER.accent}`,
-                          boxShadow: `3px 3px 0px rgba(163,230,53,0.25)`,
-                        }}
-                      >
-                        <Activity className="h-3.5 w-3.5 mr-2" />
-                        Visualize Transaction
-                      </Button>
+                          <Button
+                            onClick={() => handleVisualizeTransaction(alertDetail.id)}
+                            className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105"
+                            style={{
+                              backgroundColor: DRAWER.surface,
+                              color: DRAWER.accent,
+                              border: `1px solid ${DRAWER.accent}`,
+                              boxShadow: `3px 3px 0px rgba(163,230,53,0.25)`,
+                            }}
+                          >
+                            <Activity className="h-3.5 w-3.5 mr-2" />
+                            Visualize Transaction
+                          </Button>
 
-                      <Button
-                        onClick={() => { setDrawerOpen(false); navigate(`/evidence?account=${alertDetail.accountId}&alertId=${alertDetail.alertId}`); }}
-                        className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105 mt-3"
-                        style={{
-                          backgroundColor: "#130537",
-                          color: "#e8e8e2",
-                          border: `1px solid #a3e635`,
-                          boxShadow: `3px 3px 0px #a3e635`,
-                        }}
-                      >
-                        <Shield className="h-3.5 w-3.5 mr-2 text-[#a3e635]" />
-                        Escalate to FIU Evidence Case
-                      </Button>
+                          <Button
+                            onClick={() => { setDrawerOpen(false); navigate(`/evidence?account=${alertDetail.accountId}&alertId=${alertDetail.alertId}`); }}
+                            className="w-full rounded-none text-[11px] font-black uppercase tracking-[0.18em] h-11 transition-all hover:brightness-105 mt-3"
+                            style={{
+                              backgroundColor: "#130537",
+                              color: "#e8e8e2",
+                              border: `1px solid #a3e635`,
+                              boxShadow: `3px 3px 0px #a3e635`,
+                            }}
+                          >
+                            <Shield className="h-3.5 w-3.5 mr-2 text-[#a3e635]" />
+                            Escalate to FIU Evidence Case
+                          </Button>
+                        </>
+                      )}
                     </section>
 
                     {/* ── Related Transactions ── */}

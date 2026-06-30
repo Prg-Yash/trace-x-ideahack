@@ -9,6 +9,8 @@ import { BASE } from "@/lib/api";
 export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [otp, setOtp] = useState("");
+  const [needs2FA, setNeeds2FA] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { login } = useAuth();
   const [, setLocation] = useLocation();
@@ -21,6 +23,9 @@ export default function Login() {
       const formData = new URLSearchParams();
       formData.append("username", username);
       formData.append("password", password);
+      if (needs2FA && otp) {
+        formData.append("totp_code", otp);
+      }
 
       const res = await fetch(`${BASE}/auth/login`, {
         method: "POST",
@@ -29,7 +34,17 @@ export default function Login() {
       });
 
       if (!res.ok) {
-        throw new Error("Invalid credentials");
+        const errorData = await res.json().catch(() => ({}));
+        if (errorData.detail === "2FA code required") {
+          setNeeds2FA(true);
+          setIsSubmitting(false);
+          toast({
+            title: "2FA Required",
+            description: "Please enter your authentication code.",
+          });
+          return;
+        }
+        throw new Error(errorData.detail || "Invalid credentials");
       }
 
       const data = await res.json();
@@ -38,11 +53,19 @@ export default function Login() {
         headers: { "Authorization": `Bearer ${data.access_token}` }
       });
       const userData = await meRes.json();
+      
+      const userPayload = {
+        id: userData.id,
+        name: userData.full_name || userData.name,
+        role: userData.role,
+        username: userData.username,
+        branchCode: userData.branch_code
+      };
 
-      login(userData, data.access_token);
+      login(userPayload, data.access_token);
       toast({
         title: "Authentication Successful",
-        description: `Welcome back, Investigator ${userData.username}.`,
+        description: `Welcome back, ${userPayload.role} ${userPayload.name}.`,
       });
       setLocation("/dashboard");
     } catch (error) {
@@ -142,6 +165,32 @@ export default function Login() {
                 />
               </div>
             </div>
+
+            {needs2FA && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                className="space-y-2"
+              >
+                <label className="text-[10px] font-bold text-[#130537] uppercase tracking-widest block">
+                  // Authenticator Code
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                    <Shield className="h-4 w-4 text-[#130537] opacity-50" />
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    value={otp}
+                    onChange={(e) => setOtp(e.target.value)}
+                    className="w-full bg-[#f5f5f0] border-2 border-[#130537] rounded-none py-3 pl-10 pr-4 text-sm text-[#130537] placeholder-[#130537] placeholder-opacity-40 focus:outline-none focus:ring-0 focus:border-[#a3e635] transition-colors font-mono tracking-widest font-bold"
+                    placeholder="123456"
+                    maxLength={6}
+                  />
+                </div>
+              </motion.div>
+            )}
 
             <button
               type="submit"

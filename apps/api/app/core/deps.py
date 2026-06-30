@@ -23,10 +23,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme), conn = Depends(g
         raise credentials_exception
         
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("SELECT id, username, full_name, role FROM users WHERE username = %s", (username,))
+        cur.execute("""
+            SELECT u.id, u.username, u.full_name, u.role, u.branch_id, u.is_active, b.branch_code
+            FROM users u
+            LEFT JOIN branches b ON u.branch_id = b.id
+            WHERE u.username = %s
+        """, (username,))
         user = cur.fetchone()
         
-    if user is None:
+    if user is None or not user.get("is_active"):
         raise credentials_exception
     
     # Format for JSON serialization (uuid -> str)

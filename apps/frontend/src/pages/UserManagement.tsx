@@ -10,7 +10,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { fetchInvestigators, createInvestigator, updateInvestigatorPassword, deleteInvestigator } from "@/lib/api";
+import { fetchInvestigators, createInvestigator, updateInvestigatorPassword, deleteInvestigator, fetchBranches } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const cardStyle = {
   backgroundColor: "var(--card)",
@@ -26,7 +28,11 @@ export default function UserManagement() {
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newFullName, setNewFullName] = useState("");
+  const [newBranchId, setNewBranchId] = useState("");
+  const [newRole, setNewRole] = useState("Investigator");
   const [createLoading, setCreateLoading] = useState(false);
+  const [branches, setBranches] = useState<{id: number; branch_code: string; name: string}[]>([]);
+  const { user } = useAuth();
 
   // Password Update states
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
@@ -40,7 +46,10 @@ export default function UserManagement() {
 
   useEffect(() => {
     loadInvestigators();
-  }, []);
+    if (user?.role === "Admin") {
+      fetchBranches().then(setBranches).catch(console.error);
+    }
+  }, [user]);
 
   const loadInvestigators = async () => {
     try {
@@ -60,11 +69,19 @@ export default function UserManagement() {
     
     setCreateLoading(true);
     try {
-      await createInvestigator({ username: newUsername, password: newPassword, full_name: newFullName });
-      toast.success("Investigator created successfully!");
+      await createInvestigator({ 
+        username: newUsername, 
+        password: newPassword, 
+        full_name: newFullName,
+        branch_id: newBranchId ? parseInt(newBranchId) : undefined,
+        role: newRole
+      });
+      toast.success("User created successfully!");
       setNewUsername("");
       setNewPassword("");
       setNewFullName("");
+      setNewBranchId("");
+      setNewRole("Investigator");
       await loadInvestigators();
     } catch (err: any) {
       toast.error(err.message || "Failed to create investigator");
@@ -138,7 +155,7 @@ export default function UserManagement() {
                 // Onboarding
               </p>
               <h2 className="text-lg font-black uppercase tracking-tight" style={{ color: "var(--foreground)" }}>
-                Create Investigator
+                Create User
               </h2>
             </div>
 
@@ -174,8 +191,45 @@ export default function UserManagement() {
                   placeholder="••••••••"
                 />
               </div>
+              {user?.role === "Admin" && (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Branch</label>
+                  <Select value={newBranchId} onValueChange={setNewBranchId}>
+                    <SelectTrigger
+                      className="w-full rounded-none border-2 h-10 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-[#a3e635]"
+                      style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                    >
+                      <SelectValue placeholder="Select Branch" />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-none border-2" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
+                      {branches.map(b => (
+                        <SelectItem key={b.id} value={b.id.toString()}>
+                          {b.name} ({b.branch_code})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {user?.role === "Admin" && (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Role</label>
+                  <Select value={newRole} onValueChange={setNewRole}>
+                    <SelectTrigger
+                      className="w-full rounded-none border-2 h-10 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-[#a3e635]"
+                      style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                    >
+                      <SelectValue placeholder="Select Role" />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-none border-2" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
+                      <SelectItem value="Investigator">Investigator</SelectItem>
+                      <SelectItem value="Branch Manager">Branch Manager</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <Button
-                disabled={createLoading || !newUsername || !newPassword || !newFullName}
+                disabled={createLoading || !newUsername || !newPassword || !newFullName || (user?.role === "Admin" && !newBranchId)}
                 onClick={handleCreate}
                 className="w-full h-11 rounded-none text-[11px] font-black uppercase tracking-widest mt-2 transition-all hover:brightness-110"
                 style={{
@@ -200,7 +254,7 @@ export default function UserManagement() {
                   // Directory
                 </p>
                 <h2 className="text-lg font-black uppercase tracking-tight" style={{ color: "var(--foreground)" }}>
-                  Active Investigators
+                  Active Users
                 </h2>
               </div>
               <div className="px-3 py-1 bg-[#130537] border border-[#a3e635]">
@@ -218,7 +272,7 @@ export default function UserManagement() {
               ) : investigators.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-48 border-2 border-dashed border-[var(--border)] text-[var(--muted-foreground)]">
                   <User className="h-8 w-8 mb-3 opacity-20" />
-                  <p className="text-xs uppercase tracking-widest font-bold">No investigators found</p>
+                  <p className="text-xs uppercase tracking-widest font-bold">No users found</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -231,7 +285,7 @@ export default function UserManagement() {
                         <p className="text-sm font-bold text-[var(--foreground)] truncate">{inv.full_name}</p>
                         <p className="text-[11px] font-mono text-[var(--muted-foreground)] mt-1">@{inv.username}</p>
                         <div className="mt-3 inline-flex px-2 py-0.5 bg-[rgba(163,230,53,0.1)] border border-[#a3e635]">
-                          <p className="text-[9px] uppercase font-bold text-[#a3e635] tracking-widest">Investigator</p>
+                          <p className="text-[9px] uppercase font-bold text-[#a3e635] tracking-widest">{inv.role || "Investigator"}</p>
                         </div>
                       </div>
                       <div className="flex flex-col gap-1">

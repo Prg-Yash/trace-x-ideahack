@@ -45,7 +45,7 @@ export const draftSTR = (alertId: string, actor: string) => {
   const state = getAlertState(alertId);
   state.status = "PENDING_APPROVAL";
   state.auditLog.push({
-    action: `STR Drafted - Pending Principal Officer Sign-off`,
+    action: `STR Drafted - Pending Branch Manager Sign-off`,
     actor,
     timestamp: new Date().toISOString()
   });

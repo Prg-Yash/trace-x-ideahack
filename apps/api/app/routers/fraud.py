@@ -9,7 +9,7 @@ import re
 import asyncio
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from psycopg2.extras import RealDictCursor
@@ -88,8 +88,11 @@ async def _pg_fetchone(sql: str, params=None) -> Dict:
 # STATS
 # ───────────────────────────────────────────────────────────────────────────────
 @router.get("/stats")
-async def get_stats():
-    """Dashboard aggregate stats — reads from PostgreSQL + Neo4j."""
+async def get_stats(branch_code: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    # Security: Branch Managers/Investigators can ONLY view their own branch
+    if current_user["role"] != "Admin":
+        branch_code = current_user.get("branch_code")
+
     stats = {
         "total_accounts": 0,
         "total_transactions": 0,
@@ -102,14 +105,18 @@ async def get_stats():
 
     # PostgreSQL: account count + fraud volume
     try:
-        pg = await _pg_fetchone("""
+        pg_query = """
             SELECT
-                (SELECT COUNT(*) FROM accounts)::int AS total_accounts,
+                (SELECT COUNT(*) FROM accounts {where_clause})::int AS total_accounts,
                 COALESCE(SUM(s.volume_30d), 0)       AS fraud_volume_30d
             FROM accounts a
             JOIN account_stats s ON a.account_id = s.account_id
-            WHERE a.is_fraud = TRUE
-        """)
+            WHERE a.is_fraud = TRUE {and_clause}
+        """
+        where_clause = f"WHERE branch_code = '{branch_code}'" if branch_code else ""
+        and_clause = f"AND a.branch_code = '{branch_code}'" if branch_code else ""
+        
+        pg = await _pg_fetchone(pg_query.format(where_clause=where_clause, and_clause=and_clause))
         if pg:
             stats["total_accounts"]   = int(pg["total_accounts"] or 0)
             stats["accounts_scanned"] = int(pg["total_accounts"] or 0)
@@ -119,20 +126,25 @@ async def get_stats():
 
     # Neo4j: alert counts + transaction count
     try:
-        rows = await _cypher("""
+        neo4j_query = """
             MATCH (a:Account)-[:FLAGGED_IN]->(al:Alert)
+            {where_clause}
             RETURN
                 count(DISTINCT a)                                               AS total_flagged,
                 count(DISTINCT CASE WHEN coalesce(al.severity, al.tier, 'HIGH') = 'CRITICAL' OR coalesce(al.fraud_probability, al.fraud_prob, 0) >= 0.8 THEN a END) AS critical_count,
                 count(DISTINCT CASE WHEN toLower(coalesce(al.pattern_type, al.pattern, 'none')) IN ['dormant', 'dormancy', 'dormant_activation'] THEN a END) AS dormant_count
-        """, limit=1)
+        """
+        where_clause = f"WHERE a.branch_code = '{branch_code}'" if branch_code else ""
+        
+        rows = await _cypher(neo4j_query.format(where_clause=where_clause), limit=1)
         if rows:
             stats["total_flagged"]  = int(rows[0].get("total_flagged", 0) or 0)
             stats["critical_count"] = int(rows[0].get("critical_count", 0) or 0)
             stats["dormant_count"]  = int(rows[0].get("dormant_count", 0) or 0)
 
+        txn_where = f"WHERE s.branch_code = '{branch_code}'" if branch_code else ""
         txn_rows = await _cypher(
-            f"MATCH ()-[r:{REL_TYPE}]->() RETURN count(r) AS total_transactions",
+            f"MATCH (s:Account)-[r:{REL_TYPE}]->() {txn_where} RETURN count(r) AS total_transactions",
             limit=1,
         )
         if txn_rows:
@@ -186,12 +198,22 @@ async def _fetch_alert_status_pg() -> dict:
         with psycopg2.connect(settings.DATABASE_URL) as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT a.alert_id, a.status, u.full_name as assigned_to_name, a.assigned_to as assignee_id
+                    SELECT a.alert_id, a.status, u.full_name as assigned_to_name, a.assigned_to as assignee_id, acc.branch_code, acc.branch_name, u2.branch_id as assignee_branch_id
                     FROM alerts a
                     LEFT JOIN users u ON a.assigned_to::text = u.id::text
+                    LEFT JOIN accounts acc ON acc.account_id = a.account_id
+                    LEFT JOIN users u2 ON u2.id = a.assigned_to
                 """)
                 rows = cur.fetchall()
-                return {r["alert_id"]: {"status": r["status"], "assigned_to_name": r["assigned_to_name"], "assignee_id": r["assignee_id"]} for r in rows}
+                return {
+                    r["alert_id"]: {
+                        "status": r["status"],
+                        "assigned_to_name": r["assigned_to_name"],
+                        "assignee_id": r["assignee_id"],
+                        "branch_code": r["branch_code"],
+                        "branch_name": r["branch_name"]
+                    } for r in rows
+                }
     try:
         return await asyncio.to_thread(_run)
     except Exception as e:
@@ -200,8 +222,12 @@ async def _fetch_alert_status_pg() -> dict:
 
 
 @router.get("/alerts/quick")
-async def get_alerts_quick(limit: int = 200, current_user: dict = Depends(get_current_user)):
+async def get_alerts_quick(limit: int = 200, branch_code: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     """Read pre-generated Alert nodes from Neo4j. Instant — no ML inference."""
+    
+    # Security: Branch Managers/Investigators can ONLY view their own branch
+    if current_user["role"] != "Admin":
+        branch_code = current_user.get("branch_code")
     query = """
         MATCH (a:Account)-[:FLAGGED_IN]->(al:Alert)
         RETURN
@@ -217,9 +243,14 @@ async def get_alerts_quick(limit: int = 200, current_user: dict = Depends(get_cu
             al.amounts                                              AS amounts
         ORDER BY al.fraud_probability DESC
     """
+    
+    neo4j_query = query
+    if branch_code:
+        neo4j_query = query.replace("MATCH (a:Account)-[:FLAGGED_IN]->(al:Alert)", f"MATCH (a:Account)-[:FLAGGED_IN]->(al:Alert) WHERE a.branch_code = '{branch_code}'")
+
     try:
         records, amounts_map, status_map = await asyncio.gather(
-            _cypher(query, limit=limit),
+            _cypher(neo4j_query, limit=limit),
             _fetch_alert_amounts(),
             _fetch_alert_status_pg(),
         )
@@ -245,12 +276,32 @@ async def get_alerts_quick(limit: int = 200, current_user: dict = Depends(get_cu
         status = pg_status_info.get("status") or "NEW"
         assignee_id = pg_status_info.get("assignee_id")  # UUID stored in alerts.assigned_to
         assigned_to_name = pg_status_info.get("assigned_to_name")  # human-readable name
+        branch = pg_status_info.get("branch_name") or "Main Branch"
+        b_code = pg_status_info.get("branch_code") or "MUM_HQ_01"
         
-        # Filter based on role
-        if current_user["role"] == "Investigator":
-            if not assignee_id or str(assignee_id) != str(current_user["id"]):
+        # We need the user's branch_code. Since users table has branch_id, the frontend token might pass it.
+        # But we don't have user.branch_code directly unless we join.
+        # For simplicity, if the user is a Branch Manager or Investigator, we strictly verify branch_id matching.
+        # Wait, the current_user dict comes from JWT token, let's assume it has branch_id!
+        # If branch_id doesn't match the account's branch_id (via branch table), it's a mismatch.
+        # Since branch_code is string, we should really filter via branch_id in SQL, but we just fetched them all.
+        # Let's filter out if the role is not Admin.
+        
+        user_role = current_user.get("role", "")
+        if user_role in ["Investigator", "Branch Manager"]:
+            user_bcode = current_user.get("branch_code")
+            # If user has a branch_code, enforce isolation. If not (e.g. Admin without branch), ignore.
+            if user_bcode and str(user_bcode) != str(b_code):
                 continue
-                
+        elif branch_code and str(branch_code) != str(b_code):
+            # Admin provided a specific branch filter
+            continue
+            
+        # Investigators can only see unassigned cases or cases assigned to them specifically
+        if user_role == "Investigator":
+                if assignee_id and str(assignee_id) != str(current_user["id"]):
+                    continue
+            
         # Use real volume_30d from Postgres, or sum of amounts from Neo4j for Live Simulator alerts
         neo4j_amounts = rec.get("amounts")
         if neo4j_amounts:
@@ -263,8 +314,6 @@ async def get_alerts_quick(limit: int = 200, current_user: dict = Depends(get_cu
             
         raw_cname = rec.get("customer_name") or f"Entity ({acc_id})"
         cust_name = re.sub(r"\s*\(\d+\)$", "", str(raw_cname)).strip()
-        branch  = rec.get("branch_name") or "Main Branch"
-        b_code  = rec.get("branch_code") or "MH001"
 
         dedup = f"{acc_id}-{pattern}"
         if dedup in seen:
@@ -577,9 +626,17 @@ async def get_alert_details(alert_id: str):
 
 
 @router.patch("/alerts/{alert_id}/status")
-async def update_alert_status(alert_id: str, payload: AlertStatusUpdate):
-    if payload.status not in ["OPEN", "INVESTIGATING", "CLOSED"]:
+async def update_alert_status(alert_id: str, payload: AlertStatusUpdate, current_user: dict = Depends(get_current_user)):
+    if payload.status not in ["OPEN", "INVESTIGATING", "PENDING_REVIEW", "CLOSED"]:
         raise HTTPException(status_code=400, detail="Invalid status.")
+        
+    user_role = current_user.get("role")
+    
+    if user_role == "Investigator" and payload.status == "CLOSED":
+        raise HTTPException(status_code=403, detail="Investigators cannot close alerts. Submit for review instead.")
+        
+    if user_role == "Branch Manager" and payload.status == "PENDING_REVIEW":
+        raise HTTPException(status_code=403, detail="Branch Managers should close or reopen alerts.")
 
     sql = "UPDATE alerts SET status = %s WHERE alert_id = %s RETURNING *"
     conn = get_db_connection()
