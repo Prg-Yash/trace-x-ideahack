@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
+import { InteractiveTypography } from "@/components/InteractiveTypography";
 import {
   Network,
   Shield,
@@ -850,6 +851,7 @@ export default function Home() {
           </div>
         </div>
       </footer>
+      <InteractiveTypography />
     </div>
   );
 }

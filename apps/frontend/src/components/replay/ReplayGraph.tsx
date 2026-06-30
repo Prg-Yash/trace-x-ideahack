@@ -31,14 +31,25 @@ const NODE_H = 72;
 const REPLAY_CSS = `
 @keyframes replay-pulse {
   0%, 100% { box-shadow: 0 0 0 0 var(--pulse-color); }
-  60% { box-shadow: 0 0 0 8px transparent; }
+  50% { box-shadow: 0 0 0 10px transparent; }
 }
 @keyframes replay-flow {
-  to { stroke-dashoffset: -24; }
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -36; }
 }
 @keyframes replay-dot {
-  0% { offset-distance: 0%; }
-  100% { offset-distance: 100%; }
+  0% { offset-distance: 0%; opacity: 0; }
+  8% { opacity: 1; }
+  92% { opacity: 1; }
+  100% { offset-distance: 100%; opacity: 0; }
+}
+@keyframes replay-glow-pulse {
+  0%, 100% { stroke-opacity: 0.08; stroke-width: 14; }
+  50% { stroke-opacity: 0.22; stroke-width: 20; }
+}
+@keyframes replay-label-in {
+  0% { opacity: 0; transform: translateY(4px) scale(0.92); }
+  100% { opacity: 1; transform: translateY(0px) scale(1); }
 }
 `;
 
@@ -141,7 +152,7 @@ function ReplayNode({ data }: NodeProps<ReplayNodeData>) {
 }
 
 function ReplayEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps<ReplayEdgeData>) {
-  const [edgePath] = getBezierPath({
+  const [edgePath, labelX, labelY] = getBezierPath({
     sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, curvature: 0.28,
   });
 
@@ -150,37 +161,142 @@ function ReplayEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, ta
     : data?.isPreview
       ? REPLAY_THEME.borderMuted
       : data?.isCompleted
-        ? REPLAY_THEME.border
+        ? `${REPLAY_THEME.border}99`
         : REPLAY_THEME.borderMuted;
+
+  const amountLabel = data?.amount != null
+    ? `₹${Number(data.amount).toLocaleString("en-IN")}`
+    : null;
+
+  // Estimate text width for the background rect (monospace ~7px per char at 11px)
+  const labelW = amountLabel ? amountLabel.length * 7.2 + 16 : 0;
+  const labelH = 20;
 
   return (
     <>
+      {/* Outer glow pulse on active edge */}
       {data?.isActive && (
         <path
           d={edgePath}
           fill="none"
           stroke={REPLAY_THEME.cyan}
-          strokeWidth={8}
-          strokeOpacity={0.15}
+          strokeWidth={14}
+          strokeOpacity={0.10}
+          style={{
+            pointerEvents: "none",
+            animation: "replay-glow-pulse 1.6s ease-in-out infinite",
+          }}
+        />
+      )}
+      {/* Inner glow halo */}
+      {data?.isActive && (
+        <path
+          d={edgePath}
+          fill="none"
+          stroke={REPLAY_THEME.cyan}
+          strokeWidth={5}
+          strokeOpacity={0.25}
           style={{ pointerEvents: "none" }}
         />
       )}
+      {/* Main edge line */}
       <path
         id={`edge-${id}`}
         d={edgePath}
         fill="none"
         stroke={stroke}
         strokeWidth={data?.isActive ? 2.5 : data?.isPreview ? 1 : 1.5}
-        strokeOpacity={data?.isPreview ? 0.35 : 1}
-        strokeDasharray={data?.isActive ? "8 4" : data?.isPreview ? "4 6" : undefined}
+        strokeOpacity={data?.isPreview ? 0.3 : 1}
+        strokeDasharray={data?.isActive ? "10 5" : data?.isPreview ? "4 7" : undefined}
         style={{
-          animation: data?.isActive ? "replay-flow 0.8s linear infinite" : undefined,
-          transition: "stroke 0.3s",
+          animation: data?.isActive ? "replay-flow 0.7s linear infinite" : undefined,
+          transition: "stroke 0.4s ease, stroke-opacity 0.4s ease",
         }}
         markerEnd={`url(#arrow-${data?.isActive ? "active" : "done"})`}
       />
+      {/* Traveling orb */}
       {data?.isActive && (
-        <circle r={4} fill={REPLAY_THEME.cyan} style={{ offsetPath: `path('${edgePath}')`, animation: "replay-dot 1.2s linear infinite" }} />
+        <>
+          {/* Orb glow halo */}
+          <circle
+            r={7}
+            fill="none"
+            stroke={REPLAY_THEME.cyan}
+            strokeWidth={2}
+            strokeOpacity={0.35}
+            style={{
+              offsetPath: `path('${edgePath}')`,
+              animation: "replay-dot 1.1s ease-in-out infinite",
+              pointerEvents: "none",
+            }}
+          />
+          {/* Orb core */}
+          <circle
+            r={4.5}
+            fill={REPLAY_THEME.cyan}
+            style={{
+              offsetPath: `path('${edgePath}')`,
+              animation: "replay-dot 1.1s ease-in-out infinite",
+              filter: `drop-shadow(0 0 6px ${REPLAY_THEME.cyan})`,
+              pointerEvents: "none",
+            }}
+          />
+        </>
+      )}
+      {/* Amount label on active edge — native SVG for precise positioning */}
+      {data?.isActive && amountLabel && (
+        <g style={{ pointerEvents: "none" }}>
+          <rect
+            x={labelX - labelW / 2}
+            y={labelY - labelH / 2 - 12}
+            width={labelW}
+            height={labelH}
+            rx={2}
+            fill={REPLAY_THEME.border}
+            stroke={REPLAY_THEME.cyan}
+            strokeWidth={1}
+          />
+          <text
+            x={labelX}
+            y={labelY - 12}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fill={REPLAY_THEME.accent}
+            fontFamily="monospace"
+            fontSize={11}
+            fontWeight={800}
+            letterSpacing="0.08em"
+          >
+            {amountLabel}
+          </text>
+        </g>
+      )}
+      {/* Completed edge amount label — smaller, muted, native SVG */}
+      {data?.isCompleted && amountLabel && (
+        <g style={{ pointerEvents: "none" }}>
+          <rect
+            x={labelX - labelW / 2 + 4}
+            y={labelY - (labelH - 2) / 2 - 10}
+            width={labelW - 8}
+            height={labelH - 2}
+            rx={1}
+            fill="rgba(245,245,240,0.92)"
+            stroke={REPLAY_THEME.borderMuted}
+            strokeWidth={0.5}
+          />
+          <text
+            x={labelX}
+            y={labelY - 10}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fill={REPLAY_THEME.textMuted}
+            fontFamily="monospace"
+            fontSize={9}
+            fontWeight={700}
+          >
+            {amountLabel}
+          </text>
+        </g>
       )}
     </>
   );
