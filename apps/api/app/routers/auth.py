@@ -7,7 +7,10 @@ from psycopg2.extras import RealDictCursor
 from app.core.security import verify_password, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, get_password_hash
 from app.core.deps import get_current_user, require_roles
 from app.db.session import get_pg_conn
-import pyotp
+import random
+import smtplib
+from email.message import EmailMessage
+from app.core.config import settings
 
 router = APIRouter(tags=["auth"])
 
@@ -58,10 +61,46 @@ async def login_for_access_token(
         
     if user.get("two_factor_enabled"):
         if not totp_code:
+            # Generate OTP
+            otp = f"{random.randint(100000, 999999)}"
+            expires_at = datetime.utcnow() + timedelta(minutes=10)
+            with conn.cursor() as cur:
+                cur.execute("UPDATE users SET current_otp = %s, otp_expires_at = %s WHERE id = %s", (otp, expires_at, user["id"]))
+                conn.commit()
+            
+            # Send real email
+            email = user.get("email", "unknown@trace-x.com")
+            if settings.SMTP_EMAIL and settings.SMTP_PASSWORD and email and "@" in email:
+                try:
+                    msg = EmailMessage()
+                    msg.set_content(f"Your 6-digit TRACE-X Login OTP is {otp}. It expires in 10 minutes.")
+                    msg['Subject'] = 'Your TRACE-X Login OTP'
+                    msg['From'] = settings.SMTP_EMAIL
+                    msg['To'] = email
+                    
+                    server = smtplib.SMTP('smtp.gmail.com', 587)
+                    server.starttls()
+                    server.login(settings.SMTP_EMAIL, settings.SMTP_PASSWORD)
+                    server.send_message(msg)
+                    server.quit()
+                    print(f"Real email sent to {email}")
+                except Exception as e:
+                    print(f"Failed to send real email to {email}: {e}")
+            else:
+                print(f"\n{'='*50}\n[MOCK EMAIL SERVICE] Sent to: {email}\nSubject: Your TRACE-X Login OTP\nBody: Your 6-digit OTP is {otp}. It expires in 10 minutes.\n{'='*50}\n")
+            
             raise HTTPException(status_code=400, detail="2FA code required")
-        totp = pyotp.TOTP(user["two_factor_secret"])
-        if not totp.verify(totp_code):
+            
+        # Verify OTP
+        if not user.get("current_otp") or user.get("current_otp") != totp_code:
             raise HTTPException(status_code=401, detail="Invalid 2FA code")
+        if user.get("otp_expires_at") and user.get("otp_expires_at") < datetime.utcnow():
+            raise HTTPException(status_code=401, detail="2FA code expired")
+            
+        # Clear OTP after successful use
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET current_otp = NULL, otp_expires_at = NULL WHERE id = %s", (user["id"],))
+            conn.commit()
         
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(

@@ -39,8 +39,8 @@ export default function Login() {
           setNeeds2FA(true);
           setIsSubmitting(false);
           toast({
-            title: "2FA Required",
-            description: "Please enter your authentication code.",
+            title: "Email OTP Required",
+            description: "We've sent a 6-digit code to your email address.",
           });
           return;
         }
@@ -172,8 +172,9 @@ export default function Login() {
                 animate={{ opacity: 1, height: "auto" }}
                 className="space-y-2"
               >
-                <label className="text-[10px] font-bold text-[#130537] uppercase tracking-widest block">
-                  // Authenticator Code
+                <label className="text-[10px] font-bold text-[#130537] uppercase tracking-widest block mb-1">
+                  // Email OTP Code
+                  <span className="block mt-1 text-[9px] text-[#130537]/70 normal-case tracking-normal">Check your inbox for a 6-digit code.</span>
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
