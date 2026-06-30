@@ -1,24 +1,37 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from psycopg2.extras import RealDictCursor
 from app.core.deps import get_current_user, require_roles
 from app.db.session import get_pg_conn
 from pydantic import BaseModel
 from typing import Optional
 import json
+from app.core.audit import log_system_event
 
 class AssignRequest(BaseModel):
     assignee_id: Optional[str] = None
 
 router = APIRouter(tags=["workflow"])
 
-def write_audit_log(cur, alert_id: str, user_id: str, action: str, metadata: dict = None):
+def write_audit_log(request, cur, alert_id: str, user_id: str, user_name: str, action: str, metadata: dict = None):
     cur.execute(
         "INSERT INTO audit_log (alert_id, user_id, action, metadata) VALUES (%s, %s, %s, %s)",
         (alert_id, user_id, action, json.dumps(metadata) if metadata else None)
     )
+    # Also log to the centralized system audit log
+    log_system_event(
+        action_type=f"ALERT_{action}",
+        status="SUCCESS",
+        description=f"Action '{action}' performed on alert {alert_id}. {json.dumps(metadata) if metadata else ''}",
+        actor_id=user_id,
+        actor_name=user_name,
+        target_id=alert_id,
+        request=request,
+        conn=cur.connection
+    )
 
 @router.post("/{alert_id}/assign")
 async def assign_alert(
+    request: Request,
     alert_id: str,
     payload: AssignRequest = None,
     current_user: dict = Depends(require_roles(["Investigator", "Admin"])),
@@ -98,13 +111,14 @@ async def assign_alert(
             (assignee_id, alert_id)
         )
         
-        write_audit_log(cur, alert_id, current_user["id"], "ASSIGNED", {"assigned_to": assignee_username})
+        write_audit_log(request, cur, alert_id, current_user["id"], current_user["username"], "ASSIGNED", {"assigned_to": assignee_username})
         conn.commit()
         
     return {"message": "Alert assigned successfully", "status": "UNDER_INVESTIGATION"}
 
 @router.post("/{alert_id}/draft-str")
 async def draft_str(
+    request: Request,
     alert_id: str,
     current_user: dict = Depends(require_roles(["Investigator"])),
     conn = Depends(get_pg_conn)
@@ -127,13 +141,14 @@ async def draft_str(
             (alert_id,)
         )
         
-        write_audit_log(cur, alert_id, current_user["id"], "STR_DRAFTED", {"action": "Draft sent for approval"})
+        write_audit_log(request, cur, alert_id, current_user["id"], current_user["username"], "STR_DRAFTED", {"action": "Draft sent for approval"})
         conn.commit()
         
     return {"message": "STR Drafted", "status": "PENDING_APPROVAL"}
 
 @router.post("/{alert_id}/approve-str")
 async def approve_str(
+    request: Request,
     alert_id: str,
     current_user: dict = Depends(require_roles(["Admin", "Branch Manager"])),
     conn = Depends(get_pg_conn)
@@ -153,13 +168,14 @@ async def approve_str(
             (alert_id,)
         )
         
-        write_audit_log(cur, alert_id, current_user["id"], "STR_APPROVED", {"action": "STR Filed with FIU"})
+        write_audit_log(request, cur, alert_id, current_user["id"], current_user["username"], "STR_APPROVED", {"action": "STR Filed with FIU"})
         conn.commit()
         
     return {"message": "STR Approved and Filed", "status": "FILED"}
 
 @router.post("/{alert_id}/reject-str")
 async def reject_str(
+    request: Request,
     alert_id: str,
     current_user: dict = Depends(require_roles(["Admin", "Branch Manager"])),
     conn = Depends(get_pg_conn)
@@ -179,7 +195,7 @@ async def reject_str(
             (alert_id,)
         )
         
-        write_audit_log(cur, alert_id, current_user["id"], "STR_REJECTED", {"action": "STR Rejected and returned to Investigator"})
+        write_audit_log(request, cur, alert_id, current_user["id"], current_user["username"], "STR_REJECTED", {"action": "STR Rejected and returned to Investigator"})
         conn.commit()
         
     return {"message": "STR Rejected", "status": "UNDER_INVESTIGATION"}

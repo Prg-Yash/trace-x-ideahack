@@ -375,3 +375,6 @@ export const sendChatMessage = (message: string, history: ChatHistoryTurn[] = []
     method: "POST",
     body: JSON.stringify({ message, history }),
   });
+
+export const fetchSystemAuditLogs = (limit = 100, skip = 0) =>
+  apiFetch<{ audit_logs: any[] }>(`/admin/audit-logs?limit=${limit}&skip=${skip}`);

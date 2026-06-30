@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel
 
@@ -46,6 +46,7 @@ from trace_x_schemas.models import Account, Transaction
 from app.core.config import settings
 from app.routers.data import get_db_connection
 from app.core.deps import get_current_user
+from app.core.audit import log_system_event
 
 router = APIRouter(tags=["fraud"])
 
@@ -626,7 +627,7 @@ async def get_alert_details(alert_id: str):
 
 
 @router.patch("/alerts/{alert_id}/status")
-async def update_alert_status(alert_id: str, payload: AlertStatusUpdate, current_user: dict = Depends(get_current_user)):
+async def update_alert_status(request: Request, alert_id: str, payload: AlertStatusUpdate, current_user: dict = Depends(get_current_user)):
     if payload.status not in ["OPEN", "INVESTIGATING", "PENDING_REVIEW", "CLOSED"]:
         raise HTTPException(status_code=400, detail="Invalid status.")
         
@@ -645,6 +646,16 @@ async def update_alert_status(alert_id: str, payload: AlertStatusUpdate, current
             cur.execute(sql, (payload.status, alert_id))
             pg_record = cur.fetchone()
             conn.commit()
+            
+        log_system_event(
+            action_type="ALERT_STATUS_UPDATE",
+            status="SUCCESS",
+            description=f"Updated alert {alert_id} status to {payload.status}",
+            actor_id=current_user["id"],
+            actor_name=current_user.get("full_name", current_user["username"]),
+            target_id=alert_id,
+            request=request
+        )
     finally:
         conn.close()
 

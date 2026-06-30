@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel
 from psycopg2.extras import RealDictCursor
 import webauthn
@@ -17,6 +17,7 @@ from typing import Dict, Any
 from app.db.session import get_pg_conn
 from app.core.deps import get_current_user
 from app.routers.auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
+from app.core.audit import log_system_event
 from datetime import timedelta, datetime
 
 router = APIRouter(tags=["webauthn"])
@@ -60,7 +61,7 @@ async def generate_registration_options(current_user: dict = Depends(get_current
     return {"options": options_to_json(options)}
 
 @router.post("/register/verify")
-async def verify_registration(credential: dict, current_user: dict = Depends(get_current_user), conn = Depends(get_pg_conn)):
+async def verify_registration(request: Request, credential: dict, current_user: dict = Depends(get_current_user), conn = Depends(get_pg_conn)):
     expected_challenge = temporary_challenges.get(f"reg_{current_user['id']}")
     if not expected_challenge:
         raise HTTPException(status_code=400, detail="Challenge not found or expired")
@@ -90,6 +91,16 @@ async def verify_registration(credential: dict, current_user: dict = Depends(get
             conn.commit()
             
         del temporary_challenges[f"reg_{current_user['id']}"]
+        
+        log_system_event(
+            action_type="PASSKEY_REGISTERED",
+            status="SUCCESS",
+            description="Successfully registered a WebAuthn passkey",
+            actor_id=current_user["id"],
+            actor_name=current_user["full_name"],
+            request=request
+        )
+        
         return {"message": "Passkey registered successfully"}
     except Exception as e:
         print("WebAuthn verification error:", e)
@@ -116,7 +127,7 @@ async def generate_authentication_options(username: str, conn = Depends(get_pg_c
     return {"options": options_to_json(options)}
 
 @router.post("/authenticate/verify/{username}")
-async def verify_authentication(username: str, credential: dict, conn = Depends(get_pg_conn)):
+async def verify_authentication(request: Request, username: str, credential: dict, conn = Depends(get_pg_conn)):
     expected_challenge = temporary_challenges.get(f"auth_{username}")
     if not expected_challenge:
         raise HTTPException(status_code=400, detail="Challenge not found or expired")
@@ -166,11 +177,21 @@ async def verify_authentication(username: str, credential: dict, conn = Depends(
                 cur.execute("SELECT branch_code FROM branches WHERE id = %s", (user["branch_id"],))
                 b = cur.fetchone()
                 if b:
-                    branch_code = b["branch_code"]
+                    branch_code = b[0]
                     
             conn.commit()
             
         del temporary_challenges[f"auth_{username}"]
+        
+        log_system_event(
+            action_type="LOGIN_ATTEMPT",
+            status="SUCCESS",
+            description="Successful passkey login",
+            actor_id=user["id"],
+            actor_name=user["full_name"],
+            request=request,
+            conn=conn
+        )
         
         # Generate JWT
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -192,5 +213,13 @@ async def verify_authentication(username: str, credential: dict, conn = Depends(
         
     except Exception as e:
         print("WebAuthn auth error:", e)
-        # Log failure logic here if needed
+        log_system_event(
+            action_type="LOGIN_ATTEMPT",
+            status="FAILED",
+            description=f"Passkey verification failed for {username}: {e}",
+            actor_id=user["id"] if user else None,
+            actor_name=user["full_name"] if user else None,
+            request=request,
+            conn=conn
+        )
         raise HTTPException(status_code=401, detail=str(e))

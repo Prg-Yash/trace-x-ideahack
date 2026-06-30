@@ -5,7 +5,7 @@ import { useParams } from "wouter";
  * In a nested router, useParams() will contain the parameters from the parent route.
  */
 export function useCurrentBranch(): string | null {
-  const params = useParams();
+  const params = useParams<{ branchCode?: string }>();
   
   if (params && params.branchCode) {
     return params.branchCode;

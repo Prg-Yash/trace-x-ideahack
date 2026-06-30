@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
-import { User, Shield, Users, Loader2 } from "lucide-react";
+import { User, Shield, Users, Loader2, Lock } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +26,7 @@ export default function UserManagement() {
 
   // Form states
   const [newUsername, setNewUsername] = useState("");
+  const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newFullName, setNewFullName] = useState("");
   const [newBranchId, setNewBranchId] = useState("");
@@ -65,12 +66,13 @@ export default function UserManagement() {
   };
 
   const handleCreate = async () => {
-    if (!newUsername || !newPassword || !newFullName) return;
+    if (!newUsername || !newEmail || !newPassword || !newFullName) return;
     
     setCreateLoading(true);
     try {
       await createInvestigator({ 
         username: newUsername, 
+        email: newEmail,
         password: newPassword, 
         full_name: newFullName,
         branch_id: newBranchId ? parseInt(newBranchId) : undefined,
@@ -78,6 +80,7 @@ export default function UserManagement() {
       });
       toast.success("User created successfully!");
       setNewUsername("");
+      setNewEmail("");
       setNewPassword("");
       setNewFullName("");
       setNewBranchId("");
@@ -201,6 +204,16 @@ export default function UserManagement() {
                   placeholder="••••••••"
                 />
               </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Email Address</label>
+                <Input 
+                  type="email"
+                  value={newEmail} onChange={e => setNewEmail(e.target.value)}
+                  className="rounded-none border-2 h-10 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-[#a3e635]"
+                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                  placeholder="jdoe@trace-x.com"
+                />
+              </div>
               {user?.role === "Admin" && (
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Branch</label>
@@ -239,7 +252,7 @@ export default function UserManagement() {
                 </div>
               )}
               <Button
-                disabled={createLoading || !newUsername || !newPassword || !newFullName || (user?.role === "Admin" && !newBranchId)}
+                disabled={createLoading || !newUsername || !newEmail || !newPassword || !newFullName || (user?.role === "Admin" && !newBranchId)}
                 onClick={handleCreate}
                 className="w-full h-11 rounded-none text-[11px] font-black uppercase tracking-widest mt-2 transition-all hover:brightness-110"
                 style={{
