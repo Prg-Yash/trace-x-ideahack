@@ -33,7 +33,8 @@ async def get_all_accounts(skip: int = 0, limit: int = 100, branch_code: str | N
     neo4j_query = """
         MATCH (a:Account)
         WHERE ($branch_code IS NULL OR a.branch_code = $branch_code)
-        RETURN a.account_id AS account_id, a.entity_id AS entity_id, a.customer_name AS customer_name, a.branch_name AS branch_name, a.branch_code AS branch_code
+        OPTIONAL MATCH (a)-[:FLAGGED_IN]->(al:Alert)
+        RETURN a.account_id AS account_id, a.entity_id AS entity_id, a.customer_name AS customer_name, a.branch_name AS branch_name, a.branch_code AS branch_code, max(coalesce(al.fraud_probability, al.fraud_prob, 0.0)) AS neo4j_prob
         SKIP $skip LIMIT $limit
     """
     neo4j_records = await _run_query(neo4j_query, skip=skip, limit=limit, branch_code=branch_code)
@@ -65,7 +66,8 @@ async def get_all_accounts(skip: int = 0, limit: int = 100, branch_code: str | N
             e.customer_name,
             e.pan_number,
             e.dob,
-            e.address
+            e.address,
+            (SELECT MAX(al.fraud_probability) FROM alerts al WHERE al.account_id = a.account_id) AS pg_prob
         FROM accounts a
         LEFT JOIN account_stats s ON a.account_id = s.account_id
         LEFT JOIN entities e ON a.entity_id = e.entity_id
@@ -89,6 +91,21 @@ async def get_all_accounts(skip: int = 0, limit: int = 100, branch_code: str | N
         acc_id = n_rec["account_id"]
         pg_rec = pg_lookup.get(acc_id, {})
         
+        n_prob = float(n_rec.get("neo4j_prob") or 0.0)
+        p_prob = float(pg_rec.get("pg_prob") or 0.0)
+        prob = max(n_prob, p_prob)
+        is_fraud = pg_rec.get("is_fraud")
+        risk_cat = pg_rec.get("risk_category") or "LOW"
+        
+        if prob > 0.0:
+            risk_score = int(round(prob * 100))
+        elif is_fraud or risk_cat in ("CRITICAL", "HIGH"):
+            risk_score = 92 if risk_cat == "CRITICAL" else 78
+        elif risk_cat == "MEDIUM":
+            risk_score = 55
+        else:
+            risk_score = 15
+
         combined = {
             "account_id": acc_id,
             "entity_id": n_rec["entity_id"],
@@ -107,7 +124,8 @@ async def get_all_accounts(skip: int = 0, limit: int = 100, branch_code: str | N
             "avg_monthly_volume": pg_rec.get("avg_monthly_volume"),
             "volume_30d": pg_rec.get("volume_30d"),
             "txn_count_30d": pg_rec.get("txn_count_30d"),
-            "declared_annual_income": pg_rec.get("declared_annual_income")
+            "declared_annual_income": pg_rec.get("declared_annual_income"),
+            "risk_score": risk_score
         }
         results.append(combined)
 
@@ -196,7 +214,8 @@ async def get_account(account_id: str):
             e.customer_name,
             e.pan_number,
             e.dob,
-            e.address
+            e.address,
+            (SELECT MAX(al.fraud_probability) FROM alerts al WHERE al.account_id = a.account_id) AS pg_prob
         FROM accounts a
         LEFT JOIN account_stats s ON a.account_id = s.account_id
         LEFT JOIN entities e ON a.entity_id = e.entity_id
@@ -216,6 +235,18 @@ async def get_account(account_id: str):
     if not pg_record:
         raise HTTPException(status_code=404, detail="Account not found in PostgreSQL")
         
+    p_prob = float(pg_record.get("pg_prob") or 0.0)
+    is_fraud = pg_record.get("is_fraud")
+    risk_cat = pg_record.get("risk_category") or "LOW"
+    if p_prob > 0.0:
+        pg_record["risk_score"] = int(round(p_prob * 100))
+    elif is_fraud or risk_cat in ("CRITICAL", "HIGH"):
+        pg_record["risk_score"] = 92 if risk_cat == "CRITICAL" else 78
+    elif risk_cat == "MEDIUM":
+        pg_record["risk_score"] = 55
+    else:
+        pg_record["risk_score"] = 15
+
     return pg_record
 
 @router.get("/transactions/{txn_id}")

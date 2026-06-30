@@ -202,7 +202,7 @@ async def _fetch_alert_status_pg() -> dict:
                     FROM alerts a
                     LEFT JOIN users u ON a.assigned_to::text = u.id::text
                     LEFT JOIN accounts acc ON acc.account_id = a.account_id
-                    LEFT JOIN users u2 ON u2.id = a.assigned_to
+                    LEFT JOIN users u2 ON u2.id::text = a.assigned_to::text
                 """)
                 rows = cur.fetchall()
                 return {
@@ -228,11 +228,15 @@ async def get_alerts_quick(limit: int = 200, branch_code: Optional[str] = None, 
     # Security: Branch Managers/Investigators can ONLY view their own branch
     if current_user["role"] != "Admin":
         branch_code = current_user.get("branch_code")
-    query = """
+        
+    branch_clause = f"WHERE a.branch_code = '{branch_code}'" if branch_code else ""
+    query = f"""
         MATCH (a:Account)-[:FLAGGED_IN]->(al:Alert)
+        {branch_clause}
         RETURN
             a.account_id                                            AS account_id,
             a.customer_name                                         AS customer_name,
+            a.masked_account_number                                 AS masked_account_number,
             a.branch_name                                           AS branch_name,
             a.branch_code                                           AS branch_code,
             toLower(coalesce(al.pattern_type, al.pattern, 'none'))  AS pattern,
@@ -245,8 +249,6 @@ async def get_alerts_quick(limit: int = 200, branch_code: Optional[str] = None, 
     """
     
     neo4j_query = query
-    if branch_code:
-        neo4j_query = query.replace("MATCH (a:Account)-[:FLAGGED_IN]->(al:Alert)", f"MATCH (a:Account)-[:FLAGGED_IN]->(al:Alert) WHERE a.branch_code = '{branch_code}'")
 
     try:
         records, amounts_map, status_map = await asyncio.gather(
@@ -276,8 +278,8 @@ async def get_alerts_quick(limit: int = 200, branch_code: Optional[str] = None, 
         status = pg_status_info.get("status") or "NEW"
         assignee_id = pg_status_info.get("assignee_id")  # UUID stored in alerts.assigned_to
         assigned_to_name = pg_status_info.get("assigned_to_name")  # human-readable name
-        branch = pg_status_info.get("branch_name") or "Main Branch"
-        b_code = pg_status_info.get("branch_code") or "MUM_HQ_01"
+        branch = pg_status_info.get("branch_name") or rec.get("branch_name") or "Main Branch"
+        b_code = pg_status_info.get("branch_code") or rec.get("branch_code") or "MUM_HQ_01"
         
         # We need the user's branch_code. Since users table has branch_id, the frontend token might pass it.
         # But we don't have user.branch_code directly unless we join.
@@ -299,8 +301,8 @@ async def get_alerts_quick(limit: int = 200, branch_code: Optional[str] = None, 
             
         # Investigators can only see unassigned cases or cases assigned to them specifically
         if user_role == "Investigator":
-                if assignee_id and str(assignee_id) != str(current_user["id"]):
-                    continue
+            if assignee_id and str(assignee_id) != str(current_user["id"]):
+                continue
             
         # Use real volume_30d from Postgres, or sum of amounts from Neo4j for Live Simulator alerts
         neo4j_amounts = rec.get("amounts")
@@ -314,6 +316,7 @@ async def get_alerts_quick(limit: int = 200, branch_code: Optional[str] = None, 
             
         raw_cname = rec.get("customer_name") or f"Entity ({acc_id})"
         cust_name = re.sub(r"\s*\(\d+\)$", "", str(raw_cname)).strip()
+        masked_acc = rec.get("masked_account_number") or acc_id
 
         dedup = f"{acc_id}-{pattern}"
         if dedup in seen:
@@ -333,6 +336,7 @@ async def get_alerts_quick(limit: int = 200, branch_code: Optional[str] = None, 
             "alert_id":     alert_id,
             "account_id":   acc_id,
             "customer_name": cust_name,
+            "masked_account_number": masked_acc,
             "branch_name":  branch,
             "branch_code":  b_code,
             "risk_level":   tier,

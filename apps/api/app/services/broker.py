@@ -82,7 +82,7 @@ async def get_active_broker() -> MessageBroker:
         with socket.create_connection(("localhost", 9092), timeout=2):
             pass
     except (ConnectionRefusedError, socket.timeout, OSError) as e:
-        print(f"⚠️ Kafka unavailable on port 9092 ({e}), falling back to MemoryBroker")
+        print(f"[WARN] Kafka unavailable on port 9092 ({e}), falling back to MemoryBroker")
         broker = MemoryBroker()
         await broker.start()
         return broker
@@ -91,10 +91,10 @@ async def get_active_broker() -> MessageBroker:
     try:
         broker = KafkaBroker()
         await broker.start()
-        print("✅ Kafka broker connected")
+        print("[SUCCESS] Kafka broker connected")
         return broker
     except Exception as e:
-        print(f"⚠️ Kafka startup failed ({e}), falling back to MemoryBroker")
+        print(f"[WARN] Kafka startup failed ({e}), falling back to MemoryBroker")
         broker = MemoryBroker()
         await broker.start()
         return broker

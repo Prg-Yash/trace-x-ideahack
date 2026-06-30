@@ -48,8 +48,8 @@ async def login_for_access_token(
             SELECT u.*, b.branch_code 
             FROM users u 
             LEFT JOIN branches b ON u.branch_id = b.id 
-            WHERE u.username = %s AND u.is_active = TRUE
-        """, (form_data.username,))
+            WHERE (u.username = %s OR u.email = %s) AND u.is_active = TRUE
+        """, (form_data.username, form_data.username))
         user = cur.fetchone()
 
     if not user or not verify_password(form_data.password, user["hashed_password"]):

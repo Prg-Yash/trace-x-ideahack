@@ -86,11 +86,12 @@ async def store_ml_result_in_neo4j(account_id: str, result: dict, pattern_type: 
 
     query = """
         MATCH (a:Account {account_id: $acc_id})-[:FLAGGED_IN]->(al:Alert)
-        WHERE toUpper(al.pattern_type) = toUpper($pattern)
+        WHERE toUpper(coalesce(al.pattern_type, al.pattern, '')) = toUpper($pattern)
         SET al.chain            = $chain,
             al.amounts          = $amounts,
             al.timestamps       = $timestamps,
             al.fraud_probability = $confidence,
+            al.fraud_prob        = $confidence,
             al.ml_model         = $ml_model,
             al.ml_processed_at  = $processed_at,
             al.ml_confidence    = $confidence

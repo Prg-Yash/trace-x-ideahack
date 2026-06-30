@@ -185,6 +185,7 @@ export type AccountRecord = {
   volume_30d?: number;
   txn_count_30d?: number;
   declared_annual_income?: number;
+  risk_score?: number;
 };
 
 export type InvestigationNote = {
