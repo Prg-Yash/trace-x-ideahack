@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
+import { BASE } from "../lib/api";
 import ReactFlow, {
   Background, Controls, MiniMap,
   type Node, type Edge, type NodeProps, type EdgeProps,
@@ -595,9 +596,21 @@ function GraphInner() {
       nodes.forEach(n => {
         if (!uniqueNodesMap.has(n.id)) uniqueNodesMap.set(n.id, n);
       });
-      return { nodes: Array.from(uniqueNodesMap.values()), edges };
+      const uniqueNodes = Array.from(uniqueNodesMap.values());
+      const stats = {
+        totalNodes: uniqueNodes.length,
+        totalEdges: edges.length,
+        flaggedNodes: uniqueNodes.filter(n => n.flagged).length,
+        flaggedEdges: edges.filter(e => e.riskLevel === "CRITICAL" || e.riskLevel === "HIGH").length,
+        detectedClusters: 1, // Currently looking at one trace cluster
+      };
+      return { nodes: uniqueNodes, edges, stats };
     }
-    return { nodes: [], edges: [] };
+    return { 
+      nodes: [], 
+      edges: [], 
+      stats: { totalNodes: 0, totalEdges: 0, flaggedNodes: 0, flaggedEdges: 0, detectedClusters: 0 } 
+    };
   // Only re-run when account, trace data, or score risk level changes — NOT on every score update
   }, [routeAccountId, liveAlertsQuick, traceQueryId, liveTrace, liveScore?.combined_score, liveScore?.detections?.kyc_mismatch?.detected, urlPattern]);
 
@@ -1369,7 +1382,7 @@ function GraphInner() {
                                           description: shapDescriptions[f.label] || "Behavioral anomaly detected by ML model.",
                                         }));
 
-                                        const res = await fetch(`http://127.0.0.1:8000/api/v1/narrative/${targetAcc}`, {
+                                        const res = await fetch(`${BASE}/narrative/${targetAcc}`, {
                                           method: "POST",
                                           headers: { "Content-Type": "application/json" },
                                           body: JSON.stringify({

@@ -107,6 +107,7 @@ export type TraceResult = {
   fraud_type: string;
   chain: string[];
   amounts: number[];
+  confidence?: number;
 };
 
 export type ShapFactor = {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Play, Square, Activity, AlertTriangle, Search, ActivitySquare } from "lucide-react";
+import { BASE } from "../lib/api";
 import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 
@@ -26,7 +27,7 @@ export default function LiveStream() {
     // Check if backend is already running when we mount
     const checkStatus = async () => {
       try {
-        const res = await fetch("/api/v1/stream/status");
+        const res = await fetch(`${BASE}/stream/status`);
         const data = await res.json();
         if (data.is_running) {
           setIsRunning(true);
@@ -65,9 +66,9 @@ export default function LiveStream() {
 
   const connectWs = (retryCount = 0) => {
     if (wsRef.current) return;
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Use window.location.host instead of localhost:8000
-    const ws = new WebSocket(`${protocol}//${window.location.host}/api/v1/stream/ws`);
+    const protocol = BASE.startsWith('https') ? 'wss:' : 'ws:';
+    const host = BASE.replace(/^https?:\/\//, '').split('/')[0];
+    const ws = new WebSocket(`${protocol}//${host}/api/v1/stream/ws`);
     
     ws.onmessage = (event) => {
       try {
@@ -103,7 +104,7 @@ export default function LiveStream() {
     ws.onopen = () => {
       if (retryCount > 0) {
         // If we reconnected, fetch status again
-        fetch(`http://${window.location.host.split(':')[0]}:8000/api/v1/stream/status`)
+        fetch(`${BASE}/stream/status`)
           .then(res => res.json())
           .then(data => setIsRunning(data.is_running))
           .catch(() => {});
@@ -123,18 +124,18 @@ export default function LiveStream() {
   const startFirehose = async () => {
     setIsRunning(true);
     connectWs();
-    await fetch("/api/v1/stream/start", { method: "POST" });
+    await fetch(`${BASE}/stream/start`, { method: "POST" });
   };
 
   const stopFirehose = async () => {
     setIsRunning(false);
-    await fetch("/api/v1/stream/stop", { method: "POST" });
+    await fetch(`${BASE}/stream/stop`, { method: "POST" });
     // Let lingering messages finish then close
     setTimeout(disconnectWs, 1000);
   };
 
   const injectPattern = async (pattern: string) => {
-    await fetch("/api/v1/stream/inject", {
+    await fetch(`${BASE}/stream/inject`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pattern })
@@ -174,7 +175,7 @@ export default function LiveStream() {
                   onChange={(e) => {
                     const newTps = parseInt(e.target.value);
                     setTargetTps(newTps);
-                    fetch(`/api/v1/stream/config`, {
+                    fetch(`${BASE}/stream/config`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ tps: newTps })
