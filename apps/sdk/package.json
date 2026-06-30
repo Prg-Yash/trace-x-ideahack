@@ -1,0 +1,21 @@
+{
+  "name": "@gten/sdk",
+  "version": "1.0.0",
+  "description": "G-TEN Fraud Intelligence SDK — A clean, developer-friendly TypeScript SDK for the G-TEN platform.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "keywords": ["gten", "fraud", "aml", "sdk"],
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  }
+}
