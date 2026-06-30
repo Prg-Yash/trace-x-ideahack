@@ -61,6 +61,34 @@ def _get_driver():
         ASYNC_DRIVER = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
     return ASYNC_DRIVER
 
+# ── PII Masking Utilities ──────────────────────────────────────────────────────
+def mask_account_number_py(acc: str) -> str:
+    if not acc: return "XXXX-XXXX-0000"
+    s = str(acc).strip()
+    if s.startswith("XXXX-XXXX-"): return s
+    clean = re.sub(r"\D", "", s)
+    if len(clean) >= 4: return f"XXXX-XXXX-{clean[-4:]}"
+    return f"XXXX-XXXX-{s[-4:]}" if len(s) >= 4 else f"XXXX-XXXX-{s}"
+
+def mask_customer_name_py(name: str) -> str:
+    if not name: return "Anonymous Customer"
+    clean = re.sub(r"\s*\(\d+\)$", "", str(name)).strip()
+    if not clean or clean.startswith("XXXX"): return clean or "Anonymous Customer"
+    parts = clean.split()
+    if len(parts) == 1:
+        p = parts[0]
+        return p[0] + "*" * min(6, len(p)-1) if len(p) > 2 else p + "*"
+    first = parts[0]
+    masked_first = first[0] + "*" * min(6, len(first)-1) if len(first) > 2 else first[0] + "*"
+    initials = " ".join([p[0].upper() + "." for p in parts[1:]])
+    return f"{masked_first} {initials}"
+
+def mask_pan_py(pan: str) -> str:
+    if not pan: return "A*****506F"
+    s = str(pan).strip()
+    if len(s) <= 4: return "******" + s
+    return s[0] + "*" * max(4, len(s)-4) + s[-3:]
+
 # ── ML Models ──────────────────────────────────────────────────────────────────
 if not MODELS_DIR.exists():
     raise FileNotFoundError(f"Missing models directory: {MODELS_DIR}")
@@ -1714,9 +1742,26 @@ def _fetch_db_account_and_txns(account_id: str) -> Dict:
 async def build_evidence_package(account_id: str) -> Dict:
     score = await score_account(account_id)
     db_data = await asyncio.to_thread(_fetch_db_account_and_txns, account_id)
+    
+    raw_name = db_data["account"].get("customer_name", f"Account Holder ({account_id})")
+    masked_name = mask_customer_name_py(raw_name)
+    masked_acc = db_data["account"].get("masked_account_number") or mask_account_number_py(account_id)
+    
+    db_data["account"]["customer_name"] = masked_name
+    db_data["account"]["masked_account_number"] = masked_acc
+    if db_data["account"].get("pan_number"):
+        db_data["account"]["pan_number"] = mask_pan_py(db_data["account"]["pan_number"])
+        
+    for tx in db_data.get("transactions", []):
+        tx["sender_id"] = mask_account_number_py(tx.get("sender_id", ""))
+        tx["receiver_id"] = mask_account_number_py(tx.get("receiver_id", ""))
+        if tx.get("sender_name"): tx["sender_name"] = mask_customer_name_py(tx["sender_name"])
+        if tx.get("receiver_name"): tx["receiver_name"] = mask_customer_name_py(tx["receiver_name"])
+
     return _coerce({
         "account_id":    account_id,
-        "customer_name": db_data["account"].get("customer_name", f"Account Holder ({account_id})"),
+        "masked_account_number": masked_acc,
+        "customer_name": masked_name,
         "account":       db_data["account"],
         "transactions":  db_data["transactions"],
         "generated_at":  datetime.utcnow().isoformat(),

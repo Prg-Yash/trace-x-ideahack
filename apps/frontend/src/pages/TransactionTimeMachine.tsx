@@ -20,7 +20,7 @@ import type { LiveAlertMeta } from "@/lib/replayFromTrace";
 
 export default function TransactionTimeMachine() {
   const [, params] = useRoute("/transaction-time-machine/:alertId");
-  const alertId = decodeURIComponent(params?.alertId ?? "");
+  const alertId = decodeURIComponent((params as any)?.alertId ?? "");
   const { toast } = useToast();
 
   const {
@@ -62,7 +62,7 @@ export default function TransactionTimeMachine() {
           </h1>
           <p className="text-[13px] mb-6" style={{ color: REPLAY_THEME.textMuted }}>
             {error
-              ? `Could not load trace for alert ${alertId}: ${error.message}`
+              ? `Could not load trace for alert ${alertId}: ${(error as any)?.message || String(error)}`
               : `No transaction chain found for alert ${alertId || "—"}. Open from Alert Details after a live trace is available.`}
           </p>
           <Link href="/alerts">
@@ -167,7 +167,7 @@ function TransactionTimeMachineReplay({
     aiBriefingRef.current?.seekAudio(1);
   };
 
-  const handleSpeedChange = (speed: number) => {
+  const handleSpeedChange = (speed: any) => {
     engine.setSpeed(speed);
     aiBriefingRef.current?.setAudioSpeed(speed);
   };

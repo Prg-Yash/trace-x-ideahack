@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { fetchSystemAuditLogs } from '../lib/api';
-import { Card } from '../components/ui/Card';
-import { Badge } from '../components/ui/Badge';
+import { Card } from '../components/ui/card';
+import { Badge } from '../components/ui/badge';
 import { Shield, Clock, User, Info, FileText } from 'lucide-react';
 
 interface AuditLog {

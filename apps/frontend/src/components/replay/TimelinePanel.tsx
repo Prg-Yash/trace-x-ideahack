@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { ArrowDown } from "lucide-react";
-import { replayTimeline, formatINR, formatTime, type ReplayTimelineEntry } from "@/data/replayData";
+import { formatINR, formatTime, type ReplayTimelineEntry } from "@/data/replayData";
 import { REPLAY_THEME, cardStyle, sectionLabelClass } from "./replayTheme";
 
 type TimelinePanelProps = {

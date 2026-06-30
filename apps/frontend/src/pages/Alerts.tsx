@@ -27,6 +27,7 @@ import { useAuth } from "../context/AuthContext";
 import { StatusBadge } from "../components/ui/status-badge";
 import { useAlertsQuick, useTrace } from "@/hooks/useApi";
 import { assignAlert, fetchInvestigators } from "@/lib/api";
+import { maskAccountNumber, maskCustomerName } from "@/lib/pii";
 
 
 /* ── STYLES ── */
@@ -188,8 +189,9 @@ export default function Alerts() {
               description: `Live Injection: ${data.pattern}`,
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
-              accountName: data.account_ids ? data.account_ids[0] : "unknown",
-              accountNumber: data.account_ids ? data.account_ids[0] : "unknown",
+              accountName: maskCustomerName(data.account_ids ? data.account_ids[0] : "unknown"),
+              accountNumber: `${maskAccountNumber(data.account_ids ? data.account_ids[0] : "unknown")} (Main Branch)`,
+              rawAccountId: data.account_ids ? data.account_ids[0] : "unknown",
             };
 
             setOptimisticAlerts(prev => [newAlert, ...prev]);
@@ -249,8 +251,8 @@ export default function Alerts() {
         description: `Fraud pattern detected: ${(a.flagged_for || []).join(", ")}`,
         createdAt: createdAtStr,
         updatedAt: new Date().toISOString(),
-        accountName: (a.customer_name || a.account_id).replace(/\s*\(\d+\)$/, ""),
-        accountNumber: `${a.account_id} (${a.branch_name || "Main Branch"})`,
+        accountName: maskCustomerName(a.customer_name || a.account_id),
+        accountNumber: `${a.masked_account_number || maskAccountNumber(a.account_id)} (${a.branch_name || "Main Branch"})`,
         rawAccountId: a.account_id,
         branchCode: a.branch_code,
       };

@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { type GraphNode } from "@/data/staticData";
+import { maskAccountNumber, maskCustomerName } from "@/lib/pii";
 import { buildNetworkFromGraph, getGraphById } from "@/data/investigationData";
 import { useInvestigation } from "@/context/InvestigationContext";
 import { useTrace, useExplain, useScore, useAlertsQuick } from "@/hooks/useApi";
@@ -213,7 +214,7 @@ function AccountNode({ data }: NodeProps) {
           <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
             <AccountTypeIcon type={data.accountType} size={10} color={TEXT_DIM} />
             <span style={{ fontFamily: "monospace", fontSize: 9, color: TEXT_MUT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {data.accountNumber}
+              {maskAccountNumber(data.accountNumber)}
             </span>
           </div>
           <span style={{ fontSize: 8.5, fontWeight: 700, color: risk.color, letterSpacing: "0.06em", flexShrink: 0 }}>
@@ -520,7 +521,7 @@ function GraphInner() {
         const risk = score >= 80 ? "CRITICAL" : score >= 60 ? "HIGH" : score >= 40 ? "MEDIUM" : "LOW";
         return {
           id: acc,
-          label: isMain ? `Target (${acc})` : `Hop ${i} (${acc})`,
+          label: isMain ? `Target (${maskAccountNumber(acc)})` : `Hop ${i} (${maskAccountNumber(acc)})`,
           accountNumber: acc,
           riskLevel: risk,
           // Use real account type from score data for target; generic for hops
@@ -1225,7 +1226,7 @@ function GraphInner() {
                         >
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <span style={{ fontWeight: 700, fontSize: 11, color: isSelected ? "#60a5fa" : TEXT_PRI, fontFamily: "monospace" }}>
-                              {alert.account_id}
+                              {maskAccountNumber(alert.account_id)}
                             </span>
                             <span style={{
                               padding: "2px 6px",
@@ -1247,7 +1248,7 @@ function GraphInner() {
                           </div>
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: TEXT_DIM }}>
                             <span>{alert.branch_name || "Main Branch"}</span>
-                            <span>{alert.customer_name || "Account Holder"}</span>
+                            <span>{maskCustomerName(alert.customer_name || "Account Holder")}</span>
                           </div>
                         </div>
                       );
@@ -1533,7 +1534,7 @@ RULES:
                       <div style={{ padding: "8px 10px", borderRadius: 3, background: SURF_2, border: `1px solid ${traceFrom ? "#f0c04040" : BORDER}`, borderLeft: `3px solid ${traceFrom ? "#f0c040" : BORDER2}` }}>
                         {traceFrom ? (
                           <>
-                            <p style={{ fontSize: 10, fontFamily: "monospace", color: "#f0c040" }}>{traceFrom.data.accountNumber}</p>
+                            <p style={{ fontSize: 10, fontFamily: "monospace", color: "#f0c040" }}>{maskAccountNumber(traceFrom.data.accountNumber)}</p>
                             <p style={{ fontSize: 10, color: TEXT_PRI, marginTop: 2 }}>{traceFrom.data.label}</p>
                           </>
                         ) : (
@@ -1548,7 +1549,7 @@ RULES:
                       <div style={{ padding: "8px 10px", borderRadius: 3, background: SURF_2, border: `1px solid ${traceTo ? "#40c0f040" : BORDER}`, borderLeft: `3px solid ${traceTo ? "#40c0f0" : BORDER2}` }}>
                         {traceTo ? (
                           <>
-                            <p style={{ fontSize: 10, fontFamily: "monospace", color: "#40c0f0" }}>{traceTo.data.accountNumber}</p>
+                            <p style={{ fontSize: 10, fontFamily: "monospace", color: "#40c0f0" }}>{maskAccountNumber(traceTo.data.accountNumber)}</p>
                             <p style={{ fontSize: 10, color: TEXT_PRI, marginTop: 2 }}>{traceTo.data.label}</p>
                           </>
                         ) : (
@@ -1568,7 +1569,7 @@ RULES:
                           {(tracePath.path ?? []).map((step: any, i: number) => (
                             <div key={i} style={{ paddingBottom: 10, position: "relative" }}>
                               <div style={{ position: "absolute", left: -10, top: 3, width: 7, height: 7, borderRadius: "50%", background: "#f0c040", border: `1px solid ${SURF_1}` }} />
-                              <p style={{ fontFamily: "monospace", fontSize: 9, color: "#f0c040" }}>{step.accountNumber}</p>
+                              <p style={{ fontFamily: "monospace", fontSize: 9, color: "#f0c040" }}>{maskAccountNumber(step.accountNumber)}</p>
                               <p style={{ fontSize: 9.5, color: TEXT_PRI, marginTop: 1 }}>{step.accountName}</p>
                               <p style={{ fontSize: 9, color: TEXT_MUT, marginTop: 1 }}>{fmtAmount(step.amount)} · {step.txnType}</p>
                             </div>
@@ -1758,7 +1759,7 @@ RULES:
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 3 }}>
                           <AccountTypeIcon type={selectedNode.accountType} size={12} color={selRisk.color} />
-                          <p style={{ fontFamily: "monospace", fontSize: 9.5, color: selRisk.color }}>{selectedNode.accountNumber}</p>
+                          <p style={{ fontFamily: "monospace", fontSize: 9.5, color: selRisk.color }}>{maskAccountNumber(selectedNode.accountNumber)}</p>
                         </div>
                         <p style={{ fontSize: 14, fontWeight: 700, color: TEXT_PRI, lineHeight: 1.2 }}>{selectedNode.label}</p>
                         <div style={{ display: "flex", gap: 5, marginTop: 5, flexWrap: "wrap" }}>
@@ -1848,7 +1849,7 @@ RULES:
                             <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                               <div style={{ width: 2, height: 14, background: oRisk.color, borderRadius: 1, flexShrink: 0 }} />
                               <div style={{ minWidth: 0 }}>
-                                <p style={{ fontFamily: "monospace", fontSize: 8.5, color: oRisk.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{other.accountNumber}</p>
+                                <p style={{ fontFamily: "monospace", fontSize: 8.5, color: oRisk.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maskAccountNumber(other.accountNumber)}</p>
                                 <p style={{ fontSize: 9, color: TEXT_MUT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{other.label}</p>
                               </div>
                             </div>
@@ -1914,12 +1915,12 @@ RULES:
                         return (
                           <>
                             <div style={{ flex: 1, padding: "6px 8px", background: SURF_2, borderRadius: 3, borderLeft: `2px solid ${sR.color}` }}>
-                              <p style={{ fontFamily: "monospace", fontSize: 8.5, color: sR.color }}>{src?.accountNumber}</p>
+                              <p style={{ fontFamily: "monospace", fontSize: 8.5, color: sR.color }}>{maskAccountNumber(src?.accountNumber)}</p>
                               <p style={{ fontSize: 9.5, color: TEXT_PRI, marginTop: 1 }}>{src?.label}</p>
                             </div>
                             <ArrowRight size={11} color={selectedEdge.flagged ? "#EF4444" : TEXT_DIM} style={{ flexShrink: 0 }} />
                             <div style={{ flex: 1, padding: "6px 8px", background: SURF_2, borderRadius: 3, borderLeft: `2px solid ${tR.color}` }}>
-                              <p style={{ fontFamily: "monospace", fontSize: 8.5, color: tR.color }}>{tgt?.accountNumber}</p>
+                              <p style={{ fontFamily: "monospace", fontSize: 8.5, color: tR.color }}>{maskAccountNumber(tgt?.accountNumber)}</p>
                               <p style={{ fontSize: 9.5, color: TEXT_PRI, marginTop: 1 }}>{tgt?.label}</p>
                             </div>
                           </>

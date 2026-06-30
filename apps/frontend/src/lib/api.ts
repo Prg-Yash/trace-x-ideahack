@@ -73,6 +73,7 @@ export type ScoreResult = {
   risk_level: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   combined_score: number;
   flagged_for: string[];
+  top_risk_factors?: { label: string; shap_value: number }[];
   // Postgres-enriched metadata (added by /score endpoint)
   account_type?: string;
   branch_name?: string;
@@ -90,6 +91,7 @@ export type ScoreResult = {
 
 export type AlertItem = {
   account_id: string;
+  masked_account_number?: string;
   customer_name?: string;
   risk_level: string;
   flagged_for: string[];
@@ -166,6 +168,7 @@ export type FeedResponse = {
 
 export type AccountRecord = {
   account_id: string;
+  masked_account_number?: string;
   entity_id?: string;
   account_type?: string;
   kyc_tier?: number;

@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 from app.core.deps import get_current_user
 from app.core.audit import log_system_event
 from pydantic import BaseModel
-from fraud_detector import _run_query, REL_TYPE, _get_driver
+from fraud_detector import _run_query, REL_TYPE, _get_driver, mask_account_number_py, mask_customer_name_py, mask_pan_py
 
 class NoteCreate(BaseModel):
     author: str = "FINnet Investigator"
@@ -55,6 +55,7 @@ async def get_all_accounts(skip: int = 0, limit: int = 100, branch_code: str | N
     pg_query = """
         SELECT 
             a.account_id,
+            a.masked_account_number,
             a.entity_id,
             a.kyc_tier,
             a.status,
@@ -111,13 +112,18 @@ async def get_all_accounts(skip: int = 0, limit: int = 100, branch_code: str | N
         else:
             risk_score = 15
 
+        masked_acc = pg_rec.get("masked_account_number")
+        if not masked_acc or str(masked_acc) == str(acc_id):
+            masked_acc = mask_account_number_py(acc_id)
+
         combined = {
             "account_id": acc_id,
+            "masked_account_number": masked_acc,
             "entity_id": n_rec["entity_id"],
             "branch_name": pg_rec.get("branch_name") or n_rec.get("branch_name"),
             "branch_code": pg_rec.get("branch_code") or n_rec.get("branch_code"),
-            "customer_name": re.sub(r"\s*\(\d+\)$", "", str(pg_rec.get("customer_name") or n_rec.get("customer_name") or "")).strip(),
-            "pan_number": pg_rec.get("pan_number"),
+            "customer_name": mask_customer_name_py(re.sub(r"\s*\(\d+\)$", "", str(pg_rec.get("customer_name") or n_rec.get("customer_name") or "")).strip()),
+            "pan_number": mask_pan_py(pg_rec.get("pan_number")),
             "dob": pg_rec.get("dob"),
             "address": pg_rec.get("address"),
             "kyc_tier": pg_rec.get("kyc_tier"),
@@ -209,6 +215,8 @@ async def get_all_transactions(skip: int = 0, limit: int = 100, branch_code: str
             "txn_id": t_id,
             "sender_id": n_rec["sender_id"],
             "receiver_id": n_rec["receiver_id"],
+            "masked_sender_id": mask_account_number_py(n_rec["sender_id"]),
+            "masked_receiver_id": mask_account_number_py(n_rec["receiver_id"]),
             "amount": pg_rec.get("amount"),
             "channel": pg_rec.get("channel"),
             "txn_ts": pg_rec.get("txn_ts"),
@@ -226,6 +234,7 @@ async def get_account(account_id: str, current_user: dict = Depends(get_current_
     pg_query = """
         SELECT 
             a.account_id,
+            a.masked_account_number,
             a.entity_id,
             a.kyc_tier,
             a.status,
@@ -281,6 +290,15 @@ async def get_account(account_id: str, current_user: dict = Depends(get_current_
         pg_record["risk_score"] = 55
     else:
         pg_record["risk_score"] = 15
+
+    masked_acc = pg_record.get("masked_account_number")
+    clean_acc = str(account_id)
+    if not masked_acc or str(masked_acc) == clean_acc:
+        pg_record["masked_account_number"] = mask_account_number_py(clean_acc)
+    if pg_record.get("customer_name"):
+        pg_record["customer_name"] = mask_customer_name_py(pg_record["customer_name"])
+    if pg_record.get("pan_number"):
+        pg_record["pan_number"] = mask_pan_py(pg_record["pan_number"])
 
     return pg_record
 
