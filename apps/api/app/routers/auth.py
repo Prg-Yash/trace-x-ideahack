@@ -41,6 +41,15 @@ class UserCreate(BaseModel):
     branch_id: int | None = None
     role: str = "Investigator"
 
+class UserUpdate(BaseModel):
+    username: Optional[str] = None
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    branch_id: Optional[int] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+    password: Optional[str] = None
+
 class PasswordUpdate(BaseModel):
     new_password: str
 
@@ -197,17 +206,17 @@ async def get_investigators(
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         if current_user["role"] == "Branch Manager":
             cur.execute("""
-                SELECT u.id, u.username, u.full_name, u.role, u.branch_id, u.is_locked, b.branch_code 
+                SELECT u.id, u.username, u.full_name, u.email, u.role, u.branch_id, u.is_locked, b.branch_code 
                 FROM users u 
                 LEFT JOIN branches b ON u.branch_id = b.id 
                 WHERE u.role = 'Investigator' AND u.branch_id = %s AND u.is_active = TRUE
             """, (current_user.get("branch_id"),))
         else:
             cur.execute("""
-                SELECT u.id, u.username, u.full_name, u.role, u.branch_id, u.is_locked, b.branch_code 
+                SELECT u.id, u.username, u.full_name, u.email, u.role, u.branch_id, u.is_locked, b.branch_code 
                 FROM users u 
                 LEFT JOIN branches b ON u.branch_id = b.id 
-                WHERE u.role = 'Investigator' AND u.is_active = TRUE
+                WHERE u.is_active = TRUE
             """)
         users = cur.fetchall()
         # Convert UUID to string
@@ -234,8 +243,11 @@ async def create_user(
         if not target_branch:
             raise HTTPException(status_code=400, detail="Manager has no branch assigned")
             
-    if assigned_role not in ["Investigator", "Branch Manager"]:
+    if assigned_role not in ["Investigator", "Branch Manager", "Admin"]:
         raise HTTPException(status_code=400, detail="Invalid role")
+        
+    if assigned_role == "Admin" and current_user["role"] != "Admin":
+        raise HTTPException(status_code=403, detail="Only Admins can create Admin users")
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         # Check if username exists
@@ -243,24 +255,112 @@ async def create_user(
         if cur.fetchone():
             raise HTTPException(status_code=400, detail="Username already exists")
             
+        if user_data.email:
+            cur.execute("SELECT id FROM users WHERE email = %s", (user_data.email,))
+            if cur.fetchone():
+                raise HTTPException(status_code=400, detail="Email already exists")
+            
         cur.execute(
             "INSERT INTO users (username, hashed_password, full_name, email, role, branch_id) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id, username, full_name, email, role, branch_id",
             (user_data.username, hashed_password, user_data.full_name, user_data.email, assigned_role, target_branch)
         )
         new_user = cur.fetchone()
-        new_user["id"] = str(new_user["id"])
-        conn.commit()
         
-    log_system_event(
-        action_type="USER_CREATE",
-        status="SUCCESS",
-        description=f"Created user {user_data.username} with role {assigned_role}",
-        actor_id=current_user["id"],
-        actor_name=current_user["full_name"],
-        target_id=new_user["id"],
-        request=request
-    )
-    return new_user
+        # Log event
+        log_system_event(
+            action_type="USER_CREATED",
+            status="SUCCESS",
+            description=f"User {user_data.username} created with role {assigned_role}",
+            actor_id=str(current_user["id"]),
+            actor_name=current_user["username"],
+            target_id=str(new_user["id"]),
+            request=request,
+            conn=conn
+        )
+        
+        conn.commit()
+        new_user["id"] = str(new_user["id"])
+        return new_user
+
+@router.put("/users/{user_id}")
+async def update_user(
+    request: Request,
+    user_id: str,
+    user_data: UserUpdate,
+    current_user: dict = Depends(require_roles(["Admin"])),
+    conn = Depends(get_pg_conn)
+):
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        # Check if user exists
+        cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+        existing_user = cur.fetchone()
+        if not existing_user:
+            raise HTTPException(status_code=404, detail="User not found")
+            
+        update_fields = []
+        update_values = []
+        
+        if user_data.username is not None:
+            # Check for duplicates
+            cur.execute("SELECT id FROM users WHERE username = %s AND id != %s", (user_data.username, user_id))
+            if cur.fetchone():
+                raise HTTPException(status_code=400, detail="Username already exists")
+            update_fields.append("username = %s")
+            update_values.append(user_data.username)
+            
+        if user_data.email is not None:
+            cur.execute("SELECT id FROM users WHERE email = %s AND id != %s", (user_data.email, user_id))
+            if cur.fetchone():
+                raise HTTPException(status_code=400, detail="Email already exists")
+            update_fields.append("email = %s")
+            update_values.append(user_data.email)
+            
+        if user_data.full_name is not None:
+            update_fields.append("full_name = %s")
+            update_values.append(user_data.full_name)
+            
+        if user_data.role is not None:
+            if user_data.role not in ["Admin", "Branch Manager", "Investigator"]:
+                raise HTTPException(status_code=400, detail="Invalid role")
+            update_fields.append("role = %s")
+            update_values.append(user_data.role)
+            
+        if user_data.branch_id is not None:
+            update_fields.append("branch_id = %s")
+            update_values.append(user_data.branch_id)
+            
+        if user_data.is_active is not None:
+            update_fields.append("is_active = %s")
+            update_values.append(user_data.is_active)
+            
+        if user_data.password is not None and len(user_data.password) > 0:
+            update_fields.append("hashed_password = %s")
+            update_values.append(get_password_hash(user_data.password))
+            
+        if not update_fields:
+            return {"message": "No fields to update"}
+            
+        update_values.append(user_id)
+        
+        query = f"UPDATE users SET {', '.join(update_fields)} WHERE id = %s RETURNING id, username, full_name, email, role, branch_id, is_active"
+        cur.execute(query, tuple(update_values))
+        updated_user = cur.fetchone()
+        
+        # Log event
+        log_system_event(
+            action_type="USER_UPDATED",
+            status="SUCCESS",
+            description=f"User {existing_user['username']} fully updated by Admin",
+            actor_id=str(current_user["id"]),
+            actor_name=current_user["username"],
+            target_id=str(user_id),
+            request=request,
+            conn=conn
+        )
+        
+        conn.commit()
+        updated_user["id"] = str(updated_user["id"])
+        return updated_user
 
 @router.patch("/users/{user_id}/password")
 async def update_user_password(

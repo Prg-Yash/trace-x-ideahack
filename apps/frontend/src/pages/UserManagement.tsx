@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { fetchInvestigators, createInvestigator, updateInvestigatorPassword, deleteInvestigator, fetchBranches, unlockInvestigator } from "@/lib/api";
+import { fetchInvestigators, createInvestigator, updateInvestigatorPassword, deleteInvestigator, fetchBranches, unlockInvestigator, updateInvestigator } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -44,6 +44,11 @@ export default function UserManagement() {
   // Delete states
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
+
+  // Edit states
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editUserData, setEditUserData] = useState<any>({});
 
   useEffect(() => {
     loadInvestigators();
@@ -134,6 +139,42 @@ export default function UserManagement() {
       await loadInvestigators();
     } catch (err: any) {
       toast.error(err.message || "Failed to unlock investigator");
+    }
+  };
+
+  const handleEdit = (userToEdit: any) => {
+    setSelectedInvestigator(userToEdit);
+    setEditUserData({
+      username: userToEdit.username || "",
+      full_name: userToEdit.full_name || "",
+      email: userToEdit.email || "",
+      role: userToEdit.role || "",
+      branch_id: userToEdit.branch_id ? userToEdit.branch_id.toString() : "",
+      is_active: userToEdit.is_active !== false,
+      password: ""
+    });
+    setEditModalOpen(true);
+  };
+
+  const handleUpdateUser = async () => {
+    if (!selectedInvestigator) return;
+    
+    setEditLoading(true);
+    try {
+      const payload: any = { ...editUserData };
+      if (payload.branch_id) payload.branch_id = parseInt(payload.branch_id);
+      else delete payload.branch_id;
+      if (!payload.password) delete payload.password;
+      
+      await updateInvestigator(selectedInvestigator.id, payload);
+      toast.success("User updated successfully!");
+      setEditModalOpen(false);
+      setSelectedInvestigator(null);
+      await loadInvestigators();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update user");
+    } finally {
+      setEditLoading(false);
     }
   };
 
@@ -247,12 +288,13 @@ export default function UserManagement() {
                     <SelectContent className="rounded-none border-2" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
                       <SelectItem value="Investigator">Investigator</SelectItem>
                       <SelectItem value="Branch Manager">Branch Manager</SelectItem>
+                      <SelectItem value="Admin">Admin</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               )}
               <Button
-                disabled={createLoading || !newUsername || !newEmail || !newPassword || !newFullName || (user?.role === "Admin" && !newBranchId)}
+                disabled={createLoading || !newUsername || !newEmail || !newPassword || !newFullName || (user?.role === "Admin" && newRole !== "Admin" && !newBranchId)}
                 onClick={handleCreate}
                 className="w-full h-11 rounded-none text-[11px] font-black uppercase tracking-widest mt-2 transition-all hover:brightness-110"
                 style={{
@@ -329,28 +371,19 @@ export default function UserManagement() {
                             Unlock
                           </Button>
                         )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedInvestigator({ id: inv.id, username: inv.username });
-                            setPasswordModalOpen(true);
-                          }}
-                          className="text-[10px] uppercase font-bold tracking-widest text-[#a3e635] hover:bg-[#a3e635]/10 h-7 px-2 justify-start"
-                        >
-                          Password
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedInvestigator({ id: inv.id, username: inv.username });
-                            setDeleteModalOpen(true);
-                          }}
-                          className="text-[10px] uppercase font-bold tracking-widest text-red-500 hover:bg-red-500/10 h-7 px-2 justify-start"
-                        >
-                          Delete
-                        </Button>
+                              {user?.role === "Admin" && (
+                                <>
+                                  <Button size="sm" variant="ghost" onClick={() => handleEdit(inv)} className="text-[10px] uppercase font-bold tracking-widest text-[#a3e635] hover:bg-[#a3e635]/10 h-7 px-2 justify-start">
+                                    Edit
+                                  </Button>
+                                  <Button size="sm" variant="ghost" onClick={() => { setSelectedInvestigator({ id: inv.id, username: inv.username }); setPasswordModalOpen(true); }} className="text-[10px] uppercase font-bold tracking-widest text-[#a3e635] hover:bg-[#a3e635]/10 h-7 px-2 justify-start">
+                                    Password
+                                  </Button>
+                                  <Button size="sm" variant="ghost" onClick={() => { setSelectedInvestigator({ id: inv.id, username: inv.username }); setDeleteModalOpen(true); }} className="text-[10px] uppercase font-bold tracking-widest text-red-500 hover:bg-red-500/10 h-7 px-2 justify-start">
+                                    Delete
+                                  </Button>
+                                </>
+                              )}
                       </div>
                     </div>
                   ))}
@@ -452,6 +485,103 @@ export default function UserManagement() {
                 }}
               >
                 {deleteLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Delete"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* EDIT USER MODAL */}
+      <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
+        <DialogContent 
+          className="rounded-none p-0 overflow-hidden sm:max-w-md" 
+          style={{ 
+            backgroundColor: "#1A1F27", 
+            border: "1px solid #2A2F35",
+            boxShadow: "0px 10px 40px rgba(0,0,0,0.5)"
+          }}
+        >
+          <div className="p-6">
+            <DialogHeader className="mb-6" style={{ borderBottom: "1px solid #2A2F35", paddingBottom: "16px", margin: "-24px -24px 24px -24px", paddingTop: "24px", paddingLeft: "24px", paddingRight: "24px" }}>
+              <DialogTitle className="text-xl font-black uppercase tracking-tight" style={{ color: "#a3e635" }}>
+                Edit User: <span className="text-white">{selectedInvestigator?.username}</span>
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-[#a3e635] opacity-80">Full Name</label>
+                <Input
+                  value={editUserData.full_name}
+                  onChange={(e) => setEditUserData({ ...editUserData, full_name: e.target.value })}
+                  className="rounded-none border h-10 px-3 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-[#a3e635]"
+                  style={{ borderColor: "#2A2F35", color: "#E8E8E2" }}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-[#a3e635] opacity-80">Username</label>
+                <Input
+                  value={editUserData.username}
+                  onChange={(e) => setEditUserData({ ...editUserData, username: e.target.value })}
+                  className="rounded-none border h-10 px-3 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-[#a3e635]"
+                  style={{ borderColor: "#2A2F35", color: "#E8E8E2" }}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-[#a3e635] opacity-80">Email Address</label>
+                <Input
+                  value={editUserData.email}
+                  onChange={(e) => setEditUserData({ ...editUserData, email: e.target.value })}
+                  className="rounded-none border h-10 px-3 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-[#a3e635]"
+                  style={{ borderColor: "#2A2F35", color: "#E8E8E2" }}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-[#a3e635] opacity-80">Role</label>
+                <Select value={editUserData.role} onValueChange={(val) => setEditUserData({ ...editUserData, role: val })}>
+                  <SelectTrigger className="w-full rounded-none border h-10 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-[#a3e635]" style={{ borderColor: "#2A2F35", color: "#E8E8E2" }}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-none border" style={{ backgroundColor: "#1A1F27", borderColor: "#2A2F35" }}>
+                    <SelectItem value="Investigator" style={{ color: "#E8E8E2" }}>Investigator</SelectItem>
+                    <SelectItem value="Branch Manager" style={{ color: "#E8E8E2" }}>Branch Manager</SelectItem>
+                    <SelectItem value="Admin" style={{ color: "#E8E8E2" }}>Admin</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-[#a3e635] opacity-80">Branch</label>
+                <Select value={editUserData.branch_id} onValueChange={(val) => setEditUserData({ ...editUserData, branch_id: val })}>
+                  <SelectTrigger className="w-full rounded-none border h-10 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-[#a3e635]" style={{ borderColor: "#2A2F35", color: "#E8E8E2" }}>
+                    <SelectValue placeholder="No Branch" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-none border" style={{ backgroundColor: "#1A1F27", borderColor: "#2A2F35" }}>
+                    {branches.map(b => (
+                      <SelectItem key={b.id} value={b.id.toString()} style={{ color: "#E8E8E2" }}>
+                        {b.name} ({b.branch_code})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-[#a3e635] opacity-80">Update Password (Leave blank to keep current)</label>
+                <Input
+                  type="password"
+                  value={editUserData.password}
+                  onChange={(e) => setEditUserData({ ...editUserData, password: e.target.value })}
+                  placeholder="••••••••"
+                  className="rounded-none border h-10 px-3 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-[#a3e635]"
+                  style={{ borderColor: "#2A2F35", color: "#E8E8E2" }}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-8">
+              <Button variant="outline" onClick={() => setEditModalOpen(false)} className="rounded-none text-xs font-bold uppercase" style={{ borderColor: "#2A2F35", color: "#E8E8E2" }}>
+                Cancel
+              </Button>
+              <Button onClick={handleUpdateUser} disabled={editLoading} className="rounded-none text-xs font-bold uppercase hover:brightness-110" style={{ backgroundColor: "#a3e635", color: "#130537", border: "1px solid #a3e635" }}>
+                {editLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                Save Changes
               </Button>
             </div>
           </div>

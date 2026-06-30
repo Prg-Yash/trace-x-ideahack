@@ -275,6 +275,12 @@ export const updateInvestigatorPassword = (userId: string, newPassword: string) 
     body: JSON.stringify({ new_password: newPassword }),
   });
 
+export const updateInvestigator = (userId: string, data: any) =>
+  apiFetch<any>(`/auth/users/${userId}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+
 export const deleteInvestigator = (userId: string) =>
   apiFetch<{ message: string }>(`/auth/users/${userId}`, {
     method: "DELETE",
