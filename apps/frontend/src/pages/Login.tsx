@@ -39,7 +39,7 @@ export default function Login() {
       });
       const userData = await meRes.json();
 
-      login(data.access_token, userData);
+      login(userData, data.access_token);
       toast({
         title: "Authentication Successful",
         description: `Welcome back, Investigator ${userData.username}.`,

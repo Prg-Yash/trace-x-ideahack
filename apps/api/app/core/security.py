@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta
 from typing import Any, Union
-import os
 import bcrypt
 from jose import jwt
+from app.core.config import settings
 
-# SECRET_KEY for testing (should be in env for prod)
-SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7")
+# SECRET_KEY loaded exclusively from .env via config
+SECRET_KEY = settings.SECRET_KEY
 ALGORITHM = "HS256"
 # Set session limit for a very long time (30 days as requested)
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30

@@ -2,7 +2,9 @@ import os
 import psycopg2
 from passlib.context import CryptContext
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_19nVcEqwLskP@ep-ancient-salad-aopl31tx.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is not set")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 

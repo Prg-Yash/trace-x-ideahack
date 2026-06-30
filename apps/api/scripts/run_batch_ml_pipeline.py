@@ -11,7 +11,9 @@ ROOT_DIR = Path(__file__).resolve().parents[3]
 sys.path.append(str(ROOT_DIR / "apps" / "api"))
 sys.path.append(str(ROOT_DIR / "apps" / "ai-ml"))
 
-DATABASE_URL = "postgresql://neondb_owner:npg_19nVcEqwLskP@ep-ancient-salad-aopl31tx.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is not set")
 from fraud_detector import score_account, _neo4j_session
 
 async def persist_alert(account_id: str, score_result: dict, total_amount: float = 0.0):

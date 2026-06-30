@@ -19,6 +19,7 @@ import Evidence from "@/pages/Evidence";
 import LiveStream from "@/pages/LiveStream";
 import BranchRisk from "@/pages/BranchRisk";
 import RiskMap from "@/pages/RiskMap";
+import UserManagement from "@/pages/UserManagement";
 
 class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: Error | null}> {
   constructor(props: {children: React.ReactNode}) {
@@ -58,6 +59,7 @@ function ProtectedRoutes() {
         <Route path="/risk-map" component={RiskMap} />
         <Route path="/accounts" component={Accounts} />
         <Route path="/evidence" component={Evidence} />
+        <Route path="/users" component={UserManagement} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>
