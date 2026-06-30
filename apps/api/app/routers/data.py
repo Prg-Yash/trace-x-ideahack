@@ -25,17 +25,18 @@ def get_db_connection():
         raise HTTPException(status_code=503, detail=f"NeonDB connection failed: {e}")
 
 @router.get("/accounts")
-async def get_all_accounts(skip: int = 0, limit: int = 100):
+async def get_all_accounts(skip: int = 0, limit: int = 100, branch_code: str | None = None):
     if _get_driver() is None:
         raise HTTPException(status_code=503, detail="Neo4j is not connected")
     
     # 1. Fetch from Neo4j
     neo4j_query = """
         MATCH (a:Account)
+        WHERE ($branch_code IS NULL OR a.branch_code = $branch_code)
         RETURN a.account_id AS account_id, a.entity_id AS entity_id, a.customer_name AS customer_name, a.branch_name AS branch_name, a.branch_code AS branch_code
         SKIP $skip LIMIT $limit
     """
-    neo4j_records = await _run_query(neo4j_query, skip=skip, limit=limit)
+    neo4j_records = await _run_query(neo4j_query, skip=skip, limit=limit, branch_code=branch_code)
     if not neo4j_records:
         return []
 

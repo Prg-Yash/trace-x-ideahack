@@ -12,6 +12,9 @@ import {
 } from "recharts";
 import { Link } from "wouter";
 import { useStats, useAlertsQuick } from "@/hooks/useApi";
+import { useAuth } from "@/context/AuthContext";
+import AdminDashboard from "./AdminDashboard";
+import { useState } from "react";
 
 /* ── DESIGN TOKENS ── */
 const TOOLTIP_STYLE = {
@@ -49,7 +52,7 @@ const RISK_PIE: Record<string, string> = {
 
 const PATTERN_BAR_COLORS = ["#a3e635", "#06B6D4", "#F59E0B", "#EF4444", "#8B5CF6"];
 
-export default function Dashboard() {
+export function DashboardContent() {
   const { data: statsData, loading: statsLoading } = useStats();
   const { data: alertsData, loading: alertsLoading } = useAlertsQuick(500);
 
@@ -552,6 +555,27 @@ export default function Dashboard() {
         </div>
       </motion.div>
 
+    </div>
+  );
+}
+
+export default function Dashboard() {
+  const { user } = useAuth();
+  
+  return (
+    <div className="relative">
+      {user?.role === "Admin" && (
+        <div className="absolute top-6 right-6 z-50">
+          <Link href="~/dashboard">
+            <button 
+              className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest bg-[#130537] text-[#a3e635] border-2 border-[#130537] hover:bg-[#a3e635] hover:text-[#130537] transition-colors shadow-[4px_4px_0px_#130537]"
+            >
+              &larr; Back to Admin Overview
+            </button>
+          </Link>
+        </div>
+      )}
+      <DashboardContent />
     </div>
   );
 }

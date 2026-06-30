@@ -17,7 +17,7 @@ export default function NotFound() {
         <p className="text-sm mb-6 leading-relaxed text-slate-700">
           The routing table returned a null response for this URI. The requested resource might have been deleted or archived.
         </p>
-        <Link href="/">
+        <Link href="/dashboard">
           <button
             className="w-full py-3 text-[14px] font-bold border-2 border-[#130537] transition-all hover:bg-[#a3e635] hover:border-[#130537] flex items-center justify-center gap-2"
             style={{ backgroundColor: "#130537", color: "#e8e8e2" }}

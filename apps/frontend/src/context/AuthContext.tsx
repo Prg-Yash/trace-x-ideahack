@@ -1,13 +1,14 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { useLocation } from "wouter";
 
-export type Role = "Investigator" | "Principal Officer" | "Admin";
+export type Role = "Investigator" | "Branch Manager" | "Admin";
 
 export interface User {
   id: string;
   name: string;
   role: Role;
   username: string;
+  branchCode?: string;
 }
 
 interface AuthContextType {
@@ -32,7 +33,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const storedUser = sessionStorage.getItem("trace-x-user");
     const storedToken = sessionStorage.getItem("trace-x-token");
     if (storedUser && storedToken) {
-      setUserState(JSON.parse(storedUser));
+      const data = JSON.parse(storedUser);
+      const fetchedUser: User = {
+        id: data.id,
+        name: data.full_name || data.name,
+        role: data.role,
+        username: data.username,
+        branchCode: data.branch_code || data.branchCode
+      };
+      setUserState(fetchedUser);
       setTokenState(storedToken);
     }
     setIsLoading(false);

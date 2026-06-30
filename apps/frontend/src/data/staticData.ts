@@ -52,6 +52,7 @@ export type Alert = {
   pattern: string;
   amount: number;
   assignee: string | null;
+  assigneeId?: string | null;
   description: string | null;
   createdAt: string;
   updatedAt: string;
@@ -59,6 +60,7 @@ export type Alert = {
   accountName: string;
   accountNumber: string;
   rawAccountId?: string;
+  branchCode?: string;
 };
 
 export type AlertTimeline = {

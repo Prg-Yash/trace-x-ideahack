@@ -9,6 +9,7 @@ import {
   type SystemStats, type AlertsResponse, type FeedResponse,
   type ScoreResult, type TraceResult, type ExplainResult, type AccountRecord, type InvestigationNote, type BranchChannelAnalytics,
 } from "@/lib/api";
+import { useCurrentBranch } from "./useCurrentBranch";
 
 // ── Generic fetcher hook ─────────────────────────────────────────────────────
 function useQuery<T>(
@@ -58,7 +59,14 @@ function useQuery<T>(
 
 /** System-wide KPI stats – auto-refreshes every 30s */
 export function useStats() {
-  return useQuery<SystemStats>(fetchStats, [], { refetchInterval: 30_000 });
+  const branchCode = useCurrentBranch();
+  const apiBranchCode = branchCode === "ALL" ? undefined : branchCode || undefined;
+  
+  return useQuery<SystemStats>(
+    () => fetchStats(apiBranchCode), 
+    [apiBranchCode], 
+    { refetchInterval: 30_000 }
+  );
 }
 
 export function useBranchChannelAnalytics() {
@@ -67,9 +75,12 @@ export function useBranchChannelAnalytics() {
 
 /** Pre-computed quick alerts from Neo4j */
 export function useAlertsQuick(limit = 200) {
+  const branchCode = useCurrentBranch();
+  const apiBranchCode = branchCode === "ALL" ? undefined : branchCode || undefined;
+
   return useQuery<AlertsResponse>(
-    () => fetchAlertsQuick(limit),
-    [limit],
+    () => fetchAlertsQuick(limit, apiBranchCode),
+    [limit, apiBranchCode],
     { refetchInterval: 60_000 }
   );
 }
@@ -117,9 +128,12 @@ export function useReport(accountId: string | null) {
 
 /** List accounts */
 export function useAccounts(limit = 300) {
+  const branchCode = useCurrentBranch();
+  const apiBranchCode = branchCode === "ALL" ? undefined : branchCode || undefined;
+  
   return useQuery<AccountRecord[]>(
-    () => fetchAccounts(limit),
-    [limit],
+    () => fetchAccounts(limit, apiBranchCode),
+    [limit, apiBranchCode],
     { refetchInterval: 60_000 }
   );
 }
