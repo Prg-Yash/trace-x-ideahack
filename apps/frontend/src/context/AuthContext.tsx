@@ -31,9 +31,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const storedToken = localStorage.getItem("trace_x_token");
     if (storedToken) {
       setToken(storedToken);
-      // Fetch user /me could be done here to hydrate user state.
-      // For now, we'll set a placeholder or decode JWT in real app.
-      // Or we can just set authenticated true if token exists.
       fetch(`${BASE}/auth/me`, {
         headers: {
           "Authorization": `Bearer ${storedToken}`
