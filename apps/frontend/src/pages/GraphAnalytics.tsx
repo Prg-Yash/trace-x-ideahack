@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
+import { BASE } from "../lib/api";
 import ReactFlow, {
   Background, Controls, MiniMap,
   type Node, type Edge, type NodeProps, type EdgeProps,
@@ -554,11 +555,11 @@ function GraphInner() {
         const ch = traceChannels[i] && traceChannels[i] !== "SWIFT" && traceChannels[i] !== "WIRE" && traceChannels[i] !== "CRYPTO" ? traceChannels[i] : defaultChannel;
         let source = chain[i];
         let target = chain[i + 1];
-        const isConvergent = ["SMURFING", "DORMANT", "DORMANT_ACTIVATION"].includes(liveTrace?.fraud_type?.toUpperCase() || "") || 
-                             ["SMURFING", "DORMANT"].includes(alertPattern?.toUpperCase() || "");
+        const isConvergent = ["SMURFING", "DORMANT", "DORMANT_ACTIVATION"].includes(liveTrace?.fraud_type?.toUpperCase() || "") ||
+          ["SMURFING", "DORMANT"].includes(alertPattern?.toUpperCase() || "");
         if (isConvergent) {
-            source = chain[i + 1];
-            target = chain[0];
+          source = chain[i + 1];
+          target = chain[0];
         }
         edges.push({
           id: `e-${source}-${target}-${i}`,
@@ -595,10 +596,22 @@ function GraphInner() {
       nodes.forEach(n => {
         if (!uniqueNodesMap.has(n.id)) uniqueNodesMap.set(n.id, n);
       });
-      return { nodes: Array.from(uniqueNodesMap.values()), edges };
+      const uniqueNodes = Array.from(uniqueNodesMap.values());
+      const stats = {
+        totalNodes: uniqueNodes.length,
+        totalEdges: edges.length,
+        flaggedNodes: uniqueNodes.filter(n => n.flagged).length,
+        flaggedEdges: edges.filter(e => e.riskLevel === "CRITICAL" || e.riskLevel === "HIGH").length,
+        detectedClusters: 1, // Currently looking at one trace cluster
+      };
+      return { nodes: uniqueNodes, edges, stats };
     }
-    return { nodes: [], edges: [] };
-  // Only re-run when account, trace data, or score risk level changes — NOT on every score update
+    return {
+      nodes: [],
+      edges: [],
+      stats: { totalNodes: 0, totalEdges: 0, flaggedNodes: 0, flaggedEdges: 0, detectedClusters: 0 }
+    };
+    // Only re-run when account, trace data, or score risk level changes — NOT on every score update
   }, [routeAccountId, liveAlertsQuick, traceQueryId, liveTrace, liveScore?.combined_score, liveScore?.detections?.kyc_mismatch?.detected, urlPattern]);
 
   const graphEdges = useMemo(
@@ -1338,7 +1351,7 @@ function GraphInner() {
                                       e.stopPropagation();
                                       if (aiBriefingState[p.id]?.loading) return;
                                       setAiBriefingState(prev => ({ ...prev, [p.id]: { loading: true, text: "" } }));
-                                      
+
                                       let fullNarrative = "";
                                       try {
                                         const targetAcc = p.affectedAccounts?.[0] || "ACC_00001";
@@ -1372,11 +1385,11 @@ function GraphInner() {
                                         const focused_pattern = p.patternType;
                                         const focused_label = focused_pattern || (allPatterns[0] ? allPatterns[0].patternType : "SUSPICIOUS ACTIVITY");
 
-                                        const patterns_block = allPatterns ? allPatterns.map(ap => 
+                                        const patterns_block = allPatterns ? allPatterns.map(ap =>
                                           `  - ${ap.patternType || 'UNKNOWN'} (Confidence: ${(ap.confidence || 0).toFixed(1)}%, Accounts: ${(ap.affectedAccounts || []).length}, Exposure: ₹${(ap.totalAmount || 0).toLocaleString()}, Description: ${ap.description || 'N/A'})`
                                         ).join("\n") : `  - ${focused_pattern || 'SUSPICIOUS ACTIVITY'}`;
 
-                                        const shap_block = shapForAI && shapForAI.length > 0 ? shapForAI.map((f: any) => 
+                                        const shap_block = shapForAI && shapForAI.length > 0 ? shapForAI.map((f: any) =>
                                           `  - ${f.label || 'Unknown Feature'}: SHAP impact = ${f.shap_value > 0 ? '+' : ''}${parseFloat(f.shap_value).toFixed(4)} (${f.direction === 'RISK' ? 'RISK FACTOR' : 'PROTECTIVE'}), plain English meaning: ${f.description || 'behavioral anomaly detected by ML model'}`
                                         ).join("\n") : "  (No SHAP data provided)";
 
@@ -1430,7 +1443,7 @@ RULES:
                                       } catch (err) {
                                         // Fallback if API offline
                                       }
-                                      
+
                                       if (!fullNarrative) {
                                         fullNarrative = `• Typology Confirmation: AI analysis confirmed ${p.patternType} pattern (${p.confidence.toFixed(1)}% confidence) across ${p.affectedAccounts.length} linked accounts with total exposure of ₹${p.totalAmount.toLocaleString()}.\n• SHAP Attribution: High ML attribution scores driven by rapid multi-hop velocity and cross-channel rail switching — classic layering evasion signals.\n• Recommended Action: Immediate account freeze on all ${p.affectedAccounts.length} entities and SAR Form 8 submission to FIU-IND.`;
                                       }

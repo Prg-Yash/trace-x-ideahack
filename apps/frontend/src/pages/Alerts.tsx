@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useMemo, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { Link } from "wouter";
 import { toast } from "sonner";
+import { BASE } from "../lib/api";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -120,8 +122,9 @@ export default function Alerts() {
     let reconnectTimeout: ReturnType<typeof setTimeout>;
 
     function connect() {
-      const wsUrl = import.meta.env.VITE_WS_URL || "ws://localhost:8000/api/v1/ws";
-      const ws = new WebSocket(wsUrl);
+      const protocol = BASE.startsWith('https') ? 'wss:' : 'ws:';
+      const host = BASE.replace(/^https?:\/\//, '').split('/')[0];
+      const ws = new WebSocket(`${protocol}//${host}/api/v1/ws`);
       wsRef.current = ws;
 
       ws.onopen = () => {

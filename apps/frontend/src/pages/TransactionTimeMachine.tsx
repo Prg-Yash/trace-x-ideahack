@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Link, useRoute } from "wouter";
-import { ArrowLeft, Camera, Loader2, Radio, Video, Square } from "lucide-react";
+import { ArrowLeft, Camera, Loader2, Radio } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useReplayEngine } from "@/hooks/useReplayEngine";
 import { useLiveReplayDataset } from "@/hooks/useLiveReplayDataset";
@@ -112,78 +112,71 @@ function TransactionTimeMachineReplay({
 }) {
   const engine = useReplayEngine(dataset);
   const aiBriefingRef = useRef<AIBriefingPanelRef>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
+  const [isAiLoading, setIsAiLoading] = useState(false);
 
-  const handleRecordVideo = async () => {
-    if (isRecording) {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-        mediaRecorderRef.current.stop();
-      }
-      setIsRecording(false);
-      return;
-    }
-
-    try {
-      const displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-      
-      const recorder = new MediaRecorder(displayStream, { mimeType: "video/webm" });
-      const chunks: BlobPart[] = [];
-      
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-      
-      recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: "video/webm" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `transaction_replay_${alertId}.webm`;
-        a.click();
-        URL.revokeObjectURL(url);
-        setIsRecording(false);
-      };
-      
-      displayStream.getVideoTracks()[0].onended = () => {
-        if (recorder.state !== 'inactive') recorder.stop();
-      };
-
-      recorder.start();
-      mediaRecorderRef.current = recorder;
-      setIsRecording(true);
-      
-      engine.restart();
+  const handlePlay = async () => {
+    if (!aiBriefingRef.current?.getText() && !aiBriefingRef.current?.isGenerating()) {
+      setIsAiLoading(true);
+      await aiBriefingRef.current?.generateBriefing();
+      setIsAiLoading(false);
       engine.play();
-      
-      if (!aiBriefingRef.current?.getText()) {
-        await aiBriefingRef.current?.generateBriefing();
-      }
-      
-      await aiBriefingRef.current?.speak();
-      
-      // Stop recording automatically when voice finishes
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-        mediaRecorderRef.current.stop();
-      }
-      
-      displayStream.getTracks().forEach(t => t.stop());
-      
-      toast({
-        title: "Video Recorded",
-        description: "Transaction replay and AI voiceover downloaded successfully.",
-      });
-    } catch (e) {
-      console.error("Recording failed:", e);
-      setIsRecording(false);
-      toast({
-        title: "Recording Failed",
-        description: "Could not start video recording.",
-        variant: "destructive"
-      });
+      aiBriefingRef.current?.speak();
+    } else {
+      engine.play();
+      aiBriefingRef.current?.resumeAudio();
     }
   };
 
+  const handlePause = () => {
+    engine.pause();
+    aiBriefingRef.current?.pauseAudio();
+  };
+
+  const handleStop = () => {
+    engine.stop();
+    aiBriefingRef.current?.stopAudio();
+  };
+
+  const handleRestart = () => {
+    engine.restart();
+    aiBriefingRef.current?.stopAudio();
+    aiBriefingRef.current?.speak();
+  };
+
+  const handleNext = () => {
+    engine.next();
+    const total = dataset.transactions.length || 1;
+    const newIdx = Math.min(engine.currentIndex + 1, total - 1);
+    aiBriefingRef.current?.seekAudio(newIdx / (total - 1 || 1));
+  };
+
+  const handlePrevious = () => {
+    engine.previous();
+    const total = dataset.transactions.length || 1;
+    const newIdx = Math.max(engine.currentIndex - 1, 0);
+    aiBriefingRef.current?.seekAudio(newIdx / (total - 1 || 1));
+  };
+
+  const handleRewind = () => {
+    engine.rewind();
+    aiBriefingRef.current?.seekAudio(0);
+  };
+
+  const handleForward = () => {
+    engine.forward();
+    aiBriefingRef.current?.seekAudio(1);
+  };
+
+  const handleSpeedChange = (speed: number) => {
+    engine.setSpeed(speed);
+    aiBriefingRef.current?.setAudioSpeed(speed);
+  };
+
+  const handleSeek = (index: number) => {
+    engine.seekToIndex(index);
+    const total = dataset.transactions.length || 1;
+    aiBriefingRef.current?.seekAudio(index / (total - 1 || 1));
+  };
   const metaChips = [
     { label: "Alert", value: alert.alertId },
     { label: "Pattern", value: alert.pattern },
@@ -255,29 +248,23 @@ function TransactionTimeMachineReplay({
             <Radio className="h-3 w-3" />
             {engine.isPlaying ? "Live" : "Ready"}
           </div>
-          <button
-            type="button"
-            onClick={handleRecordVideo}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-[9px] font-black uppercase tracking-[0.1em]"
-            style={{
-              backgroundColor: isRecording ? REPLAY_THEME.error : REPLAY_THEME.accent,
-              color: REPLAY_THEME.border,
-              border: `1px solid ${isRecording ? REPLAY_THEME.error : REPLAY_THEME.accent}`,
-              transition: "all 0.2s"
-            }}
-          >
-            {isRecording ? <Square className="h-3 w-3" fill="currentColor" /> : <Video className="h-3 w-3" />}
-            {isRecording ? "Stop Recording" : "Record Video"}
-          </button>
         </div>
       </motion.header>
 
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-2">
         <div className="flex flex-col min-h-0 gap-2">
           <div
-            className="flex-1 min-h-[200px] overflow-hidden"
+            className="flex-1 min-h-[200px] overflow-hidden relative"
             style={{ ...cardStyle, boxShadow: `3px 3px 0px ${REPLAY_THEME.border}`, padding: 0 }}
           >
+            {isAiLoading && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm">
+                <Loader2 className="h-8 w-8 animate-spin text-[#130537] mb-4" />
+                <p className="text-xs font-bold uppercase tracking-widest text-[#130537]">
+                  Generating AI Investigator Script...
+                </p>
+              </div>
+            )}
             <ReplayGraph
               dataset={dataset}
               currentIndex={engine.currentIndex}
@@ -293,16 +280,16 @@ function TransactionTimeMachineReplay({
             currentIndex={engine.currentIndex}
             totalTransactions={engine.totalTransactions}
             speed={engine.speed}
-            onPlay={engine.play}
-            onPause={engine.pause}
-            onStop={engine.stop}
-            onPrevious={engine.previous}
-            onNext={engine.next}
-            onRewind={engine.rewind}
-            onForward={engine.forward}
-            onRestart={engine.restart}
-            onSpeedChange={engine.setSpeed}
-            onSeek={engine.seekToIndex}
+            onPlay={handlePlay}
+            onPause={handlePause}
+            onStop={handleStop}
+            onPrevious={handlePrevious}
+            onNext={handleNext}
+            onRewind={handleRewind}
+            onForward={handleForward}
+            onRestart={handleRestart}
+            onSpeedChange={handleSpeedChange}
+            onSeek={handleSeek}
           />
         </div>
 
@@ -311,7 +298,7 @@ function TransactionTimeMachineReplay({
             <TimelinePanel
               timeline={dataset.timeline}
               currentIndex={engine.currentIndex}
-              onSeek={engine.seekToIndex}
+              onSeek={handleSeek}
             />
           </div>
           {/* AI Briefing Panel replaces the old AICommentaryPanel */}

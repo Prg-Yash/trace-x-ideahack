@@ -8,6 +8,12 @@ export type AIBriefingPanelRef = {
   getText: () => string | null;
   generateBriefing: () => Promise<void>;
   speak: () => Promise<void>;
+  pauseAudio: () => void;
+  resumeAudio: () => void;
+  stopAudio: () => void;
+  isGenerating: () => boolean;
+  setAudioSpeed: (speed: number) => void;
+  seekAudio: (ratio: number) => void;
 };
 
 export const AIBriefingPanel = forwardRef<AIBriefingPanelRef, {
@@ -24,161 +30,218 @@ export const AIBriefingPanel = forwardRef<AIBriefingPanelRef, {
     text: null,
   });
   const [speaking, setSpeaking] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [paused, setPaused] = useState(false);
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const generationIdRef = useRef<number>(0);
+  const speedRef = useRef<number>(1);
+
+  const pauseAudio = () => {
+    if (speaking) {
+      window.speechSynthesis.pause();
+      setPaused(true);
+    }
+  };
+
+  const resumeAudio = () => {
+    if (speaking && paused) {
+      window.speechSynthesis.resume();
+      setPaused(false);
+    }
+  };
+
+  const stopAudio = () => {
+    window.speechSynthesis.cancel();
+    setSpeaking(false);
+    setPaused(false);
+    generationIdRef.current += 1;
+  };
+
+  const setAudioSpeed = (speed: number) => {
+    speedRef.current = speed;
+  };
+
+  const seekAudio = (ratio: number) => {
+    // Native TTS does not support seeking
+  };
 
   const speakText = async (): Promise<void> => {
-    return new Promise(async (resolve) => {
-      if (!briefingState.text) {
-        resolve();
-        return;
-      }
-      
-      if (speaking) {
-        if (audioRef.current) {
-          audioRef.current.pause();
-          audioRef.current = null;
-        }
-        setSpeaking(false);
-        resolve();
-        return;
+    return new Promise((resolve) => {
+      if (!briefingState.text) return resolve();
+
+      if (paused) {
+        window.speechSynthesis.resume();
+        setPaused(false);
+        return resolve();
       }
 
+      window.speechSynthesis.cancel();
       setSpeaking(true);
-      try {
-        const puter = (window as any).puter;
-        if (puter && puter.ai && puter.ai.txt2speech) {
-          const textToSpeak = briefingState.text.replace(" ▌", "");
-          const audio = await puter.ai.txt2speech(textToSpeak, { provider: "openai", voice: "echo" });
-          audioRef.current = audio;
-          audio.play();
-          audio.onended = () => {
-            setSpeaking(false);
-            audioRef.current = null;
-            resolve();
-          };
-          audio.onerror = () => {
-            setSpeaking(false);
-            audioRef.current = null;
-            resolve();
-          };
-        } else {
-          console.error("Puter.js not loaded or txt2speech not available");
+      setPaused(false);
+      const currentGenId = ++generationIdRef.current;
+
+      const textToSpeak = briefingState.text.replace(/▌/g, "");
+      const utterance = new SpeechSynthesisUtterance(textToSpeak);
+      utterance.rate = speedRef.current;
+      
+      const voices = window.speechSynthesis.getVoices();
+      const englishVoice = voices.find(v => v.lang.startsWith('en-') && (v.name.includes('Google') || v.name.includes('Premium') || v.name.includes('Natural')));
+      if (englishVoice) {
+        utterance.voice = englishVoice;
+      }
+      
+      utteranceRef.current = utterance;
+
+      utterance.onend = () => {
+        if (currentGenId === generationIdRef.current) {
           setSpeaking(false);
+          setPaused(false);
           resolve();
         }
-      } catch (e) {
-        console.error("Error speaking text:", e);
-        setSpeaking(false);
-        resolve();
-      }
+      };
+
+      utterance.onerror = (e) => {
+        console.error("Speech synthesis error", e);
+        if (currentGenId === generationIdRef.current) {
+          setSpeaking(false);
+          setPaused(false);
+          resolve();
+        }
+      };
+
+      window.speechSynthesis.speak(utterance);
+      resolve();
     });
   };
 
-  const generateBriefing = async () => {
-    if (briefingState.loading) return;
-    setBriefingState({ loading: true, text: "" });
+  const generateBriefing = (): Promise<void> => {
+    return new Promise(async (resolve) => {
+      if (briefingState.loading) return resolve();
+      
+      window.speechSynthesis.cancel();
+      utteranceRef.current = null;
+      setSpeaking(false);
+      setPaused(false);
+      generationIdRef.current += 1;
 
-    let fullNarrative = "";
-    try {
-      const targetAcc = alert.accountId;
-      const patternType = alert.pattern || "SUSPICIOUS ACTIVITY";
+      setBriefingState({ loading: true, text: "" });
 
-      const pKey = patternType.toLowerCase().replace("-", "_");
-      const activeFactors: any[] = (explain?.by_fraud_type as any)?.[pKey]?.top_factors
-        || (explain?.by_fraud_type as any)?.layering?.top_factors
-        || explain?.top_risk_factors
-        || [];
+      let fullNarrative = "";
+      try {
+        const targetAcc = alert.accountId;
+        const patternType = alert.pattern || "SUSPICIOUS ACTIVITY";
 
-      const shapDescriptions: Record<string, string> = {
-        "Rapid Chain Hop Velocity": "Funds transferred rapidly across multiple hops within 6 hours.",
-        "Amount Conservation Decay": "Minimal amount reduction across hops indicating deliberate structuring.",
-        "Cross-Channel Rail Switching": "Abrupt transfer method switch across domestic Indian payment rails (RTGS to IMPS/NEFT).",
-        "Inter-Hop Time Gap": "Sequential transfers executed almost instantly to evade manual monitoring.",
-        "KYC Profile Limit Ratio": "Transaction volume exceeds declared customer risk profile expectations by over 400%.",
-        "Circular Loop Fund Return": "Funds looped back to originating account after passing through shell intermediaries.",
-        "Round-Trip Completion Velocity": "Entire multi-hop transfer cycle completed rapidly in under 4 hours.",
-        "Origin Return Amount Match": "Returned funds match 98.5% of the original outgoing transfer amount.",
-        "Pass-Through Intermediary Velocity": "Intermediary accounts held funds for less than 30 minutes before forwarding.",
-      };
+        const pKey = patternType.toLowerCase().replace("-", "_");
+        const activeFactors: any[] = (explain?.by_fraud_type as any)?.[pKey]?.top_factors
+          || (explain?.by_fraud_type as any)?.layering?.top_factors
+          || explain?.top_risk_factors
+          || [];
 
-      const shapForAI = activeFactors.slice(0, 4).map((f: any) => ({
-        label: f.label,
-        shap_value: f.shap_value,
-        direction: f.direction,
-        description: shapDescriptions[f.label] || "Behavioral anomaly detected by ML model.",
-      }));
+        const shapDescriptions: Record<string, string> = {
+          "Rapid Chain Hop Velocity": "Funds transferred rapidly across multiple hops within 6 hours.",
+          "Amount Conservation Decay": "Minimal amount reduction across hops indicating deliberate structuring.",
+          "Cross-Channel Rail Switching": "Abrupt transfer method switch across domestic Indian payment rails (RTGS to IMPS/NEFT).",
+          "Inter-Hop Time Gap": "Sequential transfers executed almost instantly to evade manual monitoring.",
+          "KYC Profile Limit Ratio": "Transaction volume exceeds declared customer risk profile expectations by over 400%.",
+          "Circular Loop Fund Return": "Funds looped back to originating account after passing through shell intermediaries.",
+          "Round-Trip Completion Velocity": "Entire multi-hop transfer cycle completed rapidly in under 4 hours.",
+          "Origin Return Amount Match": "Returned funds match 98.5% of the original outgoing transfer amount.",
+          "Pass-Through Intermediary Velocity": "Intermediary accounts held funds for less than 30 minutes before forwarding.",
+        };
 
-      const patterns_block = `  - ${patternType} (Confidence: 98.5%, Accounts: ${dataset.accounts.length}, Exposure: ₹${alert.amount.toLocaleString()}, Description: ML XAI engine detected suspicious anomalies)`;
+        const shapForAI = activeFactors.slice(0, 4).map((f: any) => ({
+          label: f.label,
+          shap_value: f.shap_value,
+          direction: f.direction,
+          description: shapDescriptions[f.label] || "Behavioral anomaly detected by ML model.",
+        }));
 
-      const shap_block = shapForAI.length > 0 ? shapForAI.map((f: any) => 
-        `  - ${f.label || 'Unknown Feature'}: SHAP impact = ${f.shap_value > 0 ? '+' : ''}${parseFloat(f.shap_value).toFixed(4)} (${f.direction === 'RISK' ? 'RISK FACTOR' : 'PROTECTIVE'}), plain English meaning: ${f.description || 'behavioral anomaly detected by ML model'}`
-      ).join("\n") : "  (No SHAP data provided)";
+        const patterns_block = `  - ${patternType} (Confidence: 98.5%, Accounts: ${dataset.accounts.length}, Exposure: ₹${alert.amount.toLocaleString()}, Description: ML XAI engine detected suspicious anomalies)`;
 
-      const prompt = `You are a senior Anti-Money Laundering (AML) Investigator at a Financial Intelligence Unit (FIU-IND).
+        const shap_block = shapForAI.length > 0 ? shapForAI.map((f: any) => 
+          `  - ${f.label || 'Unknown Feature'}: SHAP impact = ${f.shap_value > 0 ? '+' : ''}${parseFloat(f.shap_value).toFixed(4)} (${f.direction === 'RISK' ? 'RISK FACTOR' : 'PROTECTIVE'}), plain English meaning: ${f.description || 'behavioral anomaly detected by ML model'}`
+        ).join("\n") : "  (No SHAP data provided)";
 
-You are writing an AI-generated Investigator Briefing for Account: ${targetAcc}
+        const txns = dataset.transactions;
+        const uniqueAccounts = Array.from(new Set(txns.flatMap(t => [t.from, t.to])));
+        const accountAliases: Record<string, string> = {};
+        uniqueAccounts.forEach((acc, idx) => {
+          accountAliases[acc] = `Account ${String.fromCharCode(65 + (idx % 26))}${idx >= 26 ? Math.floor(idx / 26) : ''}`;
+        });
 
-══ DETECTED FRAUD TYPOLOGIES ══
+        const targetAlias = accountAliases[targetAcc] || "the target account";
+
+        const txnDetails = txns.map((t, idx) => `[Txn ${idx + 1}] ${accountAliases[t.from]} sent ₹${t.amount.toLocaleString()} to ${accountAliases[t.to]}.${t.patternDetected ? ` (Anomaly: ${t.patternDetected})` : ""}`).join("\n");
+        
+        let taskPrompt = "";
+        if (txns.length <= 15) {
+          taskPrompt = `Write a node-by-node briefing. For EACH of the ${txns.length} transactions, write EXACTLY 1 OR 2 VERY SHORT SENTENCES. You MUST explain who sent what to whom. Then, explicitly explain EXACTLY HOW the ML model detected this by using the plain English meaning of the SHAP features (e.g., 'The ML model detected this because the account showed a sudden spike in velocity'). KEEP IT EXTREMELY BRIEF and fast to read aloud.`;
+        } else {
+          taskPrompt = `Write a compact overall summary of the entire ${txns.length} transaction sequence. You MUST explicitly explain EXACTLY HOW the ML model detected this sequence by using the plain English meaning of the SHAP features. Keep it EXTREMELY BRIEF (max 3 short sentences total) so it can be read aloud very quickly.`;
+        }
+
+        const prompt = `You are a senior AML Investigator at FIU-IND.
+
+Briefing for: ${targetAlias}
+
+══ DETECTED TYPOLOGIES ══
 ${patterns_block}
 
-══ AI SHAP FEATURE ATTRIBUTION (What made the ML model flag this) ══
+══ SHAP ATTRIBUTION ══
 ${shap_block}
 
-══ YOUR TASK ══
-Write a tight, factual investigator briefing focused on the primary typology '${patternType}'.
-Mention any co-occurring typologies (e.g., KYC Mismatch alongside Layering) as compounding risk.
-For EACH SHAP feature listed above, briefly explain in plain English what it means in this specific case (e.g., "The account transferred funds across 4 hops within 6 hours — a classic layering velocity signature").
+══ TRANSACTIONS ══
+${txnDetails}
 
-FORMAT: Respond with EXACTLY 3 bullet points starting with '• ':
-  Bullet 1: What the primary typology evidence shows (use actual numbers/confidence)
-  Bullet 2: What the top SHAP features reveal in plain English (e.g., "The ML model primarily flagged this due to...")
-  Bullet 3: Co-occurring typologies and recommended FIU action
+══ YOUR TASK ══
+${taskPrompt}
 
 RULES:
-- Do NOT write paragraphs. Bullet points only.
+- Do NOT write bullet points.
 - Use ₹ for all amounts.
-- Be specific, cite confidence scores, SHAP values in plain terms.
-- Write as if briefing a senior judge or RBI examiner — professional and precise.
-- No intro phrases like "Here is the briefing" or "Based on analysis".`;
+- EXTREMELY COMPACT. The text will be read by Text-to-Speech, so avoid complex numbers or long lists.
+- ALWAYS use the provided aliases like "Account A", "Account B" instead of raw IDs.
+- Write naturally so it sounds good when spoken aloud.`;
 
-      const apiUrl = (import.meta.env.VITE_SCRIPT_API_ENDPOINT || "https://openrouter.ai/api/v1") + "/chat/completions";
-      const res = await fetch(apiUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${import.meta.env.VITE_OPEN_ROUTER_API_KEY}`,
-          "HTTP-Referer": window.location.origin,
-          "X-Title": "G-TEN AML Investigation Platform"
-        },
-        body: JSON.stringify({
-          model: "openai/gpt-4o-mini",
-          messages: [{ role: "user", content: prompt }]
-        }),
-      });
+        const apiUrl = (import.meta.env.VITE_SCRIPT_API_ENDPOINT || "https://openrouter.ai/api/v1") + "/chat/completions";
+        const res = await fetch(apiUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${import.meta.env.VITE_OPEN_ROUTER_API_KEY}`,
+            "HTTP-Referer": window.location.origin,
+            "X-Title": "G-TEN AML Investigation Platform"
+          },
+          body: JSON.stringify({
+            model: "openai/gpt-4o-mini",
+            messages: [{ role: "user", content: prompt }]
+          }),
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        const text = data?.choices?.[0]?.message?.content;
-        if (text) fullNarrative = text.trim();
+        if (res.ok) {
+          const data = await res.json();
+          const text = data?.choices?.[0]?.message?.content;
+          if (text) fullNarrative = text.trim();
+        }
+      } catch (err) {
+        // Fallback
       }
-    } catch (err) {
-      // Fallback
-    }
 
-    if (!fullNarrative) {
-      fullNarrative = `• Typology Confirmation: AI analysis confirmed ${alert.pattern} pattern (98.5% confidence) across ${dataset.accounts.length} linked accounts with total exposure of ₹${alert.amount.toLocaleString()}.\n• SHAP Attribution: High ML attribution scores driven by rapid multi-hop velocity and cross-channel rail switching — classic layering evasion signals.\n• Recommended Action: Immediate account freeze on all entities and SAR Form 8 submission to FIU-IND.`;
-    }
-
-    let i = 0;
-    const interval = setInterval(() => {
-      i += 4;
-      if (i >= fullNarrative.length) {
-        setBriefingState({ loading: false, text: fullNarrative });
-        clearInterval(interval);
-      } else {
-        setBriefingState({ loading: false, text: fullNarrative.slice(0, i) + " ▌" });
+      if (!fullNarrative) {
+        fullNarrative = `• Typology Confirmation: AI analysis confirmed ${alert.pattern} pattern (98.5% confidence) across ${dataset.accounts.length} linked accounts with total exposure of ₹${alert.amount.toLocaleString()}.\n• SHAP Attribution: High ML attribution scores driven by rapid multi-hop velocity and cross-channel rail switching — classic layering evasion signals.\n• Recommended Action: Immediate account freeze on all entities and SAR Form 8 submission to FIU-IND.`;
       }
-    }, 15);
+
+      let i = 0;
+      const interval = setInterval(() => {
+        i += 4;
+        if (i >= fullNarrative.length) {
+          setBriefingState({ loading: false, text: fullNarrative });
+          clearInterval(interval);
+          resolve();
+        } else {
+          setBriefingState({ loading: false, text: fullNarrative.slice(0, i) + " ▌" });
+        }
+      }, 15);
+    });
   };
 
   useImperativeHandle(ref, () => ({
@@ -191,7 +254,13 @@ RULES:
     },
     speak: async () => {
       await speakText();
-    }
+    },
+    pauseAudio,
+    resumeAudio,
+    stopAudio,
+    isGenerating: () => briefingState.loading,
+    setAudioSpeed,
+    seekAudio
   }));
 
   return (
