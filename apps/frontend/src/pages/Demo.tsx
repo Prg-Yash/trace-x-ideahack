@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { BASE } from "../lib/api";
 import { motion } from "framer-motion";
 import { Terminal, Zap, Trash2, CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -46,8 +47,9 @@ export default function Demo() {
     let reconnectTimeout: ReturnType<typeof setTimeout>;
 
     function connect() {
-      const wsUrl = import.meta.env.VITE_WS_URL || "ws://localhost:8000/api/v1/ws";
-      const ws = new WebSocket(wsUrl);
+      const protocol = BASE.startsWith('https') ? 'wss:' : 'ws:';
+      const host = BASE.replace(/^https?:\/\//, '').split('/')[0];
+      const ws = new WebSocket(`${protocol}//${host}/api/v1/ws`);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -111,8 +113,7 @@ export default function Demo() {
     addLog("system", `>> Requesting ${pattern} injection pipeline...`);
     
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
-      const res = await fetch(`${apiUrl}/demo/inject`, {
+      const res = await fetch(`${BASE}/demo/inject`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pattern }),
@@ -136,8 +137,7 @@ export default function Demo() {
     addLog("system", ">> Requesting database purge for demo data...");
     
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
-      const res = await fetch(`${apiUrl}/demo/cleanup`, {
+      const res = await fetch(`${BASE}/demo/cleanup`, {
         method: "DELETE",
       });
       
