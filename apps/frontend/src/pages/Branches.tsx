@@ -20,10 +20,11 @@ const CITIES = [
   "Surat"
 ];
 
-const cardStyle = {
-  backgroundColor: "var(--card)",
-  border: "2px solid var(--border)",
+const cardStyle: React.CSSProperties = {
+  backgroundColor: "var(--color-card)",
+  border: "2px solid var(--color-border)",
   borderRadius: 0,
+  boxShadow: "6px 6px 0px var(--color-border)",
 };
 
 export default function Branches() {
@@ -84,71 +85,73 @@ export default function Branches() {
   };
 
   return (
-    <div className="p-6 space-y-5 min-h-screen" style={{ backgroundColor: "var(--background)" }}>
-      {/* HEADER */}
-      <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-        <div className="flex items-center justify-between p-5" style={cardStyle}>
+    <div className="min-h-screen p-6 md:p-8 lg:p-10 pb-20 bg-background text-foreground">
+      <div className="mx-auto max-w-7xl space-y-6">
+      {/* ── HEADER ── */}
+      <motion.header 
+        initial={{ opacity: 0, y: -16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="p-6 md:p-8 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between" 
+        style={cardStyle}
+      >
+        <div className="flex items-start gap-4">
+          <div className="flex h-12 w-12 items-center justify-center border-2 border-border bg-primary/10">
+            <Building2 className="h-6 w-6 text-primary" />
+          </div>
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.3em] mb-1" style={{ color: "#a3e635" }}>
+            <p className="text-[10px] font-bold uppercase tracking-[0.3em] mb-1 text-primary">
               // System Administration
             </p>
-            <h1 className="text-2xl font-black uppercase tracking-tight" style={{ color: "var(--foreground)" }}>
+            <h1 className="text-2xl font-black uppercase tracking-tight text-foreground">
               Branch Management
             </h1>
-            <p className="text-sm mt-0.5" style={{ color: "var(--muted-foreground)" }}>
-              Manage bank branches and regional offices
+            <p className="mt-1 max-w-2xl text-[10px] font-mono font-bold uppercase tracking-widest text-muted-foreground">
+              Directory of all active regional offices and bank branches
             </p>
           </div>
-          <div className="h-12 w-12 flex items-center justify-center" style={{ backgroundColor: "rgba(163,230,53,0.1)", border: "1px solid #a3e635" }}>
-            <Building2 className="h-5 w-5 text-[#a3e635]" />
-          </div>
         </div>
-      </motion.div>
+      </motion.header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* CREATE FORM */}
-        <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3, delay: 0.1 }} className="lg:col-span-1 space-y-5">
+        <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3, delay: 0.1 }} className="lg:col-span-1 space-y-6">
           <div className="p-6 space-y-5" style={cardStyle}>
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] mb-2" style={{ color: "#a3e635" }}>
+            <div className="border-b-2 border-border pb-4 mb-2">
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] mb-2 text-primary">
                 // New Entity
               </p>
-              <h2 className="text-lg font-black uppercase tracking-tight" style={{ color: "var(--foreground)" }}>
+              <h2 className="text-lg font-black uppercase tracking-tight text-foreground">
                 Add Branch
               </h2>
             </div>
 
             <div className="space-y-4 pt-2">
               <div className="space-y-2">
-                <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Branch Code</label>
+                <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Branch Code</label>
                 <Input
                   value={newCode}
                   onChange={(e) => setNewCode(e.target.value.toUpperCase())}
-                  className="rounded-none border-2 h-10 px-3 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-[#a3e635] uppercase"
-                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                  className="rounded-none border-2 border-border h-10 px-3 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-primary uppercase text-foreground"
                   placeholder="e.g. MH001"
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-foreground)]">Branch Name</label>
+                <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Branch Name</label>
                 <Input
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
-                  className="rounded-none border-2 h-10 px-3 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-[#a3e635]"
-                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                  className="rounded-none border-2 border-border h-10 px-3 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-primary text-foreground"
                   placeholder="e.g. Mumbai HQ"
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted-foreground)]">City</label>
+                <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">City</label>
                 <Select value={newCity} onValueChange={setNewCity}>
-                  <SelectTrigger
-                    className="w-full rounded-none border-2 h-10 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-[#a3e635]"
-                    style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
-                  >
+                  <SelectTrigger className="w-full rounded-none border-2 border-border h-10 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-primary text-foreground">
                     <SelectValue placeholder="Select City" />
                   </SelectTrigger>
-                  <SelectContent className="rounded-none border-2" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
+                  <SelectContent className="rounded-none border-2 border-border bg-card">
                     {CITIES.map(city => (
                       <SelectItem key={city} value={city}>
                         {city}
@@ -160,11 +163,7 @@ export default function Branches() {
               <Button
                 disabled={createLoading || !newCode || !newName || !newCity}
                 onClick={handleCreate}
-                className="w-full h-11 rounded-none text-[11px] font-black uppercase tracking-widest mt-2 transition-all hover:brightness-110"
-                style={{
-                  backgroundColor: "#a3e635",
-                  color: "#130537",
-                }}
+                className="w-full h-11 rounded-none text-[11px] font-black uppercase tracking-widest mt-4 transition-all hover:brightness-110 bg-primary text-primary-foreground"
               >
                 {createLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : (
                   <>
@@ -180,24 +179,24 @@ export default function Branches() {
         {/* LIST */}
         <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3, delay: 0.2 }} className="lg:col-span-2">
           <div className="p-6" style={cardStyle}>
-            <div className="mb-6 flex items-center justify-between">
+            <div className="mb-6 flex items-center justify-between border-b-2 border-border pb-4">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] mb-2" style={{ color: "#a3e635" }}>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] mb-2 text-primary">
                   // Directory
                 </p>
-                <h2 className="text-lg font-black uppercase tracking-tight" style={{ color: "var(--foreground)" }}>
+                <h2 className="text-lg font-black uppercase tracking-tight text-foreground">
                   Active Branches
                 </h2>
               </div>
             </div>
 
             {loading ? (
-              <div className="h-64 flex flex-col items-center justify-center text-[var(--muted-foreground)]">
-                <Loader2 className="h-8 w-8 animate-spin mb-4 text-[#a3e635]" />
+              <div className="h-64 flex flex-col items-center justify-center text-muted-foreground bg-muted/10 border-2 border-border">
+                <Loader2 className="h-8 w-8 animate-spin mb-4 text-primary" />
                 <p className="text-[11px] font-bold uppercase tracking-widest">Loading branches...</p>
               </div>
             ) : branches.length === 0 ? (
-              <div className="h-64 flex flex-col items-center justify-center text-[var(--muted-foreground)] border-2 border-dashed" style={{ borderColor: "var(--border)" }}>
+              <div className="h-64 flex flex-col items-center justify-center text-muted-foreground border-2 border-dashed border-border bg-muted/5">
                 <Building2 className="h-8 w-8 mb-4 opacity-50" />
                 <p className="text-[11px] font-bold uppercase tracking-widest">No branches found</p>
               </div>
@@ -206,21 +205,20 @@ export default function Branches() {
                 {branches.map((branch) => (
                   <div
                     key={branch.id}
-                    className="flex flex-col sm:flex-row sm:items-center justify-between p-4 border-2 transition-colors hover:bg-white/5"
-                    style={{ borderColor: "var(--border)" }}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between p-4 border-2 border-border transition-colors hover:bg-primary/5 bg-muted/5"
                   >
                     <div className="flex items-center gap-4 mb-4 sm:mb-0">
-                      <div className="h-10 w-10 flex flex-shrink-0 items-center justify-center" style={{ backgroundColor: "rgba(163,230,53,0.1)" }}>
-                        <Building2 className="h-5 w-5 text-[#a3e635]" />
+                      <div className="h-10 w-10 flex flex-shrink-0 items-center justify-center bg-primary/10 border border-border">
+                        <Building2 className="h-5 w-5 text-primary" />
                       </div>
                       <div>
-                        <p className="text-[14px] font-bold text-[var(--foreground)]">{branch.name}</p>
+                        <p className="text-[14px] font-bold text-foreground">{branch.name}</p>
                         <div className="flex gap-3 mt-1">
-                          <p className="text-[11px] font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
-                            CODE: <span className="text-[#a3e635]">{branch.branch_code}</span>
+                          <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                            CODE: <span className="text-primary">{branch.branch_code}</span>
                           </p>
-                          <p className="text-[11px] font-bold uppercase tracking-widest text-[var(--muted-foreground)]">
-                            CITY: <span className="text-white/80">{branch.city}</span>
+                          <p className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                            CITY: <span className="text-foreground">{branch.city}</span>
                           </p>
                         </div>
                       </div>
@@ -231,7 +229,7 @@ export default function Branches() {
                         onClick={() => handleDelete(branch.id)}
                         variant="ghost"
                         size="sm"
-                        className="rounded-none text-red-500 hover:text-red-400 hover:bg-red-500/10 h-8 px-3"
+                        className="rounded-none text-destructive hover:text-destructive hover:bg-destructive/10 h-8 px-3 border border-transparent hover:border-destructive"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -242,6 +240,7 @@ export default function Branches() {
             )}
           </div>
         </motion.div>
+      </div>
       </div>
     </div>
   );
