@@ -2,7 +2,8 @@ import os
 import re
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from app.core.deps import get_current_user
 from pydantic import BaseModel
 from fraud_detector import _run_query, REL_TYPE, _get_driver
 
@@ -25,7 +26,10 @@ def get_db_connection():
         raise HTTPException(status_code=503, detail=f"NeonDB connection failed: {e}")
 
 @router.get("/accounts")
-async def get_all_accounts(skip: int = 0, limit: int = 100, branch_code: str | None = None):
+async def get_all_accounts(skip: int = 0, limit: int = 100, branch_code: str | None = None, current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != "Admin":
+        branch_code = current_user.get("branch_code")
+        
     if _get_driver() is None:
         raise HTTPException(status_code=503, detail="Neo4j is not connected")
     
@@ -114,19 +118,33 @@ async def get_all_accounts(skip: int = 0, limit: int = 100, branch_code: str | N
     return results
 
 @router.get("/transactions")
-async def get_all_transactions(skip: int = 0, limit: int = 100):
+async def get_all_transactions(skip: int = 0, limit: int = 100, current_user: dict = Depends(get_current_user)):
     if _get_driver() is None:
         raise HTTPException(status_code=503, detail="Neo4j is not connected")
     
-    neo4j_query = f"""
-        MATCH (s:Account)-[t:{REL_TYPE}]->(r:Account)
-        RETURN 
-            t.txn_id AS txn_id,
-            s.account_id AS sender_id,
-            r.account_id AS receiver_id
-        SKIP $skip LIMIT $limit
-    """
-    neo4j_records = await _run_query(neo4j_query, skip=skip, limit=limit)
+    branch_code = None
+    if current_user["role"] != "Admin":
+        branch_code = current_user.get("branch_code")
+        neo4j_query = f"""
+            MATCH (s:Account)-[t:{REL_TYPE}]->(r:Account)
+            WHERE s.branch_code = $branch_code OR r.branch_code = $branch_code
+            RETURN 
+                t.txn_id AS txn_id,
+                s.account_id AS sender_id,
+                r.account_id AS receiver_id
+            SKIP $skip LIMIT $limit
+        """
+    else:
+        neo4j_query = f"""
+            MATCH (s:Account)-[t:{REL_TYPE}]->(r:Account)
+            RETURN 
+                t.txn_id AS txn_id,
+                s.account_id AS sender_id,
+                r.account_id AS receiver_id
+            SKIP $skip LIMIT $limit
+        """
+        
+    neo4j_records = await _run_query(neo4j_query, skip=skip, limit=limit, branch_code=branch_code)
     if not neo4j_records:
         return []
 
@@ -173,7 +191,7 @@ async def get_all_transactions(skip: int = 0, limit: int = 100):
     return results
 
 @router.get("/accounts/{account_id}")
-async def get_account(account_id: str):
+async def get_account(account_id: str, current_user: dict = Depends(get_current_user)):
     pg_query = """
         SELECT 
             a.account_id,
@@ -216,10 +234,14 @@ async def get_account(account_id: str):
     if not pg_record:
         raise HTTPException(status_code=404, detail="Account not found in PostgreSQL")
         
+    if current_user["role"] != "Admin":
+        if pg_record.get("branch_code") != current_user.get("branch_code"):
+            raise HTTPException(status_code=403, detail="You do not have permission to view this account")
+            
     return pg_record
 
 @router.get("/transactions/{txn_id}")
-async def get_transaction(txn_id: str):
+async def get_transaction(txn_id: str, current_user: dict = Depends(get_current_user)):
     pg_query = """
         SELECT *
         FROM transactions
@@ -237,10 +259,26 @@ async def get_transaction(txn_id: str):
     if not pg_record:
         raise HTTPException(status_code=404, detail="Transaction not found in PostgreSQL")
         
+    # Restrict transactions by branch. A transaction must belong to the user's branch via sender or receiver.
+    if current_user["role"] != "Admin":
+        branch_code = current_user.get("branch_code")
+        # To determine branch, we need to check the accounts involved.
+        # But `transactions` table might not store branch code.
+        # We can query neo4j to verify
+        neo4j_query = f"""
+            MATCH (s:Account)-[t:{REL_TYPE}]->(r:Account)
+            WHERE t.txn_id = $txn_id
+            RETURN s.branch_code AS sender_branch, r.branch_code AS receiver_branch
+        """
+        records = await _run_query(neo4j_query, txn_id=txn_id)
+        if records:
+            if records[0].get("sender_branch") != branch_code and records[0].get("receiver_branch") != branch_code:
+                raise HTTPException(status_code=403, detail="You do not have permission to view this transaction")
+                
     return pg_record
 
 @router.get("/accounts/{account_id}/notes")
-async def get_account_notes(account_id: str):
+async def get_account_notes(account_id: str, current_user: dict = Depends(get_current_user)):
     conn = get_db_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -250,7 +288,7 @@ async def get_account_notes(account_id: str):
         conn.close()
 
 @router.post("/accounts/{account_id}/notes")
-async def add_account_note(account_id: str, note: NoteCreate):
+async def add_account_note(account_id: str, note: NoteCreate, current_user: dict = Depends(get_current_user)):
     conn = get_db_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:

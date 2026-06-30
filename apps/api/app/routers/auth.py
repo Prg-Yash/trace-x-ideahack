@@ -11,6 +11,7 @@ import random
 import smtplib
 from email.message import EmailMessage
 from app.core.config import settings
+import pyotp
 
 router = APIRouter(tags=["auth"])
 
@@ -59,6 +60,12 @@ async def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
         
+    if user.get("is_locked"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account locked due to too many failed attempts. Please contact your Administrator."
+        )
+        
     if user.get("two_factor_enabled"):
         if not totp_code:
             # Generate OTP
@@ -92,14 +99,21 @@ async def login_for_access_token(
             raise HTTPException(status_code=400, detail="2FA code required")
             
         # Verify OTP
-        if not user.get("current_otp") or user.get("current_otp") != totp_code:
-            raise HTTPException(status_code=401, detail="Invalid 2FA code")
-        if user.get("otp_expires_at") and user.get("otp_expires_at") < datetime.utcnow():
-            raise HTTPException(status_code=401, detail="2FA code expired")
+        if not user.get("current_otp") or user.get("current_otp") != totp_code or (user.get("otp_expires_at") and user.get("otp_expires_at") < datetime.utcnow()):
+            failed_attempts = user.get("failed_otp_attempts", 0) + 1
+            is_locked = failed_attempts >= 3
+            with conn.cursor() as cur:
+                cur.execute("UPDATE users SET failed_otp_attempts = %s, is_locked = %s WHERE id = %s", (failed_attempts, is_locked, user["id"]))
+                conn.commit()
+            
+            if is_locked:
+                raise HTTPException(status_code=403, detail="Account locked due to too many failed attempts. Please contact your Administrator.")
+            else:
+                raise HTTPException(status_code=401, detail=f"Invalid or expired 2FA code. Attempts remaining: {3 - failed_attempts}")
             
         # Clear OTP after successful use
         with conn.cursor() as cur:
-            cur.execute("UPDATE users SET current_otp = NULL, otp_expires_at = NULL WHERE id = %s", (user["id"],))
+            cur.execute("UPDATE users SET current_otp = NULL, otp_expires_at = NULL, failed_otp_attempts = 0 WHERE id = %s", (user["id"],))
             conn.commit()
         
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -136,14 +150,14 @@ async def get_investigators(
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         if current_user["role"] == "Branch Manager":
             cur.execute("""
-                SELECT u.id, u.username, u.full_name, u.role, u.branch_id, b.branch_code 
+                SELECT u.id, u.username, u.full_name, u.role, u.branch_id, u.is_locked, b.branch_code 
                 FROM users u 
                 LEFT JOIN branches b ON u.branch_id = b.id 
                 WHERE u.role = 'Investigator' AND u.branch_id = %s AND u.is_active = TRUE
             """, (current_user.get("branch_id"),))
         else:
             cur.execute("""
-                SELECT u.id, u.username, u.full_name, u.role, u.branch_id, b.branch_code 
+                SELECT u.id, u.username, u.full_name, u.role, u.branch_id, u.is_locked, b.branch_code 
                 FROM users u 
                 LEFT JOIN branches b ON u.branch_id = b.id 
                 WHERE u.role = 'Investigator' AND u.is_active = TRUE
@@ -269,3 +283,21 @@ async def verify_2fa(totp_code: str = Form(...), current_user: dict = Depends(ge
         conn.commit()
         
     return {"message": "2FA successfully enabled"}
+
+@router.post("/users/{user_id}/unlock")
+async def unlock_user(
+    user_id: str,
+    current_user: dict = Depends(require_roles(["Admin", "Branch Manager"])),
+    conn = Depends(get_pg_conn)
+):
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        # Check permissions for branch managers
+        if current_user["role"] == "Branch Manager":
+            cur.execute("SELECT branch_id FROM users WHERE id = %s", (user_id,))
+            target_user = cur.fetchone()
+            if not target_user or target_user["branch_id"] != current_user.get("branch_id"):
+                raise HTTPException(status_code=403, detail="Branch managers can only unlock investigators in their own branch")
+                
+        cur.execute("UPDATE users SET is_locked = FALSE, failed_otp_attempts = 0 WHERE id = %s", (user_id,))
+        conn.commit()
+    return {"message": "User unlocked successfully"}

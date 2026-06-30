@@ -260,7 +260,7 @@ export const fetchAlerts = (limit = 50) =>
 
 /** Admin investigator management */
 export const fetchInvestigators = () =>
-  apiFetch<{ id: string; username: string; full_name: string; role: string }[]>("/auth/users/investigators");
+  apiFetch<{ id: string; username: string; full_name: string; role: string, is_locked?: boolean }[]>("/auth/users/investigators");
 
 export const createInvestigator = (data: any) =>
   apiFetch<{ id: string; username: string; full_name: string; role: string }>("/auth/users", {
@@ -277,6 +277,11 @@ export const updateInvestigatorPassword = (userId: string, newPassword: string) 
 export const deleteInvestigator = (userId: string) =>
   apiFetch<{ message: string }>(`/auth/users/${userId}`, {
     method: "DELETE",
+  });
+
+export const unlockInvestigator = (userId: string) =>
+  apiFetch<{ message: string }>(`/auth/users/${userId}/unlock`, {
+    method: "POST",
   });
 
 export const fetchBranches = () =>

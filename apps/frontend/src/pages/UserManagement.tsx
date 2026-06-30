@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { fetchInvestigators, createInvestigator, updateInvestigatorPassword, deleteInvestigator, fetchBranches } from "@/lib/api";
+import { fetchInvestigators, createInvestigator, updateInvestigatorPassword, deleteInvestigator, fetchBranches, unlockInvestigator } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -21,7 +21,7 @@ const cardStyle = {
 };
 
 export default function UserManagement() {
-  const [investigators, setInvestigators] = useState<{id: string; username: string; full_name: string; role?: string}[]>([]);
+  const [investigators, setInvestigators] = useState<{id: string; username: string; full_name: string; role?: string; is_locked?: boolean}[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Form states
@@ -121,6 +121,16 @@ export default function UserManagement() {
       toast.error(err.message || "Failed to delete investigator");
     } finally {
       setDeleteLoading(false);
+    }
+  };
+
+  const handleUnlock = async (userId: string) => {
+    try {
+      await unlockInvestigator(userId);
+      toast.success("Investigator unlocked successfully!");
+      await loadInvestigators();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to unlock investigator");
     }
   };
 
@@ -282,13 +292,30 @@ export default function UserManagement() {
                         <Shield className="h-4 w-4 text-[#a3e635]" />
                       </div>
                       <div className="overflow-hidden flex-1">
-                        <p className="text-sm font-bold text-[var(--foreground)] truncate">{inv.full_name}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-bold text-[var(--foreground)] truncate">{inv.full_name}</p>
+                          {inv.is_locked && (
+                            <span className="px-1.5 py-0.5 bg-red-500/20 text-red-500 border border-red-500 text-[9px] uppercase font-bold tracking-widest flex items-center gap-1">
+                              <Lock className="h-2 w-2" /> Locked
+                            </span>
+                          )}
+                        </div>
                         <p className="text-[11px] font-mono text-[var(--muted-foreground)] mt-1">@{inv.username}</p>
                         <div className="mt-3 inline-flex px-2 py-0.5 bg-[rgba(163,230,53,0.1)] border border-[#a3e635]">
                           <p className="text-[9px] uppercase font-bold text-[#a3e635] tracking-widest">{inv.role || "Investigator"}</p>
                         </div>
                       </div>
                       <div className="flex flex-col gap-1">
+                        {inv.is_locked && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleUnlock(inv.id)}
+                            className="text-[10px] uppercase font-bold tracking-widest text-green-500 hover:bg-green-500/10 h-7 px-2 justify-start"
+                          >
+                            Unlock
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="sm"

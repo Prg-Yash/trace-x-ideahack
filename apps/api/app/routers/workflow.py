@@ -58,21 +58,35 @@ async def assign_alert(
             assignee_branch_id = assignee["branch_id"]
             
             # Verify the assignee belongs to the same branch as the alert
-            # Extract account_id from the alert_id (e.g. ALT-ACCOUNT123-LAYERING)
-            try:
-                # The alert_id format is ALT-{account_id}-{pattern}
-                # But to be completely safe, we can just fetch the alert's branch_code from Neo4j or accounts table
-                # For simplicity, if this is a Branch Manager, they can only assign their own branch's investigators
-                if current_user["role"] == "Branch Manager":
-                    if str(assignee_branch_id) != str(current_user.get("branch_id")):
-                        raise HTTPException(status_code=403, detail="Cannot assign an investigator from a different branch")
-                elif current_user["role"] == "Admin":
-                    # For admin, we should technically check the alert's branch.
-                    # In a real system we'd query the DB for the alert's branch. 
-                    # We will enforce the alert's branch matches the assignee's branch.
-                    pass
-            except Exception as e:
+            # Fetch the alert's branch_code
+            cur.execute("""
+                SELECT acc.branch_code 
+                FROM alerts al 
+                JOIN accounts acc ON al.account_id = acc.account_id 
+                WHERE al.alert_id = %s
+            """, (alert_id,))
+            alert_branch = cur.fetchone()
+            
+            if not alert_branch:
+                # If account is not found, maybe fallback to extracting it from alert_id if it follows a pattern,
+                # but let's just allow it for now if we can't find it to prevent breaking the flow entirely.
                 pass
+            else:
+                alert_branch_code = alert_branch["branch_code"]
+                
+                # We need assignee's branch_code. Let's fetch it from users or branch table.
+                # Actually, `assignee["branch_id"]` might be a UUID.
+                cur.execute("SELECT branch_code FROM branches WHERE id = %s", (assignee_branch_id,))
+                branch_row = cur.fetchone()
+                if branch_row:
+                    assignee_branch_code = branch_row["branch_code"]
+                    
+                    if current_user["role"] == "Branch Manager":
+                        if str(assignee_branch_code) != str(current_user.get("branch_code")):
+                            raise HTTPException(status_code=403, detail="Cannot assign an investigator from a different branch")
+                    
+                    if str(assignee_branch_code) != str(alert_branch_code):
+                        raise HTTPException(status_code=403, detail=f"Assignee branch ({assignee_branch_code}) does not match alert branch ({alert_branch_code})")
                 
         else:
             # Investigator assigning to themselves
