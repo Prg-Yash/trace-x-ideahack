@@ -1,0 +1,252 @@
+[
+  {
+    "id": "RE-L1-001",
+    "alertId": "ALT-2025-001",
+    "transactionId": "TXN-L1-001",
+    "timestamp": "2025-06-20T08:00:10.000Z",
+    "riskLevel": "HIGH",
+    "explanation": "High-value outbound wire from flagged origin account. Layering investigation initiated.",
+    "pattern": "High Value Transfer",
+    "scoreDelta": 14
+  },
+  {
+    "id": "RE-L1-002",
+    "alertId": "ALT-2025-001",
+    "transactionId": "TXN-L1-002",
+    "timestamp": "2025-06-20T08:02:45.000Z",
+    "riskLevel": "HIGH",
+    "explanation": "Funds routed through offshore shell entity within 3 minutes. Layering pattern confirmed.",
+    "pattern": "Layering",
+    "scoreDelta": 18
+  },
+  {
+    "id": "RE-L1-003",
+    "alertId": "ALT-2025-001",
+    "transactionId": "TXN-L1-003",
+    "timestamp": "2025-06-20T08:05:20.000Z",
+    "riskLevel": "CRITICAL",
+    "explanation": "Third jurisdiction hop detected. Multi-layer obfuscation typology match at 94% confidence.",
+    "pattern": "Layering",
+    "scoreDelta": 20
+  },
+  {
+    "id": "RE-L1-004",
+    "alertId": "ALT-2025-001",
+    "transactionId": "TXN-L1-004",
+    "timestamp": "2025-06-20T08:09:55.000Z",
+    "riskLevel": "CRITICAL",
+    "explanation": "Cross-border return flow to origin jurisdiction. Recommend immediate escalation.",
+    "pattern": "Cross Branch Transfer",
+    "scoreDelta": 22
+  },
+  {
+    "id": "RE-M2-001",
+    "alertId": "ALT-2025-002",
+    "transactionId": "TXN-M2-001",
+    "timestamp": "2025-06-19T06:30:15.000Z",
+    "riskLevel": "HIGH",
+    "explanation": "Large sum received and immediately prepared for redistribution. Mule network signature.",
+    "pattern": "Rapid Movement",
+    "scoreDelta": 12
+  },
+  {
+    "id": "RE-M2-002",
+    "alertId": "ALT-2025-002",
+    "transactionId": "TXN-M2-002",
+    "timestamp": "2025-06-19T06:32:40.000Z",
+    "riskLevel": "HIGH",
+    "explanation": "Fan-out to dormant individual account. Smurfing behaviour detected.",
+    "pattern": "Fan-Out",
+    "scoreDelta": 10
+  },
+  {
+    "id": "RE-M2-003",
+    "alertId": "ALT-2025-002",
+    "transactionId": "TXN-M2-003",
+    "timestamp": "2025-06-19T06:33:05.000Z",
+    "riskLevel": "HIGH",
+    "explanation": "Parallel disbursement to second mule account within 25 seconds.",
+    "pattern": "Fan-Out",
+    "scoreDelta": 10
+  },
+  {
+    "id": "RE-M2-004",
+    "alertId": "ALT-2025-002",
+    "transactionId": "TXN-M2-004",
+    "timestamp": "2025-06-19T06:33:28.000Z",
+    "riskLevel": "HIGH",
+    "explanation": "Third fan-out leg completes mule triad. Network topology match.",
+    "pattern": "Fan-Out",
+    "scoreDelta": 10
+  },
+  {
+    "id": "RE-M2-005",
+    "alertId": "ALT-2025-002",
+    "transactionId": "TXN-M2-005",
+    "timestamp": "2025-06-19T06:38:12.000Z",
+    "riskLevel": "CRITICAL",
+    "explanation": "Partial return to origin account confirms money mule network operation.",
+    "pattern": "Money Mule Network",
+    "scoreDelta": 15
+  },
+  {
+    "id": "RE-001",
+    "alertId": "ALT-2025-003",
+    "transactionId": "TXN-001",
+    "timestamp": "2025-06-18T10:01:22.000Z",
+    "riskLevel": "MEDIUM",
+    "explanation": "High-value wire transfer initiated from origin account. Rapid movement detected.",
+    "pattern": "Rapid Movement",
+    "scoreDelta": 10
+  },
+  {
+    "id": "RE-002",
+    "alertId": "ALT-2025-003",
+    "transactionId": "TXN-002",
+    "timestamp": "2025-06-18T10:02:15.000Z",
+    "riskLevel": "HIGH",
+    "explanation": "Funds forwarded within 53 seconds. Potential layering detected.",
+    "pattern": "Layering",
+    "scoreDelta": 12
+  },
+  {
+    "id": "RE-003",
+    "alertId": "ALT-2025-003",
+    "transactionId": "TXN-003",
+    "timestamp": "2025-06-18T10:04:08.000Z",
+    "riskLevel": "HIGH",
+    "explanation": "Third hop in chain within 4 minutes. Layering depth increasing.",
+    "pattern": "Layering",
+    "scoreDelta": 15
+  },
+  {
+    "id": "RE-004",
+    "alertId": "ALT-2025-003",
+    "transactionId": "TXN-004",
+    "timestamp": "2025-06-18T10:06:33.000Z",
+    "riskLevel": "HIGH",
+    "explanation": "Cross-branch wire transfer across 4 geographic regions in under 6 minutes.",
+    "pattern": "Cross Branch Transfer",
+    "scoreDelta": 18
+  },
+  {
+    "id": "RE-005",
+    "alertId": "ALT-2025-003",
+    "transactionId": "TXN-005",
+    "timestamp": "2025-06-18T10:08:47.000Z",
+    "riskLevel": "HIGH",
+    "explanation": "Fan-out behaviour detected. Single account dispersing to multiple recipients.",
+    "pattern": "Fan-Out",
+    "scoreDelta": 8
+  },
+  {
+    "id": "RE-006",
+    "alertId": "ALT-2025-003",
+    "transactionId": "TXN-006",
+    "timestamp": "2025-06-18T10:09:12.000Z",
+    "riskLevel": "HIGH",
+    "explanation": "Second fan-out leg confirmed within 51 seconds.",
+    "pattern": "Fan-Out",
+    "scoreDelta": 8
+  },
+  {
+    "id": "RE-007",
+    "alertId": "ALT-2025-003",
+    "transactionId": "TXN-007",
+    "timestamp": "2025-06-18T10:09:38.000Z",
+    "riskLevel": "CRITICAL",
+    "explanation": "Dormant account activated after 730 days. Shell company receiving aggregated funds.",
+    "pattern": "Dormant Account Activation",
+    "scoreDelta": 12
+  },
+  {
+    "id": "RE-008",
+    "alertId": "ALT-2025-003",
+    "transactionId": "TXN-008",
+    "timestamp": "2025-06-18T10:12:05.000Z",
+    "riskLevel": "MEDIUM",
+    "explanation": "Structuring pattern identified. Sub-threshold UPI transfer to consolidation account.",
+    "pattern": "Structuring",
+    "scoreDelta": 7
+  },
+  {
+    "id": "RE-009",
+    "alertId": "ALT-2025-003",
+    "transactionId": "TXN-009",
+    "timestamp": "2025-06-18T10:13:22.000Z",
+    "riskLevel": "MEDIUM",
+    "explanation": "Second structuring leg converging on single shell entity.",
+    "pattern": "Structuring",
+    "scoreDelta": 7
+  },
+  {
+    "id": "RE-010",
+    "alertId": "ALT-2025-003",
+    "transactionId": "TXN-010",
+    "timestamp": "2025-06-18T10:18:44.000Z",
+    "riskLevel": "CRITICAL",
+    "explanation": "Round tripping confirmed. Funds returned to originating account within 72 hours.",
+    "pattern": "Round Tripping",
+    "scoreDelta": 25
+  },
+  {
+    "id": "RE-011",
+    "alertId": "ALT-2025-003",
+    "transactionId": "TXN-011",
+    "timestamp": "2025-06-18T10:22:10.000Z",
+    "riskLevel": "HIGH",
+    "explanation": "High value transfer re-initiated from origin. Second laundering pass suspected.",
+    "pattern": "High Value Transfer",
+    "scoreDelta": 5
+  },
+  {
+    "id": "RE-012",
+    "alertId": "ALT-2025-003",
+    "transactionId": "TXN-012",
+    "timestamp": "2025-06-18T10:25:33.000Z",
+    "riskLevel": "CRITICAL",
+    "explanation": "Layer depth reached 6 hops. Investigation score at critical threshold.",
+    "pattern": "Layering",
+    "scoreDelta": 5
+  },
+  {
+    "id": "RE-S4-001",
+    "alertId": "ALT-2025-004",
+    "transactionId": "TXN-S4-001",
+    "timestamp": "2025-06-17T10:20:05.000Z",
+    "riskLevel": "MEDIUM",
+    "explanation": "Cash deposit just below reporting threshold. Structuring pattern initiated.",
+    "pattern": "Structuring",
+    "scoreDelta": 8
+  },
+  {
+    "id": "RE-S4-002",
+    "alertId": "ALT-2025-004",
+    "transactionId": "TXN-S4-002",
+    "timestamp": "2025-06-17T11:45:12.000Z",
+    "riskLevel": "MEDIUM",
+    "explanation": "Repeated sub-threshold deposit within 90 minutes.",
+    "pattern": "Structuring",
+    "scoreDelta": 8
+  },
+  {
+    "id": "RE-S4-003",
+    "alertId": "ALT-2025-004",
+    "transactionId": "TXN-S4-003",
+    "timestamp": "2025-06-17T14:10:33.000Z",
+    "riskLevel": "HIGH",
+    "explanation": "Funds consolidated from multiple nodes into single account.",
+    "pattern": "Structuring",
+    "scoreDelta": 10
+  },
+  {
+    "id": "RE-S4-004",
+    "alertId": "ALT-2025-004",
+    "transactionId": "TXN-S4-004",
+    "timestamp": "2025-06-17T15:22:18.000Z",
+    "riskLevel": "HIGH",
+    "explanation": "Fan-in to consolidation account complete. CTR evasion typology match.",
+    "pattern": "Structuring",
+    "scoreDelta": 10
+  }
+]

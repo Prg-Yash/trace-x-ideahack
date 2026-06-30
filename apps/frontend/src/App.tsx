@@ -18,11 +18,12 @@ import Accounts from "@/pages/Accounts";
 import Evidence from "@/pages/Evidence";
 import LiveStream from "@/pages/LiveStream";
 import BranchRisk from "@/pages/BranchRisk";
+import TransactionTimeMachine from "@/pages/TransactionTimeMachine";
 import RiskMap from "@/pages/RiskMap";
 import UserManagement from "@/pages/UserManagement";
 
-class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: Error | null}> {
-  constructor(props: {children: React.ReactNode}) {
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
+  constructor(props: { children: React.ReactNode }) {
     super(props);
     this.state = { hasError: false, error: null };
   }
@@ -60,6 +61,7 @@ function ProtectedRoutes() {
         <Route path="/accounts" component={Accounts} />
         <Route path="/evidence" component={Evidence} />
         <Route path="/users" component={UserManagement} />
+        <Route path="/transaction-time-machine/:alertId" component={TransactionTimeMachine} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

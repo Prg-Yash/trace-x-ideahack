@@ -17,6 +17,7 @@ import {
   Lock,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { cn } from "@/lib/utils";
 
 /* ── DATA ── */
 
@@ -192,25 +193,25 @@ export default function Home() {
         className="sticky top-0 z-50 border-b-2 border-[#130537]"
         style={{ backgroundColor: "#e8e8e2" }}
       >
-        <div className="max-w-7xl mx-auto flex h-16 items-center justify-between px-6">
+        <div className="w-full flex h-16 items-center justify-between px-6 md:px-12">
           {/* Logo */}
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg border-2 border-[#130537]" style={{ backgroundColor: "#130537" }}>
-              <Shield className="h-4 w-4 text-[#a3e635]" />
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg border-2 border-[#130537]" style={{ backgroundColor: "#130537" }}>
+              <Shield className="h-5 w-5 text-[#a3e635]" />
             </div>
             <div>
-              <span className="block text-[15px] font-black tracking-tight text-[#130537] uppercase">G-TEN</span>
-              <span className="text-[9px] uppercase tracking-[0.3em] text-slate-500">AML Platform</span>
+              <span className="block text-[22px] font-black tracking-tight text-[#130537] uppercase leading-none">G-TEN</span>
+              <span className="text-[11px] uppercase tracking-[0.3em] text-slate-500 font-bold">AML Platform</span>
             </div>
           </div>
 
           {/* Center Nav */}
-          <div className="hidden md:flex items-center gap-7">
+          <div className="hidden md:flex items-center gap-8">
             {["Platform", "Features", "Integrations", "Pricing"].map((item) => (
               <a
                 key={item}
                 href="#"
-                className="text-[13px] font-semibold text-[#130537] hover:text-emerald-700 transition-colors"
+                className="text-base font-bold text-[#130537] hover:text-emerald-700 transition-colors"
               >
                 {item}
               </a>
@@ -223,14 +224,14 @@ export default function Home() {
               {/* <Button
                 variant="ghost"
                 size="sm"
-                className="text-[13px] font-semibold text-[#130537] hover:bg-[#d0d0ca] rounded-none"
+                className="text-base font-semibold text-[#130537] hover:bg-[#d0d0ca] rounded-none"
               >
                 Sign in
               </Button> */}
             </Link>
             <Link href="/dashboard">
               <button
-                className="px-4 py-2 text-[13px] font-bold border-2 border-[#130537] transition-all hover:bg-[#a3e635] hover:border-[#130537]"
+                className="px-5 py-2.5 text-base font-black border-2 border-[#130537] transition-all hover:bg-[#a3e635] hover:border-[#130537] shadow-[2px_2px_0px_#130537] hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px]"
                 style={{ backgroundColor: "#130537", color: "#e8e8e2" }}
                 onMouseEnter={(e) => {
                   (e.currentTarget as HTMLButtonElement).style.backgroundColor = "#a3e635";
@@ -332,98 +333,174 @@ export default function Home() {
             initial={{ opacity: 0, y: 40 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.7, delay: 0.2 }}
-            className="relative mt-16 max-w-5xl mx-auto border-2 border-[#130537] shadow-[8px_8px_0px_#130537] overflow-hidden"
-            style={{ backgroundColor: "#0B1220" }}
+            className="relative mt-16 max-w-6xl mx-auto border-2 border-[#130537] shadow-[8px_8px_0px_#130537] overflow-hidden bg-[#f8fafc]"
           >
-            {/* Mock dashboard UI */}
-            <div className="px-4 py-3 border-b border-slate-700/50 flex items-center gap-3" style={{ backgroundColor: "#121A2B" }}>
-              <div className="flex gap-1.5">
-                <div className="h-3 w-3 rounded-full bg-red-500/70" />
-                <div className="h-3 w-3 rounded-full bg-yellow-500/70" />
-                <div className="h-3 w-3 rounded-full bg-green-500/70" />
+            {/* Mock dashboard Header */}
+            <div className="px-5 py-3 border-b-2 border-[#130537] bg-white flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="flex gap-2">
+                  <div className="h-3 w-3 rounded-full border-2 border-[#130537] bg-[#EF4444]" />
+                  <div className="h-3 w-3 rounded-full border-2 border-[#130537] bg-[#F59E0B]" />
+                  <div className="h-3 w-3 rounded-full border-2 border-[#130537] bg-[#a3e635]" />
+                </div>
+                <div className="h-4 w-[2px] bg-[#130537]"></div>
+                <span className="text-[12px] text-[#130537] font-black tracking-widest uppercase flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-[#130537] fill-[#a3e635]" />
+                  G-TEN Workspace
+                  <span className="text-[#130537]">/</span>
+                  <span className="font-mono text-[11px]">INV-2024-4471</span>
+                </span>
               </div>
-              <span className="text-[11px] text-slate-400 font-mono">G-TEN · Investigation Workspace · Case #INV-2024-4471</span>
-              <div className="ml-auto flex items-center gap-2">
-                <span className="text-[10px] text-emerald-400 font-semibold uppercase tracking-widest">● Live</span>
+              <div className="flex items-center gap-3">
+                <span className="flex items-center gap-2 px-2 py-1 border-2 border-[#130537] bg-[#a3e635] text-[10px] text-[#130537] font-black uppercase tracking-widest shadow-[2px_2px_0px_#130537]">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-white border border-[#130537]"></span>
+                  </span>
+                  Live
+                </span>
               </div>
             </div>
-            <div className="grid grid-cols-12 min-h-[280px]">
+            
+            <div className="grid grid-cols-12 min-h-[380px]">
               {/* Left sidebar */}
-              <div className="col-span-2 border-r border-slate-700/50 p-3 space-y-1" style={{ backgroundColor: "#0D1525" }}>
-                {["Dashboard", "Alerts", "Entities", "Graph", "Reports", "Audit Log"].map((item, i) => (
+              <div className="col-span-2 border-r-2 border-[#130537] py-4 px-3 flex flex-col gap-2 bg-white">
+                {[
+                  { name: "Dashboard", icon: BarChart3 },
+                  { name: "Alerts", icon: AlertTriangle },
+                  { name: "Entities", icon: Target },
+                  { name: "Graph", icon: Network, active: true },
+                  { name: "Reports", icon: FileText },
+                  { name: "Audit Log", icon: Lock },
+                ].map((item) => (
                   <div
-                    key={item}
-                    className={`text-[10px] font-semibold px-2 py-1.5 rounded ${i === 3 ? "bg-emerald-500/20 text-emerald-400" : "text-slate-500 hover:text-slate-300"}`}
+                    key={item.name}
+                    className={cn(
+                      "flex items-center gap-2.5 px-3 py-2 text-[12px] font-black uppercase tracking-widest border-2 border-transparent transition-all cursor-default",
+                      item.active 
+                        ? "bg-[#a3e635] text-[#130537] border-[#130537] shadow-[2px_2px_0px_#130537]" 
+                        : "text-slate-500 hover:text-[#130537] hover:border-[#130537]"
+                    )}
                   >
-                    {item}
+                    <item.icon className="w-4 h-4" />
+                    {item.name}
                   </div>
                 ))}
               </div>
-              {/* Main panel */}
-              <div className="col-span-7 p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <span className="text-[11px] font-bold uppercase tracking-widest text-slate-400">// Fund Flow Graph</span>
+
+              {/* Main Graph Panel */}
+              <div className="col-span-7 p-6 flex flex-col relative overflow-hidden bg-[#f8fafc]">
+                <div className="mb-4 flex items-center justify-between z-10">
+                  <div className="flex items-center gap-2 px-3 py-1 bg-white border-2 border-[#130537] shadow-[2px_2px_0px_#130537]">
+                    <Network className="w-4 h-4 text-[#130537]" />
+                    <span className="text-[12px] font-black uppercase tracking-widest text-[#130537]">// Fund Flow</span>
+                  </div>
                   <div className="flex gap-2">
-                    {["Expand", "Filter", "Export"].map((b) => (
-                      <span key={b} className="text-[9px] border border-slate-600 px-2 py-0.5 text-slate-400 rounded-sm">{b}</span>
+                    {["Layout", "Filter", "Export"].map((b) => (
+                      <button key={b} className="text-[11px] font-black uppercase bg-white border-2 border-[#130537] hover:bg-[#06B6D4] hover:text-white px-3 py-1.5 text-[#130537] shadow-[2px_2px_0px_#130537] transition-all active:translate-x-[2px] active:translate-y-[2px] active:shadow-none">
+                        {b}
+                      </button>
                     ))}
                   </div>
                 </div>
-                {/* Fake graph nodes */}
-                <div className="relative h-44 border border-slate-700/40 rounded-sm" style={{ backgroundColor: "#0B1220" }}>
-                  {/* Connecting lines */}
-                  <svg className="absolute inset-0 w-full h-full" viewBox="0 0 400 180">
-                    <line x1="80" y1="90" x2="160" y2="60" stroke="#10B981" strokeWidth="1.5" strokeDasharray="4 2" />
-                    <line x1="80" y1="90" x2="160" y2="120" stroke="#3B82F6" strokeWidth="1.5" strokeDasharray="4 2" />
-                    <line x1="160" y1="60" x2="260" y2="45" stroke="#10B981" strokeWidth="1.5" strokeDasharray="4 2" />
-                    <line x1="160" y1="120" x2="260" y2="130" stroke="#F59E0B" strokeWidth="2" />
-                    <line x1="260" y1="130" x2="340" y2="90" stroke="#EF4444" strokeWidth="2" />
-                    <line x1="260" y1="45" x2="340" y2="90" stroke="#10B981" strokeWidth="1.5" strokeDasharray="4 2" />
+                
+                {/* Graph Area */}
+                <div className="relative flex-1 border-2 border-[#130537] bg-white overflow-hidden shadow-[inset_4px_4px_0px_rgba(19,5,55,0.05)]">
+                  {/* Grid background for graph */}
+                  <div className="absolute inset-0 bg-[linear-gradient(to_right,#130537_1px,transparent_1px),linear-gradient(to_bottom,#130537_1px,transparent_1px)] bg-[size:2rem_2rem] opacity-[0.07]"></div>
+                  
+                  {/* Connecting SVG Lines */}
+                  <svg className="absolute inset-0 w-full h-full">
+                    <defs>
+                      <marker id="arrow-normal" viewBox="0 0 10 10" refX="28" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill="#130537" />
+                      </marker>
+                      <marker id="arrow-danger" viewBox="0 0 10 10" refX="28" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill="#EF4444" />
+                      </marker>
+                      <marker id="arrow-warning" viewBox="0 0 10 10" refX="28" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill="#F59E0B" />
+                      </marker>
+                    </defs>
+                    
+                    {/* Path: Acct A -> Entity X */}
+                    <path d="M 12% 50% C 25% 50%, 25% 25%, 38% 25%" fill="none" stroke="#130537" strokeWidth="2" markerEnd="url(#arrow-normal)" />
+                    {/* Path: Acct A -> Shell Co. */}
+                    <path d="M 12% 50% C 25% 50%, 25% 75%, 38% 75%" fill="none" stroke="#EF4444" strokeWidth="3" strokeDasharray="6 3" markerEnd="url(#arrow-danger)" />
+                    
+                    {/* Path: Entity X -> Acct B */}
+                    <path d="M 38% 25% C 50% 25%, 50% 25%, 62% 25%" fill="none" stroke="#130537" strokeWidth="2" markerEnd="url(#arrow-normal)" />
+                    {/* Path: Shell Co. -> Mule #3 */}
+                    <path d="M 38% 75% C 50% 75%, 50% 75%, 62% 75%" fill="none" stroke="#F59E0B" strokeWidth="3" markerEnd="url(#arrow-warning)" />
+                    
+                    {/* Path: Acct B -> FIU Target */}
+                    <path d="M 62% 25% C 75% 25%, 75% 50%, 88% 50%" fill="none" stroke="#130537" strokeWidth="2" markerEnd="url(#arrow-normal)" />
+                    {/* Path: Mule #3 -> FIU Target */}
+                    <path d="M 62% 75% C 75% 75%, 75% 50%, 88% 50%" fill="none" stroke="#EF4444" strokeWidth="3" markerEnd="url(#arrow-danger)" />
                   </svg>
+
                   {/* Nodes */}
                   {[
-                    { x: "18%", y: "42%", label: "Acct A", color: "#3B82F6", risk: "Med" },
-                    { x: "37%", y: "22%", label: "Entity X", color: "#10B981", risk: "Low" },
-                    { x: "37%", y: "62%", label: "Shell Co.", color: "#EF4444", risk: "High" },
-                    { x: "60%", y: "12%", label: "Acct B", color: "#10B981", risk: "Low" },
-                    { x: "60%", y: "68%", label: "Mule #3", color: "#F59E0B", risk: "High" },
-                    { x: "80%", y: "42%", label: "FIU Target", color: "#EF4444", risk: "Crit" },
+                    { x: "12%", y: "50%", label: "Acct A", type: "Account", risk: "Med", rBg: "bg-[#06B6D4]", rColor: "text-white", icon: "🏛️" },
+                    { x: "38%", y: "25%", label: "Entity X", type: "Corporate", risk: "Low", rBg: "bg-[#a3e635]", rColor: "text-[#130537]", icon: "🏢" },
+                    { x: "38%", y: "75%", label: "Shell Co.", type: "Corporate", risk: "High", rBg: "bg-[#F59E0B]", rColor: "text-[#130537]", icon: "🏢" },
+                    { x: "62%", y: "25%", label: "Acct B", type: "Account", risk: "Low", rBg: "bg-[#a3e635]", rColor: "text-[#130537]", icon: "🏛️" },
+                    { x: "62%", y: "75%", label: "Mule #3", type: "Individual", risk: "High", rBg: "bg-[#F59E0B]", rColor: "text-[#130537]", icon: "👤" },
+                    { x: "88%", y: "50%", label: "FIU Target", type: "Individual", risk: "Crit", rBg: "bg-[#EF4444]", rColor: "text-white", icon: "👤" },
                   ].map((node) => (
                     <div
                       key={node.label}
-                      className="absolute flex flex-col items-center gap-0.5"
+                      className="absolute flex flex-col items-center justify-center p-2 border-2 border-[#130537] bg-white shadow-[4px_4px_0px_#130537] z-10 w-24 transition-transform hover:-translate-y-1 hover:-translate-x-1 hover:shadow-[6px_6px_0px_#130537] cursor-pointer"
                       style={{ left: node.x, top: node.y, transform: "translate(-50%, -50%)" }}
                     >
-                      <div
-                        className="h-8 w-8 rounded-full flex items-center justify-center border-2 text-[8px] font-bold text-white shadow-lg"
-                        style={{ backgroundColor: node.color, borderColor: node.color }}
-                      >
+                      <div className="text-xl mb-1">{node.icon}</div>
+                      <div className="text-[11px] font-black uppercase text-[#130537] mb-0.5 truncate w-full text-center">{node.label}</div>
+                      <div className="text-[9px] font-bold text-slate-500 mb-2 uppercase">{node.type}</div>
+                      <div className={cn("text-[9px] font-black uppercase px-2 py-0.5 border-2 border-[#130537]", node.rBg, node.rColor)}>
                         {node.risk}
                       </div>
-                      <span className="text-[8px] text-slate-400 whitespace-nowrap">{node.label}</span>
                     </div>
                   ))}
                 </div>
               </div>
-              {/* Right panel */}
-              <div className="col-span-3 border-l border-slate-700/50 p-3" style={{ backgroundColor: "#0D1525" }}>
-                <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">Alert Details</div>
-                <div className="space-y-2">
+
+              {/* Right panel: Alert Details */}
+              <div className="col-span-3 border-l-2 border-[#130537] bg-white p-6 flex flex-col">
+                <div className="flex items-center gap-2 mb-6 border-b-2 border-[#130537] pb-3">
+                  <Activity className="w-5 h-5 text-[#130537]" />
+                  <span className="text-[13px] font-black uppercase tracking-widest text-[#130537]">Alert Profile</span>
+                </div>
+                
+                {/* Risk Score */}
+                <div className="mb-8 text-center p-4 border-2 border-[#130537] bg-[#f8fafc] shadow-[4px_4px_0px_#130537]">
+                  <div className="text-[10px] uppercase font-black tracking-widest text-slate-500 mb-1">Confidence Score</div>
+                  <div className="text-5xl font-black text-[#EF4444]">
+                    94<span className="text-xl text-[#130537]">/100</span>
+                  </div>
+                </div>
+
+                {/* Attributes */}
+                <div className="space-y-4 flex-1">
                   {[
-                    { label: "Risk Score", value: "94 / 100", color: "text-red-400" },
-                    { label: "Pattern", value: "Structuring", color: "text-yellow-400" },
-                    { label: "Entities", value: "6 Linked", color: "text-emerald-400" },
-                    { label: "Typology", value: "FATF-12", color: "text-blue-400" },
+                    { label: "Detected Pattern", value: "Layering", color: "text-[#F59E0B]", bg: "bg-amber-100" },
+                    { label: "Linked Entities", value: "6 High-Risk", color: "text-[#EF4444]", bg: "bg-red-100" },
+                    { label: "FATF Typology", value: "FATF-12", color: "text-[#06B6D4]", bg: "bg-cyan-100" },
+                    { label: "Total Exposure", value: "₹4.2M Est.", color: "text-[#130537]", bg: "bg-slate-200" },
                   ].map((item) => (
-                    <div key={item.label} className="flex justify-between items-center">
-                      <span className="text-[10px] text-slate-500">{item.label}</span>
-                      <span className={`text-[10px] font-bold ${item.color}`}>{item.value}</span>
+                    <div key={item.label} className="flex justify-between items-center border-b-2 border-dashed border-slate-300 pb-2">
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">{item.label}</span>
+                      <span className={`text-[11px] font-black uppercase px-2 py-0.5 border-2 border-[#130537] shadow-[2px_2px_0px_#130537] ${item.bg} ${item.color}`}>{item.value}</span>
                     </div>
                   ))}
                 </div>
-                <div className="mt-4">
-                  <button className="w-full text-[10px] font-bold uppercase py-2 border border-emerald-500 text-emerald-400 hover:bg-emerald-500/10 transition-colors">
-                    File SAR Report →
+
+                {/* CTA */}
+                <div className="mt-8 pt-5">
+                  <button className="flex items-center justify-center gap-2 w-full bg-[#a3e635] text-[#130537] border-2 border-[#130537] shadow-[4px_4px_0px_#130537] px-4 py-3 transition-all hover:-translate-y-1 hover:-translate-x-1 hover:shadow-[6px_6px_0px_#130537] active:shadow-[2px_2px_0px_#130537] active:translate-x-[2px] active:translate-y-[2px]">
+                    <FileText className="w-5 h-5" />
+                    <span className="text-[12px] font-black uppercase tracking-widest">
+                      File SAR Report
+                    </span>
                   </button>
                 </div>
               </div>
