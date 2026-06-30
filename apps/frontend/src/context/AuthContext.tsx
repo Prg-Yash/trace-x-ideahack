@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { useLocation } from "wouter";
+import { BASE } from "../lib/api";
 
 interface User {
   id: number;
@@ -33,7 +34,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Fetch user /me could be done here to hydrate user state.
       // For now, we'll set a placeholder or decode JWT in real app.
       // Or we can just set authenticated true if token exists.
-      fetch("http://localhost:8000/api/v1/auth/me", {
+      fetch(`${BASE}/auth/me`, {
         headers: {
           "Authorization": `Bearer ${storedToken}`
         }

@@ -1617,7 +1617,8 @@ async def trace_account(account_id: str, hint: str = "") -> Dict:
             d_records = await _run_query("""
                 MATCH (s:Account)-[r:SENT]->(a:Account {account_id: $acc_id})
                 WHERE r.is_fraud = true OR toUpper(r.pattern_type) = 'SMURFING'
-                RETURN collect(DISTINCT s.account_id) + a.account_id AS chain, collect(toFloat(r.amount)) AS amounts
+                WITH a, collect(DISTINCT s.account_id) AS senders, collect(toFloat(r.amount)) AS amounts
+                RETURN senders + a.account_id AS chain, amounts
             """, acc_id=account_id)
             if d_records and d_records[0]["chain"] and len(d_records[0]["chain"]) > 1:
                 return {

@@ -12,12 +12,12 @@ export const BASE = rawUrl
 // ── generic fetch wrapper ────────────────────────────────────────────────────
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = localStorage.getItem("trace_x_token");
-  
+
   const headers: HeadersInit = {
     "Content-Type": "application/json",
     "ngrok-skip-browser-warning": "true",
   };
-  
+
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
