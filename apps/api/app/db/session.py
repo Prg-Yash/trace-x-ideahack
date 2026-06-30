@@ -1,5 +1,7 @@
 from neo4j import GraphDatabase
 from app.core.config import settings
+from psycopg2 import pool
+import psycopg2
 
 class Neo4j:
     def __init__(self):
@@ -27,3 +29,24 @@ def get_db():
     if db.driver is None:
         db.connect()
     return db.driver
+
+# PostgreSQL connection pool
+try:
+    pg_pool = psycopg2.pool.ThreadedConnectionPool(
+        1, 10,
+        dsn=settings.DATABASE_URL
+    )
+    if pg_pool:
+        print("Successfully connected to PostgreSQL (NeonDB).")
+except Exception as e:
+    print(f"Failed to connect to PostgreSQL: {e}")
+    pg_pool = None
+
+def get_pg_conn():
+    if not pg_pool:
+        raise Exception("PostgreSQL pool not initialized")
+    conn = pg_pool.getconn()
+    try:
+        yield conn
+    finally:
+        pg_pool.putconn(conn)

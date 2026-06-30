@@ -11,7 +11,7 @@ export const BASE = rawUrl
 
 // ── generic fetch wrapper ────────────────────────────────────────────────────
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = localStorage.getItem("trace_x_token");
+  const token = sessionStorage.getItem("trace-x-token");
 
   const headers: HeadersInit = {
     "Content-Type": "application/json",
@@ -90,10 +90,13 @@ export type ScoreResult = {
 
 export type AlertItem = {
   account_id: string;
+  customer_name?: string;
   risk_level: string;
   flagged_for: string[];
   score: number;
   total_amount?: number;
+  alert_id?: string;
+  status?: string;
   detections: Record<string, { detected: boolean; confidence: number }>;
 };
 
@@ -235,7 +238,10 @@ export type BranchChannelAnalytics = {
 // ── API calls ────────────────────────────────────────────────────────────────
 
 /** Dashboard KPIs */
-export const fetchStats = () => apiFetch<SystemStats>("/stats");
+export const fetchStats = (branchCode?: string) => {
+  const qs = branchCode ? `?branch_code=${encodeURIComponent(branchCode)}` : "";
+  return apiFetch<SystemStats>(`/stats${qs}`);
+};
 
 export const fetchBranchChannelAnalytics = () => apiFetch<BranchChannelAnalytics>("/analytics/branch-channel");
 
@@ -243,12 +249,55 @@ export const fetchBranchChannelAnalytics = () => apiFetch<BranchChannelAnalytics
 export const fetchFeed = () => apiFetch<FeedResponse>("/feed");
 
 /** Quick pre-computed alerts from Neo4j (instant) */
-export const fetchAlertsQuick = (limit = 200) =>
-  apiFetch<AlertsResponse>(`/alerts/quick?limit=${limit}`);
+export const fetchAlertsQuick = (limit = 200, branchCode?: string) => {
+  const qs = branchCode ? `&branch_code=${encodeURIComponent(branchCode)}` : "";
+  return apiFetch<AlertsResponse>(`/alerts/quick?limit=${limit}${qs}`);
+};
 
 /** Full ML-scored alerts (slower, scores every candidate) */
 export const fetchAlerts = (limit = 50) =>
   apiFetch<AlertsResponse>(`/alerts?limit=${limit}`);
+
+/** Admin investigator management */
+export const fetchInvestigators = () =>
+  apiFetch<{ id: string; username: string; full_name: string; role: string }[]>("/auth/users/investigators");
+
+export const createInvestigator = (data: any) =>
+  apiFetch<{ id: string; username: string; full_name: string; role: string }>("/auth/users", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
+export const updateInvestigatorPassword = (userId: string, newPassword: string) =>
+  apiFetch<{ message: string }>(`/auth/users/${userId}/password`, {
+    method: "PATCH",
+    body: JSON.stringify({ new_password: newPassword }),
+  });
+
+export const deleteInvestigator = (userId: string) =>
+  apiFetch<{ message: string }>(`/auth/users/${userId}`, {
+    method: "DELETE",
+  });
+
+export const fetchBranches = () =>
+  apiFetch<{ id: number; branch_code: string; name: string; city: string; created_at: string }[]>("/branches");
+
+export const createBranch = (data: any) =>
+  apiFetch<{ id: number; branch_code: string; name: string; city: string }>("/branches", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
+export const updateBranch = (branchId: number, data: any) =>
+  apiFetch<{ id: number; branch_code: string; name: string; city: string }>(`/branches/${branchId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+
+export const deleteBranch = (branchId: number) =>
+  apiFetch<{ message: string }>(`/branches/${branchId}`, {
+    method: "DELETE",
+  });
 
 /** Risk score for a single account */
 export const fetchScore = (accountId: string) =>
@@ -279,8 +328,10 @@ export const fetchEvidencePackage = (accountId: string) =>
   apiFetch<any>(`/report/${encodeURIComponent(accountId)}`);
 
 /** List accounts */
-export const fetchAccounts = (limit = 300) =>
-  apiFetch<AccountRecord[]>(`/accounts?limit=${limit}`);
+export const fetchAccounts = (limit = 300, branchCode?: string) => {
+  const qs = branchCode ? `&branch_code=${encodeURIComponent(branchCode)}` : "";
+  return apiFetch<AccountRecord[]>(`/accounts?limit=${limit}${qs}`);
+};
 
 /** Investigation notes */
 export const fetchAccountNotes = (accountId: string) =>
@@ -291,6 +342,25 @@ export const addAccountNote = (accountId: string, content: string, author = "FIN
     method: "POST",
     body: JSON.stringify({ author, content }),
   });
+
+/** Workflow Endpoints */
+export const assignAlert = (alertId: string, data?: { assignee_id: string }) =>
+  apiFetch<{ message: string, status: string }>(`/alerts/${encodeURIComponent(alertId)}/assign`, {
+    method: "POST",
+    body: data ? JSON.stringify(data) : undefined
+  });
+
+export const draftStr = (alertId: string) =>
+  apiFetch<{ message: string, status: string }>(`/alerts/${encodeURIComponent(alertId)}/draft-str`, { method: "POST" });
+
+export const approveStr = (alertId: string) =>
+  apiFetch<{ message: string, status: string }>(`/alerts/${encodeURIComponent(alertId)}/approve-str`, { method: "POST" });
+
+export const rejectStr = (alertId: string) =>
+  apiFetch<{ message: string, status: string }>(`/alerts/${encodeURIComponent(alertId)}/reject-str`, { method: "POST" });
+
+export const fetchAuditTrail = (alertId: string) =>
+  apiFetch<{ audit_log: any[] }>(`/alerts/${encodeURIComponent(alertId)}/audit`);
 
 /** Chatbot Graph-RAG Endpoint */
 export type ChatHistoryTurn = { role: "user" | "ai"; content: string };

@@ -1,18 +1,20 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { useLocation } from "wouter";
-import { BASE } from "../lib/api";
 
-interface User {
-  id: number;
+export type Role = "Investigator" | "Branch Manager" | "Admin";
+
+export interface User {
+  id: string;
+  name: string;
+  role: Role;
   username: string;
-  email: string;
-  role: string;
+  branchCode?: string;
 }
 
 interface AuthContextType {
-  token: string | null;
   user: User | null;
-  login: (token: string, user: User) => void;
+  token: string | null;
+  login: (user: User, token: string) => void;
   logout: () => void;
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -21,61 +23,57 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(null);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUserState] = useState<User | null>(null);
+  const [token, setTokenState] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [, setLocation] = useLocation();
 
   useEffect(() => {
-    // Check for token on mount
-    const storedToken = localStorage.getItem("trace_x_token");
-    if (storedToken) {
-      setToken(storedToken);
-      fetch(`${BASE}/auth/me`, {
-        headers: {
-          "Authorization": `Bearer ${storedToken}`
-        }
-      }).then(res => {
-        if (res.ok) {
-          return res.json();
-        } else {
-          throw new Error("Invalid token");
-        }
-      }).then(data => {
-        setUser(data);
-      }).catch(() => {
-        logout();
-      }).finally(() => {
-        setIsLoading(false);
-      });
-    } else {
-      setIsLoading(false);
+    // Check for stored user and token on mount
+    const storedUser = sessionStorage.getItem("trace-x-user");
+    const storedToken = sessionStorage.getItem("trace-x-token");
+    if (storedUser && storedToken) {
+      const data = JSON.parse(storedUser);
+      const fetchedUser: User = {
+        id: data.id,
+        name: data.full_name || data.name,
+        role: data.role,
+        username: data.username,
+        branchCode: data.branch_code || data.branchCode
+      };
+      setUserState(fetchedUser);
+      setTokenState(storedToken);
     }
+    setIsLoading(false);
   }, []);
 
-  const login = (newToken: string, newUser: User) => {
-    localStorage.setItem("trace_x_token", newToken);
-    setToken(newToken);
-    setUser(newUser);
+  const login = (newUser: User, newToken: string) => {
+    setUserState(newUser);
+    setTokenState(newToken);
+    sessionStorage.setItem("trace-x-user", JSON.stringify(newUser));
+    sessionStorage.setItem("trace-x-token", newToken);
   };
 
   const logout = () => {
-    localStorage.removeItem("trace_x_token");
-    setToken(null);
-    setUser(null);
+    setUserState(null);
+    setTokenState(null);
+    sessionStorage.removeItem("trace-x-user");
+    sessionStorage.removeItem("trace-x-token");
     setLocation("/login");
   };
 
-  const value = {
-    token,
-    user,
-    login,
-    logout,
-    isAuthenticated: !!token,
-    isLoading,
-  };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{
+      user,
+      token,
+      login,
+      logout,
+      isAuthenticated: !!user && !!token,
+      isLoading
+    }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {

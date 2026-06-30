@@ -1423,22 +1423,23 @@ RULES:
                                         const apiUrl = (import.meta.env.VITE_SCRIPT_API_ENDPOINT || "https://openrouter.ai/api/v1") + "/chat/completions";
                                         const res = await fetch(apiUrl, {
                                           method: "POST",
-                                          headers: {
-                                            "Content-Type": "application/json",
-                                            "Authorization": `Bearer ${import.meta.env.VITE_OPEN_ROUTER_API_KEY}`,
-                                            "HTTP-Referer": window.location.origin,
-                                            "X-Title": "G-TEN AML Investigation Platform"
-                                          },
+                                          headers: { "Content-Type": "application/json" },
                                           body: JSON.stringify({
-                                            model: "openai/gpt-4o-mini",
-                                            messages: [{ role: "user", content: prompt }]
+                                            focused_pattern: p.patternType,
+                                            all_patterns: allPatterns.map(ap => ({
+                                              patternType: ap.patternType,
+                                              confidence: ap.confidence,
+                                              affectedAccounts: ap.affectedAccounts,
+                                              totalAmount: ap.totalAmount,
+                                              description: ap.description,
+                                            })),
+                                            shap_features: shapForAI,
                                           }),
                                         });
 
                                         if (res.ok) {
                                           const data = await res.json();
-                                          const text = data?.choices?.[0]?.message?.content;
-                                          if (text) fullNarrative = text.trim();
+                                          if (data.narrative && !data.error) fullNarrative = data.narrative.trim();
                                         }
                                       } catch (err) {
                                         // Fallback if API offline

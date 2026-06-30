@@ -10,7 +10,7 @@ warnings.filterwarnings("ignore", message=".*feature names.*")
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import health, schema, fraud, data, demo, stream, auth, chat
+from app.routers import health, schema, fraud, data, demo, stream, auth, workflow, chat, branches
 from app.core.config import settings
 from app.core.websockets import manager
 
@@ -71,7 +71,9 @@ app.include_router(data.router, prefix=settings.API_V1_STR)
 app.include_router(demo.router, prefix=settings.API_V1_STR)
 app.include_router(stream.router, prefix=f"{settings.API_V1_STR}/stream")
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth")
+app.include_router(workflow.router, prefix=f"{settings.API_V1_STR}/alerts")
 app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat")
+app.include_router(branches.router, prefix=f"{settings.API_V1_STR}")
 
 
 @app.get("/")

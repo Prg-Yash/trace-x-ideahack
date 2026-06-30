@@ -206,7 +206,9 @@ class StreamConsumer:
             """
             
             try:
-                db_url = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_19nVcEqwLskP@ep-ancient-salad-aopl31tx.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require")
+                db_url = os.getenv("DATABASE_URL")
+                if not db_url:
+                    raise ValueError("DATABASE_URL env var not set")
                 with psycopg2.connect(db_url) as conn:
                     with conn.cursor() as cur:
                         execute_batch(cur, pg_query, pg_batch)
@@ -342,7 +344,9 @@ class StreamConsumer:
                         # 2. Insert to Postgres
                         import psycopg2
                         import os
-                        db_url = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_19nVcEqwLskP@ep-ancient-salad-aopl31tx.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require")
+                        db_url = os.getenv("DATABASE_URL")
+                        if not db_url:
+                            raise ValueError("DATABASE_URL env var not set")
                         with psycopg2.connect(db_url) as conn:
                             with conn.cursor() as cur:
                                 cur.execute("""
