@@ -8,6 +8,13 @@ import { useAlertsQuick, useBranchChannelAnalytics } from "@/hooks/useApi";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useLocation } from "wouter";
 
+const cardStyle: React.CSSProperties = {
+  backgroundColor: "var(--color-card)",
+  border: "2px solid var(--color-border)",
+  borderRadius: 0,
+  boxShadow: "6px 6px 0px var(--color-border)",
+};
+
 // ── Exact real branch codes → geo coordinates (matched from DB) ───────────────
 const BRANCH_GEO: Record<string, { lat: number; lng: number; city: string; state: string }> = {
   // Maharashtra
@@ -192,29 +199,41 @@ export default function RiskMap() {
   }
 
   return (
-    <div className="p-6 pb-20 min-h-screen space-y-6" style={{ backgroundColor: "var(--background)" }}>
+    <div className="min-h-screen p-6 md:p-8 lg:p-10 pb-20 bg-background text-foreground">
+      <div className="mx-auto max-w-7xl space-y-6">
 
-      {/* HEADER */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 flex items-center justify-center border-2 border-red-500 bg-red-500/10">
-            <Globe2 className="h-5 w-5 text-red-400" />
+        {/* ── HEADER ── */}
+        <motion.header 
+          initial={{ opacity: 0, y: -16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="p-6 md:p-8" 
+          style={cardStyle}
+        >
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex items-start gap-4">
+              <div className="flex h-12 w-12 items-center justify-center border-2 border-border bg-primary/10">
+                <Globe2 className="h-6 w-6 text-primary" />
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.3em] mb-1 text-primary">
+                  // Intelligence Workspace
+                </p>
+                <h1 className="text-2xl font-black uppercase tracking-tight text-foreground">
+                  Geospatial Risk Intelligence
+                </h1>
+                <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
+                  Branch-Level Fraud Topography · India AML Network · {branchPoints.length} Branches Live
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-2 px-3 py-1.5 text-[9px] font-bold uppercase tracking-wider border border-primary/40 text-primary bg-primary/10">
+              <Activity className="h-3 w-3" />
+              Live Intelligence Feed
+            </div>
           </div>
-          <div>
-            <h1 className="text-2xl font-black tracking-tight text-black uppercase">
-              Geospatial Risk Intelligence
-            </h1>
-            <p className="text-xs text-slate-500 font-mono mt-0.5">
-              Branch-Level Fraud Topography · India AML Network · {branchPoints.length} Branches Live
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider"
-          style={{ border: "1px solid rgba(163,230,53,0.4)", color: "#a3e635", backgroundColor: "rgba(163,230,53,0.07)" }}>
-          <Activity className="h-3 w-3" />
-          Live Intelligence Feed
-        </div>
-      </div>
+        </motion.header>
 
       {/* KPI CARDS */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
@@ -257,14 +276,14 @@ export default function RiskMap() {
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.07 }}
-            className="border-2 p-4"
-            style={{ borderColor: card.color, backgroundColor: card.bg }}
+            className="p-4"
+            style={{ ...cardStyle, borderTop: `4px solid ${card.color}` }}
           >
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{card.label}</p>
-                <p className="text-2xl font-black mt-1" style={{ color: card.color }}>{card.value}</p>
-                <p className="text-[10px] font-mono text-slate-400 mt-0.5">{card.sub}</p>
+                <p className="text-[9px] font-bold uppercase tracking-[0.25em] text-muted-foreground">{card.label}</p>
+                <p className="text-2xl font-black mt-1 text-foreground">{card.value}</p>
+                <p className="text-[10px] font-mono text-muted-foreground mt-0.5">{card.sub}</p>
               </div>
               <card.icon className="h-5 w-5 opacity-60 flex-shrink-0" style={{ color: card.color }} />
             </div>
@@ -275,22 +294,22 @@ export default function RiskMap() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
 
         {/* MAP PANEL */}
-        <div className="xl:col-span-2 border-2 border-slate-300 overflow-hidden" style={{ backgroundColor: "#0a1628" }}>
+        <div className="xl:col-span-2 overflow-hidden" style={cardStyle}>
           
           {/* Map header + pattern filter */}
-          <div className="px-4 py-3 flex flex-wrap items-center gap-2 border-b border-slate-700">
+          <div className="px-4 py-3 flex flex-wrap items-center gap-2 border-b-2 border-border bg-muted/10">
             <div className="flex items-center gap-2 mr-2">
-              <Globe2 className="h-4 w-4 text-cyan-400" />
-              <span className="text-sm font-bold text-white uppercase tracking-wider">India Risk Map</span>
+              <Globe2 className="h-4 w-4 text-primary" />
+              <h2 className="text-xs font-black uppercase tracking-[0.25em] text-foreground">India Risk Map</h2>
             </div>
             <div className="flex flex-wrap gap-1.5 ml-auto">
               <button
                 onClick={() => setFilterPattern("ALL")}
                 className="text-[9px] font-bold uppercase px-2 py-1 transition-all"
                 style={{
-                  backgroundColor: filterPattern === "ALL" ? "#a3e635" : "rgba(255,255,255,0.05)",
-                  color: filterPattern === "ALL" ? "#000" : "rgba(255,255,255,0.5)",
-                  border: "1px solid rgba(163,230,53,0.3)",
+                  backgroundColor: filterPattern === "ALL" ? "var(--color-primary)" : "transparent",
+                  color: filterPattern === "ALL" ? "var(--color-card)" : "var(--color-muted-foreground)",
+                  border: "1px solid var(--color-border)",
                 }}
               >
                 All
@@ -302,10 +321,10 @@ export default function RiskMap() {
                   className="text-[9px] font-bold uppercase px-2 py-1 transition-all"
                   style={{
                     backgroundColor: filterPattern === pat
-                      ? (PATTERN_COLORS[pat] || "#a3e635")
-                      : "rgba(255,255,255,0.05)",
-                    color: filterPattern === pat ? "#fff" : "rgba(255,255,255,0.45)",
-                    border: `1px solid ${filterPattern === pat ? (PATTERN_COLORS[pat] || "#a3e635") : "rgba(255,255,255,0.1)"}`,
+                      ? (PATTERN_COLORS[pat] || "var(--color-primary)")
+                      : "transparent",
+                    color: filterPattern === pat ? "var(--color-card)" : "var(--color-muted-foreground)",
+                    border: `1px solid ${filterPattern === pat ? (PATTERN_COLORS[pat] || "var(--color-primary)") : "var(--color-border)"}`,
                   }}
                 >
                   {(PATTERN_LABELS[pat] || pat).split(" ")[0]}
@@ -315,18 +334,18 @@ export default function RiskMap() {
           </div>
 
           {/* SVG India Map */}
-          <div className="relative" style={{ height: "460px", background: "radial-gradient(ellipse at 40% 45%, #0c2040 0%, #040d1a 100%)" }}>
+          <div className="relative bg-muted/10" style={{ height: "460px" }}>
 
             <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
               {/* Subtle grid */}
               {[15, 30, 45, 60, 75, 90].map(v => (
                 <React.Fragment key={v}>
-                  <line x1={v} y1={0} x2={v} y2={100} stroke="rgba(255,255,255,0.025)" strokeWidth="0.2" />
-                  <line x1={0} y1={v} x2={100} y2={v} stroke="rgba(255,255,255,0.025)" strokeWidth="0.2" />
+                  <line x1={v} y1={0} x2={v} y2={100} stroke="var(--color-border)" strokeWidth="0.1" />
+                  <line x1={0} y1={v} x2={100} y2={v} stroke="var(--color-border)" strokeWidth="0.1" />
                 </React.Fragment>
               ))}
               {/* India outline */}
-              <path d={INDIA_PATH} fill="rgba(56,189,248,0.04)" stroke="rgba(56,189,248,0.2)" strokeWidth="0.4" />
+              <path d={INDIA_PATH} fill="rgba(0,0,0,0.03)" stroke="var(--color-border)" strokeWidth="0.3" />
             </svg>
 
             <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100">
@@ -387,7 +406,7 @@ export default function RiskMap() {
                     {/* City label for high risk / hover / selected */}
                     {(!isFiltered && (bp.riskScore >= 65 || isHovered || isSelected)) && (
                       <text x={bp.x + r + 1} y={bp.y + 0.6}
-                        fontSize="2.8" fill="rgba(255,255,255,0.9)"
+                        fontSize="2.8" fill="var(--color-foreground)"
                         fontFamily="'SF Mono', monospace" fontWeight="bold">
                         {bp.city}
                       </text>
@@ -402,13 +421,13 @@ export default function RiskMap() {
               {RISK_LEVELS.map(l => (
                 <div key={l.label} className="flex items-center gap-1.5">
                   <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: l.color }} />
-                  <span className="text-[9px] font-bold uppercase tracking-wide" style={{ color: "rgba(255,255,255,0.45)" }}>
+                  <span className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
                     {l.label}
                   </span>
                 </div>
               ))}
             </div>
-            <div className="absolute bottom-3 right-3 text-[9px] font-mono" style={{ color: "rgba(255,255,255,0.3)" }}>
+            <div className="absolute bottom-3 right-3 text-[9px] font-mono text-muted-foreground">
               ● Size = Risk Score
             </div>
           </div>
@@ -418,59 +437,58 @@ export default function RiskMap() {
         <div className="flex flex-col gap-4">
 
           {/* Search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+          <div className="relative" style={cardStyle}>
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <input
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search city, branch, state…"
-              className="w-full pl-9 pr-3 py-2.5 text-xs font-mono border-2 border-slate-200 focus:outline-none focus:border-slate-400"
-              style={{ backgroundColor: "var(--surface-1)", color: "var(--foreground)" }}
+              placeholder="SEARCH CITY, BRANCH, STATE…"
+              className="w-full pl-9 pr-3 py-2.5 text-xs font-mono font-bold uppercase tracking-wider bg-transparent text-foreground border-none focus:outline-none"
             />
           </div>
 
           {/* Branch ranking list */}
-          <div className="border-2 border-slate-200 overflow-hidden" style={{ backgroundColor: "var(--surface-1)", maxHeight: "340px", overflowY: "auto" }}>
-            <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between sticky top-0" style={{ backgroundColor: "var(--surface-1)" }}>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Branch Ranking</span>
-              <span className="text-[10px] font-mono text-slate-400">{filteredPoints.length} shown</span>
+          <div className="overflow-hidden" style={{ ...cardStyle, maxHeight: "340px", overflowY: "auto" }}>
+            <div className="px-4 py-2.5 border-b-2 border-border flex items-center justify-between sticky top-0 bg-muted/50">
+              <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-foreground">Branch Ranking</span>
+              <span className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">{filteredPoints.length} SHOWN</span>
             </div>
-            <div className="divide-y divide-slate-100">
+            <div className="divide-y divide-border/40">
               {[...filteredPoints]
                 .sort((a, b) => b.riskScore - a.riskScore)
                 .map((bp, i) => (
                   <motion.button key={bp.branchCode}
                     whileHover={{ x: 2 }}
                     onClick={() => setSelectedBranch(selectedBranch?.branchCode === bp.branchCode ? null : bp)}
-                    className="w-full text-left px-4 py-2.5 flex items-center gap-3 transition-all"
+                    className="w-full text-left px-4 py-2.5 flex items-center gap-3 transition-all hover:bg-primary/5"
                     style={{
                       backgroundColor: selectedBranch?.branchCode === bp.branchCode
-                        ? "rgba(163,230,53,0.08)" : "transparent",
+                        ? "var(--color-primary-5)" : "transparent",
                       borderLeft: selectedBranch?.branchCode === bp.branchCode
-                        ? "3px solid #a3e635" : "3px solid transparent",
+                        ? "3px solid var(--color-primary)" : "3px solid transparent",
                     }}
                   >
-                    <span className="text-[10px] font-black font-mono text-slate-400 w-5">#{i + 1}</span>
+                    <span className="text-[10px] font-black font-mono text-muted-foreground w-5">#{i + 1}</span>
                     <div className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: getRiskColor(bp.riskScore) }} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-slate-800 truncate">{bp.branchName}</span>
+                        <span className="text-xs font-bold text-foreground truncate uppercase">{bp.branchName}</span>
                         <span className="text-[11px] font-black font-mono ml-2" style={{ color: getRiskColor(bp.riskScore) }}>
                           {bp.riskScore}
                         </span>
                       </div>
                       <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-[9px] font-mono text-slate-400">{bp.state}</span>
-                        <span className="text-slate-300 text-[9px]">·</span>
+                        <span className="text-[9px] font-mono text-muted-foreground">{bp.state}</span>
+                        <span className="text-muted-foreground text-[9px]">·</span>
                         <span className="text-[9px] font-bold uppercase tracking-wider"
-                          style={{ color: PATTERN_COLORS[bp.dominantPattern?.toUpperCase?.()] || "#64748b" }}>
+                          style={{ color: PATTERN_COLORS[bp.dominantPattern?.toUpperCase?.()] || "var(--color-muted-foreground)" }}>
                           {PATTERN_LABELS[bp.dominantPattern?.toUpperCase?.() || ""] || bp.dominantPattern}
                         </span>
-                        <span className="text-slate-300 text-[9px]">·</span>
-                        <span className="text-[9px] font-mono text-red-400">{bp.flaggedAccounts} flagged</span>
+                        <span className="text-muted-foreground text-[9px]">·</span>
+                        <span className="text-[9px] font-mono text-destructive">{bp.flaggedAccounts} flagged</span>
                       </div>
                     </div>
-                    <ChevronRight className="h-3 w-3 text-slate-300 flex-shrink-0" />
+                    <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                   </motion.button>
                 ))}
               {filteredPoints.length === 0 && (
@@ -484,16 +502,16 @@ export default function RiskMap() {
             {selectedBranch ? (
               <motion.div key={selectedBranch.branchCode}
                 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }}
-                className="border-2 p-4 space-y-3"
-                style={{ borderColor: getRiskColor(selectedBranch.riskScore), backgroundColor: `${getRiskColor(selectedBranch.riskScore)}08` }}
+                className="p-4 space-y-3"
+                style={{ ...cardStyle, borderLeft: `4px solid ${getRiskColor(selectedBranch.riskScore)}` }}
               >
                 <div className="flex items-start justify-between">
                   <div>
                     <div className="flex items-center gap-2">
                       <MapPin className="h-4 w-4" style={{ color: getRiskColor(selectedBranch.riskScore) }} />
-                      <span className="text-sm font-black text-slate-800">{selectedBranch.branchName}</span>
+                      <span className="text-sm font-black text-foreground uppercase tracking-wider">{selectedBranch.branchName}</span>
                     </div>
-                    <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+                    <p className="text-[10px] text-muted-foreground font-mono mt-0.5">
                       {selectedBranch.state} · {selectedBranch.branchCode}
                     </p>
                   </div>
@@ -507,9 +525,9 @@ export default function RiskMap() {
                   </div>
                 </div>
 
-                <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                <div className="w-full h-1.5 bg-muted/40 overflow-hidden border border-border">
                   <motion.div initial={{ width: 0 }} animate={{ width: `${selectedBranch.riskScore}%` }}
-                    transition={{ duration: 0.5 }} className="h-full rounded-full"
+                    transition={{ duration: 0.5 }} className="h-full"
                     style={{ backgroundColor: getRiskColor(selectedBranch.riskScore) }} />
                 </div>
 
@@ -520,7 +538,7 @@ export default function RiskMap() {
                     {
                       label: "Fraud Volume",
                       value: `₹${(selectedBranch.fraudVolume / 100_000).toFixed(1)}L`,
-                      color: "#ef4444"
+                      color: "var(--color-destructive)"
                     },
                     {
                       label: "Dominant Pattern",
@@ -529,16 +547,16 @@ export default function RiskMap() {
                     },
                   ].map((item) => (
                     <div key={item.label} className="space-y-0.5">
-                      <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{item.label}</p>
-                      <p className="text-xs font-bold" style={{ color: item.color || "#1e293b" }}>{item.value}</p>
+                      <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-muted-foreground">{item.label}</p>
+                      <p className="text-xs font-bold uppercase tracking-wider" style={{ color: item.color || "var(--color-foreground)" }}>{item.value}</p>
                     </div>
                   ))}
                 </div>
 
-                <button onClick={() => navigate("/branch-risk")}
-                  className="w-full flex items-center justify-center gap-2 py-2 text-[10px] font-bold uppercase tracking-wider transition-all"
+                <button onClick={() => navigate(`/branch-risk`)}
+                  className="w-full flex items-center justify-center gap-2 py-2 text-[10px] font-bold uppercase tracking-wider transition-all hover:opacity-80"
                   style={{
-                    border: `1px solid ${getRiskColor(selectedBranch.riskScore)}`,
+                    border: `2px solid ${getRiskColor(selectedBranch.riskScore)}`,
                     color: getRiskColor(selectedBranch.riskScore),
                     backgroundColor: `${getRiskColor(selectedBranch.riskScore)}10`,
                   }}>
@@ -558,10 +576,10 @@ export default function RiskMap() {
       </div>
 
       {/* BOTTOM STRIP — Per-branch fraud volume bars */}
-      <div className="border-2 border-slate-200 overflow-hidden" style={{ backgroundColor: "var(--surface-1)" }}>
-        <div className="px-4 py-3 border-b border-slate-200">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
-            <Shield className="h-3.5 w-3.5" />
+      <div className="overflow-hidden" style={cardStyle}>
+        <div className="px-4 py-3 border-b-2 border-border bg-muted/10">
+          <span className="text-[10px] font-black uppercase tracking-[0.25em] text-foreground flex items-center gap-2">
+            <Shield className="h-3.5 w-3.5 text-primary" />
             Branch-wise Fraud Exposure (₹ Lakhs)
           </span>
         </div>
@@ -572,21 +590,21 @@ export default function RiskMap() {
               const maxVol = Math.max(...branchPoints.map(b => b.fraudVolume), 1);
               const pct = (bp.fraudVolume / maxVol) * 100;
               return (
-                <div key={bp.branchCode} className="flex items-center gap-3">
-                  <div className="w-36 text-[10px] font-bold text-slate-600 truncate">{bp.branchName}</div>
-                  <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div key={bp.branchCode} className="flex items-center gap-3 hover:bg-primary/5 transition-colors p-1">
+                  <div className="w-36 text-[10px] font-bold text-foreground uppercase truncate">{bp.branchName}</div>
+                  <div className="flex-1 h-2 bg-muted/40 border border-border overflow-hidden">
                     <motion.div
                       initial={{ width: 0 }}
                       animate={{ width: `${pct}%` }}
                       transition={{ duration: 0.6, delay: 0.1 }}
-                      className="h-full rounded-full"
+                      className="h-full"
                       style={{ backgroundColor: getRiskColor(bp.riskScore) }}
                     />
                   </div>
                   <div className="w-20 text-right text-[10px] font-mono font-bold" style={{ color: getRiskColor(bp.riskScore) }}>
                     ₹{(bp.fraudVolume / 100_000).toFixed(1)}L
                   </div>
-                  <div className="w-8 text-right text-[10px] font-mono text-slate-400">
+                  <div className="w-8 text-right text-[10px] font-mono text-muted-foreground">
                     {bp.riskScore}
                   </div>
                 </div>
@@ -595,6 +613,7 @@ export default function RiskMap() {
         </div>
       </div>
 
+      </div>
     </div>
   );
 }

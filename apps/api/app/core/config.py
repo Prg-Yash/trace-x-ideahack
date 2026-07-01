@@ -8,7 +8,7 @@ API_ENV = API_DIR / ".env"
 ROOT_ENV = ROOT_DIR / ".env"
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "TRACE-X"
+    PROJECT_NAME: str = "G-TEN  "
     API_V1_STR: str = "/api/v1"
 
     NEO4J_URI: str
