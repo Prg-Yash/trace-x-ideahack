@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import NotFound from "@/pages/not-found";
 import { CommandPalette } from "@/components/chat/CommandPalette";
+import { initializeDesktopFeatures } from "@/lib/desktop-init";
 
 import Home from "@/pages/Home";
 import Login from "@/pages/Login";
@@ -137,6 +138,11 @@ function Router() {
 }
 
 function App() {
+  // Initialize desktop features on mount
+  React.useEffect(() => {
+    initializeDesktopFeatures();
+  }, []);
+
   return (
     <ErrorBoundary>
       <TooltipProvider>
