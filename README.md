@@ -13,6 +13,7 @@ This project addresses **PS03: Tracking of Funds within Bank for Fraud Detection
 3. **Explainable AI (XAI) Insights**: Instead of "black box" flagging, the UI provides SHAP (SHapley Additive exPlanations) force-plots explaining exactly *why* a transaction was flagged (e.g., "Velocity spike in last 10m", "Geographic impossibility").
 4. **Transaction Time Machine (`TransactionTimeMachine`)**: Allows investigators to rewind and playback transaction histories across accounts to spot subtle, long-term smurfing patterns.
 5. **Secure Authentication**: Biometric Passkeys (WebAuthn) for passwordless login, backed by Resend API for email-based One-Time Passwords (OTP).
+6. **RBAC & Audit Logging**: Implements strict Role-Based Access Control (RBAC) to ensure data privacy, alongside immutable audit trails tracking all investigator actions and system events for compliance.
 
 ## 🛠️ Tech Stack & Polyglot Architecture
 This project employs a **Polyglot Architecture** to maximize performance and avoid Neo4j locking issues:
