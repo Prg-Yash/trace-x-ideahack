@@ -154,7 +154,7 @@ Unlike flat Kaggle CSVs, our dataset programmatically engineers complex fraud ne
 
 *No real banking data was used.*
 
-## 📈 Exact Model Performance Table (Quote This to Judges)
+## 📈 Exact Model Performance Table 
 
 | Typology / Model | Precision | Recall (Sensitivity) | F1-Score | AUC / AUC-PR | Technical Notes & Highlights |
 | :--- | :--- | :--- | :--- | :--- | :--- |
