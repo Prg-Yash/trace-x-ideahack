@@ -2,7 +2,7 @@ name: Build Trace-X Desktop App
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, yash-desktop-clean ]
     paths:
       - 'apps/frontend/**'
   pull_request:
