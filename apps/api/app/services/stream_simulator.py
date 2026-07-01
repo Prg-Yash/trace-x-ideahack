@@ -4,6 +4,15 @@ import random
 import uuid
 from app.services.broker import MessageBroker
 
+VALID_BRANCHES = [
+    "SBIN0000001",
+    "SBIN0000002",
+    "SBIN0000003",
+    "SBIN0000004",
+    "SBIN0000005",
+    "SBIN0000007",
+]
+
 class FirehoseProducer:
     def __init__(self, broker: MessageBroker):
         self.broker = broker
@@ -71,7 +80,9 @@ class FirehoseProducer:
             "channel": random.choice(["UPI", "NEFT", "RTGS", "IMPS"]),
             "timestamp": time.time(),
             "is_injected_fraud": False,
-            "pattern": "normal"
+            "pattern": "normal",
+            "sender_branch": random.choice(VALID_BRANCHES),
+            "receiver_branch": random.choice(VALID_BRANCHES)
         }
     
     def _generate_fraud_pattern(self, pattern: str) -> list:
@@ -89,7 +100,9 @@ class FirehoseProducer:
                     "channel": "NEFT",
                     "timestamp": time.time() + (i * 0.1),
                     "is_injected_fraud": True,
-                    "pattern": "layering"
+                    "pattern": "layering",
+                    "sender_branch": random.choice(VALID_BRANCHES),
+                    "receiver_branch": random.choice(VALID_BRANCHES)
                 }
                 for i in range(len(accounts) - 1)
             ]
@@ -105,7 +118,9 @@ class FirehoseProducer:
                     "channel": "UPI",
                     "timestamp": time.time() + (i * 0.1),
                     "is_injected_fraud": True,
-                    "pattern": "smurfing"
+                    "pattern": "smurfing",
+                    "sender_branch": random.choice(VALID_BRANCHES),
+                    "receiver_branch": random.choice(VALID_BRANCHES)
                 }
                 for i in range(10)
             ]
@@ -120,7 +135,9 @@ class FirehoseProducer:
                     "channel": "RTGS",
                     "timestamp": time.time() + (i * 0.2),
                     "is_injected_fraud": True,
-                    "pattern": "round_trip"
+                    "pattern": "round_trip",
+                    "sender_branch": random.choice(VALID_BRANCHES),
+                    "receiver_branch": random.choice(VALID_BRANCHES)
                 }
                 for i in range(len(accounts) - 1)
             ]
@@ -158,7 +175,9 @@ class StreamConsumer:
             neo4j_query = """
             UNWIND $batch AS txn
             MERGE (s:Account {account_id: txn.sender})
+            ON CREATE SET s.branch_code = txn.sender_branch
             MERGE (r:Account {account_id: txn.receiver})
+            ON CREATE SET r.branch_code = txn.receiver_branch
             CREATE (s)-[t:SENT {
                 txn_id: txn.txn_id,
                 amount: txn.amount,

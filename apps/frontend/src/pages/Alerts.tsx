@@ -866,7 +866,7 @@ export default function Alerts() {
                                 <SelectValue placeholder="Select Investigator" />
                               </SelectTrigger>
                               <SelectContent className="rounded-none border" style={{ backgroundColor: "#1A1F27", borderColor: "#2A2F35", color: "white" }}>
-                                {investigators.filter(inv => inv.branch_code === alertDetail.branchCode).map((inv) => (
+                                {investigators.filter(inv => !alertDetail.branchCode || alertDetail.branchCode === "Unknown" || inv.branch_code === alertDetail.branchCode).map((inv) => (
                                   <SelectItem key={inv.id} value={inv.id} className="text-[12px] uppercase tracking-wider font-bold">
                                     {inv.full_name} ({inv.username})
                                   </SelectItem>

@@ -44,6 +44,15 @@ def get_pg_connection():
     finally:
         _get_pool().putconn(conn)
 
+VALID_BRANCHES = [
+    "SBIN0000001",
+    "SBIN0000002",
+    "SBIN0000003",
+    "SBIN0000004",
+    "SBIN0000005",
+    "SBIN0000007",
+]
+
 router = APIRouter(prefix="/demo", tags=["demo"])
 
 VALID_PATTERNS = {"LAYERING", "SMURFING", "ROUND_TRIP", "DORMANT", "KYC_MISMATCH"}
@@ -139,11 +148,17 @@ async def inject_demo_pattern(pattern: str, demo_tag: str):
     def pg_insert():
         with get_pg_connection() as conn:
             with conn.cursor() as cur:
+                # Insert mock entity first to satisfy foreign key constraint
+                cur.execute("""
+                    INSERT INTO entities (entity_id, entity_type, customer_name, kyc_status)
+                    VALUES (%s, 'INDIVIDUAL', 'Demo User', 'VERIFIED')
+                """, (ent_id,))
+                
                 for acc in account_ids:
                     cur.execute("""
-                        INSERT INTO accounts (account_id, entity_id, kyc_tier, status, risk_category, is_fraud, pattern_type)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    """, (acc, ent_id, 3, 'ACTIVE', 'HIGH', True, pattern))
+                        INSERT INTO accounts (account_id, entity_id, kyc_tier, status, risk_category, is_fraud, pattern_type, branch_code)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (acc, ent_id, 3, 'ACTIVE', 'HIGH', True, pattern, random.choice(VALID_BRANCHES)))
                     
                     cur.execute("""
                         INSERT INTO account_stats (account_id, volume_30d, txn_count_30d, total_count_180d, total_volume_180d, unique_counterparties_30d)
@@ -169,8 +184,9 @@ async def inject_demo_pattern(pattern: str, demo_tag: str):
                 SET a.is_demo = true,
                     a.demo_tag = $tag,
                     a.is_fraud = true,
-                    a.pattern_type = $pattern
-            """, acc=acc, tag=demo_tag, pattern=pattern)
+                    a.pattern_type = $pattern,
+                    a.branch_code = $branch_code
+            """, acc=acc, tag=demo_tag, pattern=pattern, branch_code=random.choice(VALID_BRANCHES))
             
         for i, (sender, receiver, amount) in enumerate(txns):
             await session.run("""
