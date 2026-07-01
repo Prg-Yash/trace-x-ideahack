@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { fetchSystemAuditLogs } from '../lib/api';
-import { Shield, Clock, Info, FileText, Loader2 } from 'lucide-react';
+import { Shield, Clock, Info, FileText, Loader2, Search } from 'lucide-react';
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface AuditLog {
   id: string;
@@ -26,6 +28,8 @@ const cardStyle: React.CSSProperties = {
 export function AuditLogs() {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchCategory, setSearchCategory] = useState("ALL");
 
   useEffect(() => {
     let mounted = true;
@@ -61,6 +65,23 @@ export function AuditLogs() {
       default: return 'border-2 border-muted-foreground bg-transparent text-muted-foreground';
     }
   };
+
+  const filteredLogs = logs.filter(log => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    switch (searchCategory) {
+      case 'ACTION': return (log.action_type || '').toLowerCase().includes(q);
+      case 'ACTOR': return (log.actor_name || '').toLowerCase().includes(q) || (log.actor_id || '').toLowerCase().includes(q);
+      case 'IP_ADDRESS': return (log.ip_address || '').toLowerCase().includes(q);
+      case 'STATUS': return (log.status || '').toLowerCase().includes(q);
+      default:
+        return (log.action_type || '').toLowerCase().includes(q) || 
+               (log.actor_name || '').toLowerCase().includes(q) ||
+               (log.actor_id || '').toLowerCase().includes(q) ||
+               (log.ip_address || '').toLowerCase().includes(q) ||
+               (log.status || '').toLowerCase().includes(q);
+    }
+  });
 
   return (
     <div className="min-h-screen p-6 md:p-8 lg:p-10 pb-20 bg-background text-foreground">
@@ -100,20 +121,46 @@ export function AuditLogs() {
           style={cardStyle}
           className="overflow-hidden"
         >
-          <div className="p-4 border-b-2 border-border bg-muted/50 flex justify-between items-center">
-             <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-primary">
+          <div className="p-4 border-b-2 border-border bg-muted/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="flex items-center gap-4 flex-wrap w-full sm:w-auto">
+             <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-foreground hidden md:block">
                 // Event Log
               </p>
-              <div className="px-3 py-1 bg-transparent border-2 border-primary">
-                <p className="text-[10px] font-black text-foreground uppercase tracking-wider">
-                  Total Records: {logs.length}
-                </p>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <Select value={searchCategory} onValueChange={setSearchCategory}>
+                  <SelectTrigger className="w-[130px] border-2 border-border bg-card rounded-none h-10 text-xs font-bold uppercase tracking-wider focus:ring-0">
+                    <SelectValue placeholder="Category" />
+                  </SelectTrigger>
+                  <SelectContent className="border-2 border-border rounded-none bg-card">
+                    <SelectItem value="ALL" className="text-xs font-bold uppercase">All Fields</SelectItem>
+                    <SelectItem value="ACTION" className="text-xs font-bold uppercase">Action</SelectItem>
+                    <SelectItem value="ACTOR" className="text-xs font-bold uppercase">Actor</SelectItem>
+                    <SelectItem value="IP_ADDRESS" className="text-xs font-bold uppercase">IP Address</SelectItem>
+                    <SelectItem value="STATUS" className="text-xs font-bold uppercase">Status</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="relative flex-1 sm:flex-initial">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input 
+                    placeholder="Search logs..." 
+                    className="pl-9 h-10 w-full sm:w-[200px] lg:w-[300px] border-2 border-border bg-card rounded-none focus-visible:ring-0 focus-visible:border-primary text-xs font-bold"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                </div>
               </div>
+            </div>
+
+            <div className="px-3 py-1 bg-transparent border-2 border-primary flex-shrink-0">
+              <p className="text-[10px] font-black text-foreground uppercase tracking-wider">
+                Total Records: {filteredLogs.length}
+              </p>
+            </div>
           </div>
           
           <div className="overflow-auto max-h-[calc(100vh-280px)] min-h-[400px]">
             <table className="w-full text-left border-collapse relative">
-              <thead className="sticky top-0 z-10">
+              <thead className="sticky top-0 z-10 shadow-sm">
                 <tr className="border-b-2 border-border bg-card">
                   <th className="p-4 text-xs font-bold uppercase tracking-widest text-foreground">Timestamp</th>
                   <th className="p-4 text-xs font-bold uppercase tracking-widest text-foreground">Action</th>
@@ -133,7 +180,7 @@ export function AuditLogs() {
                       </div>
                     </td>
                   </tr>
-                ) : logs.length === 0 ? (
+                ) : filteredLogs.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="p-12 text-center border-b border-border bg-muted/5">
                       <div className="flex flex-col items-center justify-center text-muted-foreground">
@@ -143,7 +190,7 @@ export function AuditLogs() {
                     </td>
                   </tr>
                 ) : (
-                  logs.map((log) => (
+                  filteredLogs.map((log) => (
                     <tr key={log.id} className="border-b-2 border-border/50 bg-background transition-colors hover:bg-primary/5">
                       <td className="p-4 align-middle whitespace-nowrap">
                         <div className="flex items-center gap-2">

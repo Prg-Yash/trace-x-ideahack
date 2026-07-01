@@ -47,7 +47,7 @@ const RISK_PIE: Record<string, string> = {
   CRITICAL: "#EF4444",
   HIGH: "#F59E0B",
   MEDIUM: "#EAB308",
-  LOW: "#10B981",
+  LOW: "#a3e635",
 };
 
 const PATTERN_BAR_COLORS = ["#a3e635", "#06B6D4", "#F59E0B", "#EF4444", "#8B5CF6"];
@@ -132,7 +132,7 @@ export function DashboardContent() {
     return Object.entries(pCounts).map(([pattern, count]) => ({ pattern, count }));
   }, [alertsData]);
 
-  const recentAlerts = (alertsData?.alerts ?? []).slice(0, 8).map((a, i) => ({
+  const recentAlerts = (alertsData?.alerts ?? []).slice(0, 20).map((a, i) => ({
     id: i + 1,
     alertId: `ALT-${a.account_id}`,
     accountId: i + 1,
@@ -312,9 +312,9 @@ export function DashboardContent() {
                     Daily volume vs flagged transactions — last 14 days
                   </p>
                 </div>
-                <div className="flex items-center gap-4 text-[11px]" style={{ color: "rgba(19, 5, 55, 0.5)" }}>
-                  <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5" style={{ backgroundColor: "#06B6D4" }} />Volume</span>
-                  <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5" style={{ backgroundColor: "#EF4444" }} />Flagged</span>
+                <div className="flex items-center gap-4 text-[11px] font-bold uppercase tracking-widest text-foreground/80">
+                  <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: "#130537" }} />VOLUME</span>
+                  <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: "#EF4444" }} />FLAGGED</span>
                 </div>
               </div>
             </div>
@@ -323,20 +323,20 @@ export function DashboardContent() {
                 <AreaChart data={trend} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
                   <defs>
                     <linearGradient id="volGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#06B6D4" stopOpacity={0.18} />
-                      <stop offset="95%" stopColor="#06B6D4" stopOpacity={0} />
+                      <stop offset="5%" stopColor="#130537" stopOpacity={0.15} />
+                      <stop offset="95%" stopColor="#130537" stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="flagGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#EF4444" stopOpacity={0.18} />
+                      <stop offset="5%" stopColor="#EF4444" stopOpacity={0.15} />
                       <stop offset="95%" stopColor="#EF4444" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                   <XAxis dataKey="date" tick={{ fill: TICK_COLOR, fontSize: 10 }} interval={1} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill: TICK_COLOR, fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={LABEL_STYLE} formatter={(val: number, name: string) => [val.toLocaleString(), name]} />
-                  <Area type="monotone" dataKey="volume" stroke="#06B6D4" strokeWidth={2} fill="url(#volGrad)" name="Volume" dot={false} />
-                  <Area type="monotone" dataKey="flagged" stroke="#EF4444" strokeWidth={2} fill="url(#flagGrad)" name="Flagged" dot={false} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={LABEL_STYLE} cursor={{ stroke: "rgba(19, 5, 55, 0.1)", strokeWidth: 1, strokeDasharray: "4 4" }} formatter={(val: number, name: string) => [val.toLocaleString(), name]} />
+                  <Area type="monotone" dataKey="volume" stroke="#130537" strokeWidth={2} fill="url(#volGrad)" name="Volume" dot={false} activeDot={{ r: 4, strokeWidth: 0, fill: "#130537" }} />
+                  <Area type="monotone" dataKey="flagged" stroke="#EF4444" strokeWidth={2} fill="url(#flagGrad)" name="Flagged" dot={false} activeDot={{ r: 4, strokeWidth: 0, fill: "#EF4444" }} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -356,7 +356,7 @@ export function DashboardContent() {
             <div className="p-4">
               <ResponsiveContainer width="100%" height={170}>
                 <PieChart>
-                  <Pie data={riskDist} dataKey="count" nameKey="level" cx="50%" cy="50%" innerRadius={48} outerRadius={72} strokeWidth={0} paddingAngle={2}>
+                  <Pie data={riskDist} dataKey="count" nameKey="level" cx="50%" cy="50%" innerRadius={45} outerRadius={80} stroke="#130537" strokeWidth={2} paddingAngle={0}>
                     {riskDist.map((item) => (
                       <Cell key={item.level} fill={RISK_PIE[item.level] ?? "#06B6D4"} />
                     ))}
@@ -368,11 +368,11 @@ export function DashboardContent() {
                 {riskDist.map((item) => (
                   <div key={item.level} className="flex items-center justify-between text-[12px]">
                     <div className="flex items-center gap-2">
-                      <span className="h-2 w-2 flex-shrink-0" style={{ backgroundColor: RISK_PIE[item.level] }} />
-                      <span style={{ color: "rgba(19, 5, 55, 0.5)" }}>{item.level}</span>
+                      <span className="h-3 w-3 flex-shrink-0" style={{ backgroundColor: RISK_PIE[item.level], border: "2px solid #130537" }} />
+                      <span className="font-black tracking-widest text-[10px] uppercase" style={{ color: "var(--foreground)" }}>{item.level}</span>
                     </div>
-                    <span className="font-bold tabular-nums" style={{ color: "var(--foreground)" }}>
-                      {item.count} <span style={{ color: "rgba(19, 5, 55, 0.4)" }} className="font-normal">({item.percentage}%)</span>
+                    <span className="font-black tabular-nums" style={{ color: "var(--foreground)" }}>
+                      {item.count} <span style={{ color: "rgba(19, 5, 55, 0.4)" }} className="font-bold">({item.percentage}%)</span>
                     </span>
                   </div>
                 ))}
@@ -397,14 +397,14 @@ export function DashboardContent() {
             </div>
             <div className="p-4">
               <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={fraudPatterns} margin={{ top: 0, right: 10, left: -20, bottom: 0 }} barSize={20}>
+                <BarChart data={fraudPatterns} margin={{ top: 0, right: 10, left: -20, bottom: 0 }} barSize={36}>
                   <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
-                  <XAxis dataKey="pattern" tick={{ fill: TICK_COLOR, fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: TICK_COLOR, fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={LABEL_STYLE} />
+                  <XAxis dataKey="pattern" tick={{ fill: TICK_COLOR, fontSize: 10, fontWeight: "bold" }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: TICK_COLOR, fontSize: 11, fontWeight: "bold" }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={LABEL_STYLE} cursor={{ fill: "rgba(19, 5, 55, 0.05)" }} />
                   <Bar dataKey="count" radius={[0, 0, 0, 0]} name="Count">
                     {fraudPatterns.map((_, i) => (
-                      <Cell key={i} fill={PATTERN_BAR_COLORS[i % PATTERN_BAR_COLORS.length]} />
+                      <Cell key={i} fill="#a3e635" stroke="#130537" strokeWidth={2} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -433,34 +433,34 @@ export function DashboardContent() {
                 </span>
               </Link>
             </div>
-            <div className="space-y-0 max-h-[224px] overflow-y-auto">
-              {recentAlerts.slice(0, 6).map((alert) => {
-                const s = SEV[alert.severity];
-                const barColor = alert.severity === "CRITICAL" ? "#EF4444" : alert.severity === "HIGH" ? "#F59E0B" : alert.severity === "MEDIUM" ? "#EAB308" : "#10B981";
+            <div className="space-y-0 max-h-[250px] overflow-auto">
+              {recentAlerts.map((alert) => {
+                const barColor = alert.severity === "CRITICAL" ? "#EF4444" : alert.severity === "HIGH" ? "#F59E0B" : alert.severity === "MEDIUM" ? "#EAB308" : "#a3e635";
                 return (
                   <div
                     key={alert.id}
-                    className="flex items-center justify-between px-4 py-3 cursor-pointer transition-colors"
+                    className="flex items-center justify-between px-4 py-3 cursor-pointer transition-colors hover:bg-primary/5 group"
                     style={{
-                      borderLeft: `3px solid ${barColor}`,
+                      borderLeft: `4px solid ${barColor}`,
                       borderBottom: "1px solid var(--border)",
                     }}
-                    onMouseEnter={(e) => (e.currentTarget as HTMLDivElement).style.backgroundColor = "rgba(19, 5, 55, 0.03)"}
-                    onMouseLeave={(e) => (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent"}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="min-w-0">
-                        <p className="text-[13px] font-semibold truncate" style={{ color: "var(--foreground)" }}>{alert.accountName}</p>
-                        <p className="text-[11px] truncate" style={{ color: "rgba(19, 5, 55, 0.4)" }}>{alert.pattern}</p>
+                        <p className="text-[13px] font-black truncate text-foreground group-hover:text-primary transition-colors">{alert.accountName}</p>
+                        <p className="text-[11px] font-bold truncate text-foreground/60">{alert.pattern}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2.5 ml-2 flex-shrink-0">
-                      <span className="text-[11px] font-mono tabular-nums" style={{ color: "rgba(19, 5, 55, 0.5)" }}>
+                      <span className="text-[11px] font-black font-mono tabular-nums text-foreground/80">
                         ₹{(alert.amount / 1000).toFixed(0)}K
                       </span>
-                      <Badge variant="outline" className={`text-[10px] px-1.5 py-0 border ${s?.badge}`}>
+                      <span
+                        className="inline-flex items-center justify-center px-1.5 py-0.5 text-[9px] font-black border-2 bg-transparent uppercase tracking-wider"
+                        style={{ borderColor: barColor, color: barColor }}
+                      >
                         {alert.severity}
-                      </Badge>
+                      </span>
                     </div>
                   </div>
                 );
@@ -490,15 +490,14 @@ export function DashboardContent() {
               </span>
             </Link>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-[13px]">
-              <thead>
-                <tr style={{ borderBottom: "1px solid var(--border)", backgroundColor: "rgba(19, 5, 55, 0.02)" }}>
-                  {["// Customer / Account", "// Branch", "// ID", "// Risk", "// Alerts", "// Exposure"].map((h, i) => (
+          <div className="overflow-auto max-h-[350px]">
+            <table className="w-full text-left border-collapse relative text-[13px]">
+              <thead className="sticky top-0 z-10 shadow-sm">
+                <tr className="border-b-2 border-border bg-card">
+                  {["Customer / Account", "Branch", "ID", "Risk", "Alerts", "Exposure"].map((h, i) => (
                     <th
                       key={i}
-                      className={`px-5 py-2.5 text-[10px] font-bold uppercase tracking-widest ${i >= 3 ? "text-right" : "text-left"}`}
-                      style={{ color: "rgba(19, 5, 55, 0.35)" }}
+                      className={`p-4 text-[10px] font-bold uppercase tracking-widest text-foreground ${i >= 3 ? "text-right" : "text-left"}`}
                     >
                       {h}
                     </th>
@@ -511,43 +510,38 @@ export function DashboardContent() {
                   return (
                     <tr
                       key={acc.id}
-                      className="transition-colors"
-                      style={{ borderBottom: "1px solid var(--border)" }}
-                      onMouseEnter={(e) => (e.currentTarget as HTMLTableRowElement).style.backgroundColor = "rgba(19, 5, 55, 0.03)"}
-                      onMouseLeave={(e) => (e.currentTarget as HTMLTableRowElement).style.backgroundColor = "transparent"}
+                      className="border-b border-border transition-colors hover:bg-primary/5 group"
                     >
-                      <td className="px-5 py-3">
+                      <td className="p-4 align-middle">
                         <Link href="/accounts">
                           <span
-                            className="font-semibold cursor-pointer transition-colors hover:opacity-80"
-                            style={{ color: "#a3e635" }}
+                            className="font-black cursor-pointer transition-colors text-foreground group-hover:text-primary"
                           >
                             {acc.accountName}
                           </span>
                         </Link>
                       </td>
-                      <td className="px-5 py-3 text-[12px] font-medium" style={{ color: "var(--foreground)" }}>
+                      <td className="p-4 align-middle text-[12px] font-bold text-foreground/80 uppercase">
                         {acc.branchName}
                       </td>
-                      <td className="px-5 py-3 font-mono text-[11px]" style={{ color: "rgba(19, 5, 55, 0.4)" }}>
+                      <td className="p-4 align-middle font-mono text-[11px] font-bold text-foreground/60">
                         {acc.accountNumber}
                       </td>
-                      <td className="px-5 py-3 text-right">
+                      <td className="p-4 align-middle text-right">
                         <span
-                          className="inline-flex items-center justify-center h-6 w-10 text-[11px] font-black"
+                          className="inline-flex items-center justify-center h-6 w-10 text-[11px] font-black border-2 bg-transparent"
                           style={{
-                            border: `1px solid ${riskColor}40`,
-                            backgroundColor: `${riskColor}10`,
+                            borderColor: riskColor,
                             color: riskColor,
                           }}
                         >
                           {acc.riskScore}
                         </span>
                       </td>
-                      <td className="px-5 py-3 text-right tabular-nums" style={{ color: "rgba(19, 5, 55, 0.5)" }}>
+                      <td className="p-4 align-middle text-right font-bold text-foreground/70 tabular-nums">
                         {acc.alertCount}
                       </td>
-                      <td className="px-5 py-3 text-right font-black tabular-nums" style={{ color: "var(--foreground)" }}>
+                      <td className="p-4 align-middle text-right font-black tabular-nums text-foreground group-hover:text-primary transition-colors">
                         ₹{(acc.totalSuspiciousAmount / 1_000_000).toFixed(2)}M
                       </td>
                     </tr>
