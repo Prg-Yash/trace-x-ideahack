@@ -104,7 +104,21 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
             
             # Send real email
             email = user.get("email", "unknown@trace-x.com")
-            if settings.SMTP_EMAIL and settings.SMTP_PASSWORD and email and "@" in email:
+            
+            if settings.RESEND_API_KEY and email and "@" in email:
+                try:
+                    import resend
+                    resend.api_key = settings.RESEND_API_KEY
+                    r = resend.Emails.send({
+                        "from": settings.FROM_EMAIL,
+                        "to": email,
+                        "subject": "Your TRACE-X Login OTP",
+                        "html": f"<p>Your 6-digit TRACE-X Login OTP is <strong>{otp}</strong>.</p><p>It expires in 10 minutes.</p>"
+                    })
+                    print(f"Real email sent to {email} via Resend")
+                except Exception as e:
+                    print(f"Failed to send real email to {email} via Resend: {e}")
+            elif settings.SMTP_EMAIL and settings.SMTP_PASSWORD and email and "@" in email:
                 try:
                     msg = EmailMessage()
                     msg.set_content(f"Your 6-digit TRACE-X Login OTP is {otp}. It expires in 10 minutes.")
@@ -112,13 +126,17 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
                     msg['From'] = settings.SMTP_EMAIL
                     msg['To'] = email
                     
-                    server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+                    if settings.SMTP_PORT == 465:
+                        server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT)
+                    else:
+                        server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT)
+                        server.starttls()
                     server.login(settings.SMTP_EMAIL, settings.SMTP_PASSWORD)
                     server.send_message(msg)
                     server.quit()
-                    print(f"Real email sent to {email}")
+                    print(f"Real email sent to {email} via SMTP")
                 except Exception as e:
-                    print(f"Failed to send real email to {email}: {e}")
+                    print(f"Failed to send real email to {email} via SMTP: {e}")
             else:
                 print(f"\n{'='*50}\n[MOCK EMAIL SERVICE] Sent to: {email}\nSubject: Your TRACE-X Login OTP\nBody: Your 6-digit OTP is {otp}. It expires in 10 minutes.\n{'='*50}\n")
             
