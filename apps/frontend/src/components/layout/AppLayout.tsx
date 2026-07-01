@@ -11,7 +11,7 @@ const navSections = [
   {
     label: "Intelligence",
     items: [
-      { name: "Home", href: "/", icon: Home },
+      { name: "Home", href: "~/", icon: Home },
       { name: "Dashboard", href: "/dashboard", icon: BarChart3 },
       { name: "Alerts", href: "/alerts", icon: AlertTriangle, badge: "Live" },
     ],
