@@ -1,62 +1,51 @@
-import { FraudApi } from "../generated/src/apis/FraudApi";
-import { getAuthenticatedConfig } from "../auth/interceptor";
+import { sdkFetch } from "../auth/interceptor";
 import { validateRequiredString } from "../utils/validators";
+import { AlertsResponse, Alert } from "../types";
 
 /**
- * Fetch pre-generated fraud alerts from the G-TEN platform.
+ * Retrieve a paginated list of active alerts from the system.
  *
- * @param limit Optional maximum number of alerts to fetch (default: 200)
- * @param branchCode Optional branch code to filter alerts by
+ * @param limit Maximum number of alerts to return (default: 200)
+ * @returns Paginated alerts response containing total count and alert array
  */
-export async function getAlerts(limit?: number, branchCode?: string): Promise<any> {
-    const config = getAuthenticatedConfig();
-    const api = new FraudApi(config);
-    return await api.getAlertsQuickApiV1AlertsQuickGet({
-        limit,
-        branchCode,
+export async function getAlerts(limit: number = 200): Promise<AlertsResponse> {
+    return await sdkFetch<AlertsResponse>(`/sdk/v1/alerts?limit=${limit}`, {
+        method: "GET",
     });
 }
 
 /**
- * Get detailed information for a specific alert.
+ * Alias for `getAlerts` with a more descriptive name.
  *
- * @param alertId The unique identifier of the alert
+ * @param limit Maximum number of alerts to return (default: 200)
+ * @returns Paginated alerts response
  */
-export async function getAlertDetails(alertId: string): Promise<any> {
+export async function listAlerts(limit: number = 200): Promise<AlertsResponse> {
+    return getAlerts(limit);
+}
+
+/**
+ * Retrieve details for a specific alert by ID.
+ *
+ * @param alertId The alert identifier (e.g. "ALT-ACC001-LAYERING")
+ * @returns Alert details including evidence and audit data
+ */
+export async function getAlert(alertId: string): Promise<Alert> {
     const validAlertId = validateRequiredString(alertId, "alertId");
-    const config = getAuthenticatedConfig();
-    const api = new FraudApi(config);
-    return await api.getAlertDetailsApiV1AlertsAlertIdGet({
-        alertId: validAlertId,
+    return await sdkFetch<Alert>(`/sdk/v1/alerts/${encodeURIComponent(validAlertId)}`, {
+        method: "GET",
     });
 }
 
 /**
- * Update the investigation status of a specific alert.
+ * Create a custom alert (placeholder for future SDK backend extension).
  *
- * @param alertId The unique identifier of the alert
- * @param status The new status (e.g., "investigating", "under_review", "closed")
+ * @param payload Alert creation details
+ * @returns Created alert data
  */
-export async function updateAlertStatus(alertId: string, status: string): Promise<any> {
-    const validAlertId = validateRequiredString(alertId, "alertId");
-    const validStatus = validateRequiredString(status, "status");
-    const config = getAuthenticatedConfig();
-    const api = new FraudApi(config);
-    return await api.updateAlertStatusApiV1AlertsAlertIdStatusPatch({
-        alertId: validAlertId,
-        alertStatusUpdate: { status: validStatus },
-    });
-}
-
-/**
- * Get the live transaction alert feed.
- *
- * @param limit Optional maximum number of items to fetch (default: 30)
- */
-export async function getLiveFeed(limit?: number): Promise<any> {
-    const config = getAuthenticatedConfig();
-    const api = new FraudApi(config);
-    return await api.getLiveFeedApiV1FeedGet({
-        limit,
+export async function createAlert(payload: any): Promise<any> {
+    return await sdkFetch(`/sdk/v1/alerts`, {
+        method: "POST",
+        body: JSON.stringify(payload),
     });
 }

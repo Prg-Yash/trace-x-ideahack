@@ -6,9 +6,8 @@
  * This module is the ONLY auth surface exported from the SDK.
  */
 
-import { AuthApi } from "../generated/src/apis/AuthApi";
-import { Configuration } from "../generated/src/runtime";
 import { setToken, setBaseUrl, clearToken, getBaseUrl } from "./tokenStore";
+import { sdkFetch } from "./interceptor";
 import { AuthCredentials, AuthResult } from "../types";
 
 /**
@@ -20,28 +19,29 @@ import { AuthCredentials, AuthResult } from "../types";
  *
  * @example
  * ```ts
- * await authenticate({ username: "admin", password: "password" });
+ * await authenticate({ apiKey: "key", clientId: "id" });
  * ```
  */
-export async function authenticate(credentials: AuthCredentials): Promise<AuthResult> {
+export async function authenticate(credentials: { apiKey: string, clientId: string, baseUrl?: string }): Promise<AuthResult> {
     if (credentials.baseUrl) {
         setBaseUrl(credentials.baseUrl);
     }
 
-    const config = new Configuration({ basePath: getBaseUrl() });
-    const authApi = new AuthApi(config);
-
-    const response = await authApi.loginForAccessTokenApiV1AuthLoginPost({
-        username: credentials.username,
-        password: credentials.password,
+    const response = await sdkFetch<{ access_token: string }>("/sdk/v1/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+            apiKey: credentials.apiKey,
+            clientId: credentials.clientId
+        }),
+        public: true // Do not require existing token
     });
 
     // Store the token internally — the caller never sees or manages it
-    setToken(response.accessToken);
+    setToken(response.access_token);
 
     return {
-        username: (response.user as Record<string, string>)?.["username"] ?? credentials.username,
-        role: (response.user as Record<string, string>)?.["role"] ?? "unknown",
+        username: credentials.clientId,
+        role: "sdk_client",
         authenticated: true,
     };
 }

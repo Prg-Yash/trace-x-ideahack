@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str  # Must be set in .env — no insecure default
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7 # 1 week
-    OPEN_ROUTER_API_KEY: str | None = None
+    SCRIPT_API_ENDPOINT: str = "https://generativelanguage.googleapis.com/v1beta"
     SMTP_EMAIL: str | None = None
     SMTP_PASSWORD: str | None = None
 

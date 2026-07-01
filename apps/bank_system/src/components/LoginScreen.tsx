@@ -1,14 +1,17 @@
 import React, { useState } from 'react';
-import { authenticate } from '@gten/sdk';
-import { Shield, Lock, AlertCircle, Loader2 } from 'lucide-react';
+import { GTenSDK, GTenAuthError } from '@gten/sdk';
+import { Shield, AlertCircle, Loader2, Key } from 'lucide-react';
+
+// Shared SDK instance — created on login and used across the entire app
+export let sdk: GTenSDK | null = null;
 
 interface LoginScreenProps {
   onLogin: () => void;
 }
 
 export function LoginScreen({ onLogin }: LoginScreenProps) {
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('password');
+  const [apiKey, setApiKey] = useState('demo-key-123');
+  const [clientId, setClientId] = useState('demo-client-456');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -18,12 +21,18 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
     setLoading(true);
 
     try {
-      // Use the @gten/sdk to authenticate
-      await authenticate({ username, password });
-      onLogin(); // Signal to App that we're logged in
+      // Initialize and authenticate the SDK
+      sdk = new GTenSDK({ apiKey, clientId });
+      await sdk.authenticate();
+      onLogin();
     } catch (err: any) {
       console.error('Login error:', err);
-      setError(err.message || 'Failed to authenticate. Please check your credentials.');
+      if (err instanceof GTenAuthError) {
+        setError('Authentication failed. Please check your API Key and Client ID.');
+      } else {
+        setError(err.message || 'Failed to connect to G-TEN. Please try again.');
+      }
+      sdk = null;
     } finally {
       setLoading(false);
     }
@@ -38,7 +47,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
             <Shield size={28} />
           </div>
           <h2>Trace-X Portal</h2>
-          <p>Bank System Authentication</p>
+          <p>External Client Integration</p>
         </div>
 
         {error && (
@@ -50,25 +59,25 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
 
         <form onSubmit={handleLogin}>
           <div className="input-group">
-            <label htmlFor="username">Email or Username</label>
+            <label htmlFor="clientId">Client ID</label>
             <input
-              id="username"
+              id="clientId"
               type="text"
               className="glass-input"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
               required
             />
           </div>
 
           <div className="input-group mb-6">
-            <label htmlFor="password">Password</label>
+            <label htmlFor="apiKey">API Key</label>
             <input
-              id="password"
+              id="apiKey"
               type="password"
               className="glass-input"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
               required
             />
           </div>
@@ -78,8 +87,8 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
             className="btn btn-primary w-full"
             disabled={loading}
           >
-            {loading ? <Loader2 className="animate-spin" size={18} /> : <Lock size={18} />}
-            {loading ? 'Authenticating...' : 'Secure Login'}
+            {loading ? <Loader2 className="animate-spin" size={18} /> : <Key size={18} />}
+            {loading ? 'Authenticating...' : 'Connect to Trace-X'}
           </button>
         </form>
         

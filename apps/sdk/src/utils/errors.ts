@@ -2,7 +2,7 @@
  * G-TEN SDK — Error Classes
  *
  * Provides clean, typed error classes for SDK consumers.
- * @internal helpers are not exported from the public SDK interface.
+ * These are exported from the public SDK interface.
  */
 
 /**
@@ -37,5 +37,18 @@ export class GTenValidationError extends Error {
     constructor(field: string, message: string) {
         super(`Validation error on "${field}": ${message}`);
         this.name = "GTenValidationError";
+    }
+}
+
+/**
+ * Thrown when a network-level error occurs (DNS failure, timeout, connection refused, etc.).
+ */
+export class GTenNetworkError extends Error {
+    public readonly cause: Error | undefined;
+
+    constructor(message: string = "A network error occurred while connecting to the G-TEN API.", cause?: Error) {
+        super(message);
+        this.name = "GTenNetworkError";
+        this.cause = cause;
     }
 }

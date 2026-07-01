@@ -1,22 +1,18 @@
-import { ChatApi } from "../generated/src/apis/ChatApi";
-import { HistoryTurn } from "../generated/src/models/HistoryTurn";
-import { getAuthenticatedConfig } from "../auth/interceptor";
+import { sdkFetch } from "../auth/interceptor";
 import { validateRequiredString } from "../utils/validators";
 
 /**
- * Send a message to the G-TEN AI Investigator Copilot.
+ * Send a natural-language message to the G-TEN Copilot AI assistant.
+ * The Copilot uses Graph-RAG to answer questions about accounts, alerts, and fraud patterns.
  *
- * @param message The user query or message to the copilot
- * @param history The conversational history for context
+ * @param message The natural language query
+ * @returns The AI-generated response text
  */
-export async function chat(message: string, history: HistoryTurn[] = []): Promise<any> {
+export async function chat(message: string): Promise<string> {
     const validMessage = validateRequiredString(message, "message");
-    const config = getAuthenticatedConfig();
-    const api = new ChatApi(config);
-    return await api.handleChatApiV1ChatPost({
-        chatRequest: {
-            message: validMessage,
-            history,
-        },
+    const response = await sdkFetch<{ response: string }>(`/sdk/v1/chat`, {
+        method: "POST",
+        body: JSON.stringify({ message: validMessage }),
     });
+    return response.response;
 }

@@ -1,16 +1,26 @@
-// Public G-TEN SDK Authentication APIs
+// ──────────────────────────────────────────────────────────────────────────────
+// G-TEN SDK — Public API
+// ──────────────────────────────────────────────────────────────────────────────
+
+// The recommended entry point — class-based SDK client
+export { GTenSDK } from "./client";
+
+// Standalone functional APIs (for backward compatibility)
 export { authenticate, signOut } from "./auth/authenticate";
 
-// Public G-TEN SDK Wrapper APIs
+// Wrapper functions (can be used standalone after calling authenticate())
 export * from "./wrappers/alerts";
 export * from "./wrappers/fraud";
-export * from "./wrappers/investigation";
-export * from "./wrappers/data";
 export * from "./wrappers/analytics";
 export * from "./wrappers/copilot";
 
-// Public G-TEN SDK Custom Errors
-export { GTenAuthError, GTenApiError, GTenValidationError } from "./utils/errors";
+// Error classes
+export {
+    GTenAuthError,
+    GTenApiError,
+    GTenValidationError,
+    GTenNetworkError,
+} from "./utils/errors";
 
-// Public G-TEN SDK Type Definitions
+// Type definitions
 export * from "./types";

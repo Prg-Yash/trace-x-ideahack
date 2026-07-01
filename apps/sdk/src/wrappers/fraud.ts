@@ -1,134 +1,83 @@
-import { FraudApi } from "../generated/src/apis/FraudApi";
-import { NarrativeRequest } from "../generated/src/models/NarrativeRequest";
-import { getAuthenticatedConfig } from "../auth/interceptor";
+import { sdkFetch } from "../auth/interceptor";
 import { validateRequiredString } from "../utils/validators";
+import { RiskScoreResult, TraceResult, NarrativeRequest } from "../types";
 
 /**
- * Get the risk score of a given account.
+ * Analyze a transaction/account for fraud risk.
+ * Runs the full ML scoring pipeline and returns a comprehensive risk assessment.
  *
- * @param accountId The account identifier
+ * @param accountId The account identifier to analyze
+ * @returns Full risk score result including detections, combined score, and risk level
  */
-export async function getScore(accountId: string): Promise<any> {
+export async function analyzeTransaction(accountId: string): Promise<RiskScoreResult> {
     const validAccountId = validateRequiredString(accountId, "accountId");
-    const config = getAuthenticatedConfig();
-    const api = new FraudApi(config);
-    return await api.getScoreApiV1ScoreAccountIdGet({
-        accountId: validAccountId,
+    return await sdkFetch<RiskScoreResult>(`/sdk/v1/analyze-transaction?account_id=${validAccountId}`, {
+        method: "POST",
     });
 }
 
 /**
- * Get the full fraud explanation for an account.
+ * Get the risk score for a specific account.
+ * Alias for `analyzeTransaction` — provided for semantic clarity.
  *
  * @param accountId The account identifier
+ * @returns Risk score result
  */
-export async function getFullExplanation(accountId: string): Promise<any> {
+export async function getRiskScore(accountId: string): Promise<RiskScoreResult> {
+    return analyzeTransaction(accountId);
+}
+
+/**
+ * Run fraud detection on a specific account.
+ * Executes ML-based pattern detection (layering, smurfing, dormancy, KYC mismatch).
+ *
+ * @param accountId The account identifier
+ * @returns Detection results with flagged patterns and confidence scores
+ */
+export async function detectFraud(accountId: string): Promise<RiskScoreResult> {
     const validAccountId = validateRequiredString(accountId, "accountId");
-    const config = getAuthenticatedConfig();
-    const api = new FraudApi(config);
-    return await api.getFullExplanationApiV1ExplainAccountIdGet({
-        accountId: validAccountId,
+    return await sdkFetch<RiskScoreResult>(`/sdk/v1/detect-fraud?account_id=${validAccountId}`, {
+        method: "POST",
     });
 }
 
 /**
- * Get the dormant account explanation.
+ * Generate an AI-powered narrative commentary / investigation briefing for an account.
  *
  * @param accountId The account identifier
+ * @param request Optional narrative generation parameters (focused pattern, SHAP features, etc.)
+ * @returns Generated narrative text and supporting evidence
  */
-export async function getDormantExplanation(accountId: string): Promise<any> {
+export async function generateCommentary(accountId: string, request: NarrativeRequest = {}): Promise<any> {
     const validAccountId = validateRequiredString(accountId, "accountId");
-    const config = getAuthenticatedConfig();
-    const api = new FraudApi(config);
-    return await api.getDormantExplanationApiV1ExplainAccountIdDormantGet({
-        accountId: validAccountId,
+    return await sdkFetch(`/sdk/v1/generate-commentary?account_id=${validAccountId}`, {
+        method: "POST",
+        body: JSON.stringify(request),
     });
 }
 
 /**
- * Get the smurfing/layering pattern explanation.
+ * Trace the flow of funds from/to a specific account.
+ * Reveals layering chains, round-trip transfers, and connected entities.
  *
  * @param accountId The account identifier
+ * @param hint Optional hint to focus tracing (e.g. "layering", "round_trip")
+ * @returns Trace result including detected chains and amounts
  */
-export async function getSmurfingExplanation(accountId: string): Promise<any> {
+export async function trackFunds(accountId: string, hint?: string): Promise<TraceResult> {
     const validAccountId = validateRequiredString(accountId, "accountId");
-    const config = getAuthenticatedConfig();
-    const api = new FraudApi(config);
-    return await api.getSmurfingExplanationApiV1ExplainAccountIdSmurfingGet({
-        accountId: validAccountId,
+    let url = `/sdk/v1/track-funds?account_id=${validAccountId}`;
+    if (hint) {
+        url += `&hint=${encodeURIComponent(hint)}`;
+    }
+    return await sdkFetch<TraceResult>(url, {
+        method: "GET",
     });
 }
 
 /**
- * Get the KYC mismatch pattern explanation.
- *
- * @param accountId The account identifier
+ * @deprecated Use `analyzeTransaction()` or `getRiskScore()` instead.
  */
-export async function getKycExplanation(accountId: string): Promise<any> {
-    const validAccountId = validateRequiredString(accountId, "accountId");
-    const config = getAuthenticatedConfig();
-    const api = new FraudApi(config);
-    return await api.getKycExplanationApiV1ExplainAccountIdKycGet({
-        accountId: validAccountId,
-    });
-}
-
-/**
- * Get the KYC details mismatch explanation.
- *
- * @param accountId The account identifier
- */
-export async function getKycMismatchExplanation(accountId: string): Promise<any> {
-    const validAccountId = validateRequiredString(accountId, "accountId");
-    const config = getAuthenticatedConfig();
-    const api = new FraudApi(config);
-    return await api.getKycMismatchExplanationApiV1ExplainKycMismatchAccountIdGet({
-        accountId: validAccountId,
-    });
-}
-
-/**
- * Generate narrative report details for an account.
- *
- * @param accountId The account identifier
- * @param request The narrative generation request parameters
- */
-export async function getNarrative(accountId: string, request: NarrativeRequest): Promise<any> {
-    const validAccountId = validateRequiredString(accountId, "accountId");
-    const config = getAuthenticatedConfig();
-    const api = new FraudApi(config);
-    return await api.getNarrativeApiV1NarrativeAccountIdPost({
-        accountId: validAccountId,
-        narrativeRequest: request,
-    });
-}
-
-/**
- * Retrieve the summary report for a given account.
- *
- * @param accountId The account identifier
- */
-export async function getReport(accountId: string): Promise<any> {
-    const validAccountId = validateRequiredString(accountId, "accountId");
-    const config = getAuthenticatedConfig();
-    const api = new FraudApi(config);
-    return await api.getReportApiV1ReportAccountIdGet({
-        accountId: validAccountId,
-    });
-}
-
-/**
- * Trace funds flow from/to a specific account.
- *
- * @param accountId The account identifier
- * @param hint Optional search hint
- */
-export async function getTrace(accountId: string, hint?: string): Promise<any> {
-    const validAccountId = validateRequiredString(accountId, "accountId");
-    const config = getAuthenticatedConfig();
-    const api = new FraudApi(config);
-    return await api.getTraceApiV1TraceAccountIdGet({
-        accountId: validAccountId,
-        hint,
-    });
+export async function getScore(accountId: string): Promise<RiskScoreResult> {
+    return analyzeTransaction(accountId);
 }

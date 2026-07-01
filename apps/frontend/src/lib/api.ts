@@ -380,10 +380,11 @@ export const fetchAuditTrail = (alertId: string) =>
 /** Chatbot Graph-RAG Endpoint */
 export type ChatHistoryTurn = { role: "user" | "ai"; content: string };
 
-export const sendChatMessage = (message: string, history: ChatHistoryTurn[] = []) =>
-  apiFetch<{ response: string }>("/chat", {
+export const sendChatMessage = (message: string, history: ChatHistoryTurn[] = [], signal?: AbortSignal) =>
+  apiFetch<{ response: string }>("/chat/", {
     method: "POST",
     body: JSON.stringify({ message, history }),
+    signal,
   });
 
 export const fetchSystemAuditLogs = (limit = 100, skip = 0) =>

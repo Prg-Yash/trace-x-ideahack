@@ -1,11 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  getStats, 
-  getAlerts, 
-  getScore, 
-  chat, 
-  signOut 
-} from '@gten/sdk';
+import { sdk } from './LoginScreen';
 import { 
   ShieldAlert, 
   Activity, 
@@ -13,7 +7,6 @@ import {
   LogOut, 
   Search,
   AlertTriangle,
-  CheckCircle,
   BarChart,
   User,
   Send,
@@ -42,12 +35,13 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
   }, []);
 
   const loadDashboardData = async () => {
+    if (!sdk) return;
     try {
-      const statsData = await getStats();
+      const statsData = await sdk.getStats();
       setStats(statsData);
       
-      const alertsData = await getAlerts(10);
-      setAlerts(alertsData || []);
+      const alertsData = await sdk.listAlerts(10);
+      setAlerts(alertsData?.alerts || []);
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
     }
@@ -55,11 +49,11 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
 
   const handleScoreAccount = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!accountId) return;
+    if (!accountId || !sdk) return;
     
     setScoring(true);
     try {
-      const res = await getScore(accountId);
+      const res = await sdk.analyzeTransaction(accountId);
       setScoreResult(res);
     } catch (err) {
       console.error('Failed to get score:', err);
@@ -70,7 +64,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
 
   const handleChatSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatMessage.trim() || chatting) return;
+    if (!chatMessage.trim() || chatting || !sdk) return;
 
     const userMsg = chatMessage;
     setChatMessage('');
@@ -78,7 +72,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     setChatting(true);
 
     try {
-      const response = await chat(userMsg);
+      const response = await sdk.chat(userMsg);
       setChatHistory(prev => [...prev, { role: 'ai', content: response }]);
     } catch (err) {
       setChatHistory(prev => [...prev, { role: 'ai', content: 'Sorry, I encountered an error connecting to G-TEN.' }]);
@@ -88,7 +82,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
   };
 
   const handleLogout = () => {
-    signOut();
+    if (sdk) sdk.signOut();
     onLogout();
   };
 
@@ -134,7 +128,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
               <h3 className="text-muted text-sm m-0">Active Alerts</h3>
               <ShieldAlert size={18} className="text-warning" />
             </div>
-            <h2 style={{ fontSize: '2rem', margin: 0 }}>{stats?.total_alerts?.toLocaleString() || '---'}</h2>
+            <h2 style={{ fontSize: '2rem', margin: 0 }}>{stats?.total_flagged?.toLocaleString() || '---'}</h2>
           </div>
           
           <div className="glass-card p-6">
@@ -143,7 +137,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
               <AlertTriangle size={18} className="text-danger" />
             </div>
             <h2 style={{ fontSize: '2rem', margin: 0 }}>
-              {stats ? ((stats.total_alerts / Math.max(stats.total_transactions, 1)) * 100).toFixed(2) : '--'}%
+              {stats ? ((stats.total_flagged / Math.max(stats.total_transactions, 1)) * 100).toFixed(2) : '--'}%
             </h2>
           </div>
         </div>

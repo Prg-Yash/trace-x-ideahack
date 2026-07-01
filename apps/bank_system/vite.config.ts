@@ -9,6 +9,7 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: ['@gten/sdk'],
+    force: true,
   },
   build: {
     commonjsOptions: {

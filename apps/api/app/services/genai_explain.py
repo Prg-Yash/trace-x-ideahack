@@ -1,14 +1,17 @@
-import os
+"""
+genai_explain.py — Narrative Explainability Service
+
+Model: gemma-4-31b-it (Google Gemma 4 31B Instruction-Tuned)
+  - Google's open-weight instruction-tuned model via Gemini API
+  - Excellent for structured narrative generation and professional writing
+  - Runs via the same GEMINI_API_KEY — no OpenRouter dependency
+"""
+
 import json
-import httpx
 from typing import Dict, List, Optional
+from app.core.config import settings
 
-# Configure OpenRouter
-API_KEY = os.getenv("OPEN_ROUTER_API_KEY", "")
-API_ENDPOINT = os.getenv("SCRIPT_API_ENDPOINT", "https://openrouter.ai/api/v1")
-
-if not API_KEY:
-    print("Warning: OPEN_ROUTER_API_KEY not set. Narratives will fail.")
+NARRATIVE_MODEL = "gemma-4-31b-it"
 
 
 async def generate_narrative(
@@ -18,8 +21,9 @@ async def generate_narrative(
     shap_features: Optional[List[Dict]] = None,
 ) -> Dict:
     """Generate a rich, accurate AI briefing using all available context."""
-    if not API_KEY:
-        return {"error": "OPEN_ROUTER_API_KEY not configured"}
+    api_key = settings.GEMINI_API_KEY
+    if not api_key:
+        return {"error": "GEMINI_API_KEY not configured"}
 
     try:
         # ── Build pattern context block ──────────────────────────────────────
@@ -80,30 +84,28 @@ RULES:
 """
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{API_ENDPOINT}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {API_KEY}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": "openai/gpt-4o-mini",
-                        "messages": [{"role": "user", "content": prompt}],
-                    },
-                    timeout=30.0,
-                )
-                response.raise_for_status()
-                data = response.json()
-                text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-                if not text:
-                    raise ValueError("Empty response from OpenRouter")
+            from google import genai
+            from google.genai import types
+
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model=NARRATIVE_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    max_output_tokens=512,
+                ),
+            )
+            text = response.text.strip()
+            if not text:
+                raise ValueError("Empty response from Gemini")
+
         except Exception as api_err:
-            print(f"OpenRouter API error: {api_err}")
+            print(f"Gemini Narrative API error: {api_err}")
             return {"error": str(api_err)}
 
         return {"account_id": account_id, "narrative": text}
+
     except Exception as e:
         print(f"AI Explain error: {e}")
         return {"error": str(e)}
-

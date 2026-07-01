@@ -30,15 +30,44 @@ Always use DISTINCT when returning accounts to avoid duplicates.
 Always limit results to a reasonable amount (e.g., LIMIT 50) if not specified.
 """
 
+SUMMARY_INSTRUCTION = """
+You are G-TEN, a senior AML Intelligence System used by financial crime investigators at a Financial Intelligence Unit (FIU).
+Your responses are read by professional investigators, compliance officers, and senior management.
+
+STRICT RESPONSE FORMAT — follow these rules exactly, every time:
+
+1. **Executive Summary** (first line, always bold):
+   One sentence summarizing the total count and key finding.
+   Example: "**Intelligence Query returned 15 accounts flagged for SMURFING, all classified as HIGH risk.**"
+
+2. **Findings Table** (always present when there is account/alert data):
+   Use a proper markdown table. Include all relevant columns from the data (Account ID, Risk Category, Severity, Pattern Type, etc.).
+   Format account IDs in backticks.
+
+3. **## Key Observations** section:
+   2–4 concise bullet points highlighting risk concentrations, patterns, or anomalies.
+
+4. **## Recommended Actions** section:
+   1–2 specific, actionable bullet points (e.g., "Initiate STR filing", "Freeze account pending review", "Escalate to Neo4j graph traversal for network mapping").
+
+TONE & STYLE RULES:
+- Professional, precise, and direct — like a briefing for a senior RBI examiner or judge.
+- Never use phrases like "Based on the data", "I found that", "Here is a summary".
+- Never mention the words JSON, Cypher, database query, or raw data.
+- Use `##` for section headers, `**bold**` for key terms.
+"""
+
+
 def _format_history(history: list[dict]) -> str:
     """Format conversation history into a readable string for the LLM."""
     if not history:
         return ""
     lines = []
     for turn in history:
-        role = "User" if turn.get("role") == "user" else "Assistant"
+        role = "Investigator" if turn.get("role") == "user" else "G-TEN"
         lines.append(f"{role}: {turn.get('content', '')}")
     return "\n".join(lines)
+
 
 def generate_cypher(user_query: str, history: list[dict] | None = None) -> str:
     history_str = _format_history(history or [])
@@ -53,6 +82,7 @@ def generate_cypher(user_query: str, history: list[dict] | None = None) -> str:
     cypher = cypher.replace("```cypher", "").replace("```", "").strip()
     return cypher
 
+
 def execute_cypher(cypher_query: str):
     driver = get_db()
     with driver.session() as session:
@@ -63,49 +93,42 @@ def execute_cypher(cypher_query: str):
         except Exception as e:
             return {"error": str(e)}
 
+
 def summarize_results(user_query: str, db_results: list, history: list[dict] | None = None) -> str:
     if not db_results:
-        return "I couldn't find any relevant data in the database for your query."
-    
+        return "**No results found.** The G-TEN database returned no records matching your query. The pattern may not exist or the accounts may not yet be flagged."
+
     # If the database returns an error
     if isinstance(db_results, dict) and "error" in db_results:
-        return f"There was an error querying the database: {db_results['error']}"
+        return f"**Database Error:** `{db_results['error']}`"
 
     history_str = _format_history(history or [])
     history_block = f"Prior conversation for context:\n{history_str}\n\n" if history_str else ""
 
-    summary_instruction = """
-    You are an AI assistant for an AML investigator. 
-    You have just queried the database on behalf of the user.
-    I will provide the conversation history, the user's latest question, and the raw database results.
-    Write a concise, professional summary answering the current question based ONLY on the data provided.
-    Use the conversation history only to understand the context of the current question.
-    Do not mention the words 'JSON' or 'Cypher'. Just give the insights in clear markdown with bullet points or tables where useful.
-    """
-    
     prompt = (
         f"{history_block}"
-        f"Current User Question: {user_query}\n\n"
-        f"Database Results:\n{json.dumps(db_results, default=str)[:4000]}\n\n"
-        f"Summarize the findings concisely:"
+        f"Investigator Query: {user_query}\n\n"
+        f"Query Results ({len(db_results)} records):\n{json.dumps(db_results, default=str)[:4000]}\n\n"
+        f"Generate a professional AML intelligence report:"
     )
-    
-    response = call_gemini(prompt, system_instruction=summary_instruction)
+
+    response = call_gemini(prompt, system_instruction=SUMMARY_INSTRUCTION)
     return response
+
 
 def process_chat_query(user_query: str, history: list[dict] | None = None) -> str:
     """
     End-to-end Graph-RAG process with conversation context:
     1. Text + History -> Cypher
     2. Cypher -> Neo4j execution
-    3. Results + History -> Natural Language Summary
+    3. Results + History -> Professional AML Intelligence Report
     """
     cypher_query = generate_cypher(user_query, history)
-    
+
     if not cypher_query or "Error" in cypher_query:
         return f"Failed to generate a valid database query. {cypher_query}"
 
     db_results = execute_cypher(cypher_query)
-    
+
     final_answer = summarize_results(user_query, db_results, history)
     return final_answer

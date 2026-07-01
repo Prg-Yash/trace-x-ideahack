@@ -79,6 +79,12 @@ app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat")
 app.include_router(branches.router, prefix=f"{settings.API_V1_STR}")
 app.include_router(admin.router, prefix=f"{settings.API_V1_STR}/admin")
 
+# SDK routers
+from app.routers.sdk import auth as sdk_auth
+from app.routers.sdk import operations as sdk_operations
+app.include_router(sdk_auth.router, prefix="/sdk/v1/auth")
+app.include_router(sdk_operations.router, prefix="/sdk/v1")
+
 
 @app.get("/")
 def read_root():
