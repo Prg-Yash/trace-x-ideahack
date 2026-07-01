@@ -112,8 +112,7 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
                     msg['From'] = settings.SMTP_EMAIL
                     msg['To'] = email
                     
-                    server = smtplib.SMTP('smtp.gmail.com', 587)
-                    server.starttls()
+                    server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
                     server.login(settings.SMTP_EMAIL, settings.SMTP_PASSWORD)
                     server.send_message(msg)
                     server.quit()
