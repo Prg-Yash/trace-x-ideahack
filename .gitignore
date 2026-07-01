@@ -59,3 +59,4 @@ apps/ai-ml/data/processed/
 # Note: All Python scripts (*.py), models (*.pkl, *.json), and evaluation scripts
 # (judge_demo_v2.py, evaluate_financial_impact.py, stress_test_noisy_data.py, etc.)
 # are explicitly KEPT in git for judges and team collaboration.
+apps/frontend/.env.desktop
