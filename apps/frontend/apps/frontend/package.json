@@ -1,5 +1,0 @@
-{
-  "dependencies": {
-    "@trace-x/frontend": "file:../.."
-  }
-}

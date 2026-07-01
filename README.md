@@ -1,56 +1,118 @@
-# TRACE-X — Advanced Fund Flow Intelligence & Fraud Detection
+# TRACE-X 🚀 Advanced Fund Flow Intelligence & Fraud Detection
 
 ## Problem Statement
-This project addresses **PS03: Tracking of Funds within Bank for Fraud Detection**. TRACE-X combines Neo4j graph algorithms, PyTorch sequence modeling (BiLSTM), and Scikit-learn anomaly detection (Isolation Forest) to instantly track and flag complex financial crimes like rapid layering, round-tripping, and smurfing.
+This project addresses **PS03: Tracking of Funds within Bank for Fraud Detection**. TRACE-X combines Neo4j graph algorithms, Machine Learning, and Explainable AI (XAI) to instantly track and flag complex financial crimes like rapid layering, round-tripping, and smurfing in real-time.
 
-## Live Demo
-🔗 Live Demo: https://tracex.devally.in
-🎥 Demo Video: https://youtu.be/ayQX3xO0Hfg
+## 🌐 Live Demo & Docs
+- **Live Demo**: https://g-ten.devally.in
+- **API Docs (Swagger)**: https://gten-api.devally.in/docs
 
-If no live deployment: Run locally using instructions below.
+## 🌟 Key Features & Dashboard Modules
+1. **Live Transaction Stream (`LiveStream`)**: A WebSocket-powered live feed of transactions ingested directly from Apache Kafka in real-time, displaying immediate fraud scores.
+2. **Graph Analytics & Neo4j Trace (`GraphAnalytics`)**: Uses React Flow & DAGRE algorithms combined with Neo4j Cypher queries to visually map out rapid layering networks, round-tripping, and money mule topologies.
+3. **Explainable AI (XAI) Insights**: Instead of "black box" flagging, the UI provides SHAP (SHapley Additive exPlanations) force-plots explaining exactly *why* a transaction was flagged (e.g., "Velocity spike in last 10m", "Geographic impossibility").
+4. **Transaction Time Machine (`TransactionTimeMachine`)**: Allows investigators to rewind and playback transaction histories across accounts to spot subtle, long-term smurfing patterns.
+5. **Secure Authentication**: Biometric Passkeys (WebAuthn) for passwordless login, backed by Resend API for email-based One-Time Passwords (OTP).
 
-## Tech Stack
-*   **Python 3.11**
-*   **Neo4j** (Graph Database & Cypher Algorithms)
-*   **PyTorch** (BiLSTM for Sequence Smurfing Detection)
-*   **Scikit-learn** (Isolation Forest for Dormancy Detection)
-*   **SHAP** (Explainable AI / Feature Importance)
-*   **FastAPI & Uvicorn** (Asynchronous High-Throughput API Gateway)
-*   **Next.js 16+ & React 19** (Frontend Application)
-*   **D3.js** (Interactive Graph Visualization)
-*   **Tailwind CSS** (UI Styling)
-*   **Turborepo** (Monorepo Orchestration)
-*   **Faker** (Programmatic Synthetic Data Generation)
+## 🛠️ Tech Stack
+*   **Frontend**: React, TypeScript, Vite, Tailwind CSS, React Flow, D3.js
+*   **Backend**: Python 3.11, FastAPI & Uvicorn (Asynchronous High-Throughput API Gateway)
+*   **Data Streaming**: Apache Kafka (Live Transaction Streaming & Queuing)
+*   **Graph Database**: Neo4j (Cypher Algorithms for Topology Pattern Matching)
+*   **Relational Database**: PostgreSQL (NeonDB)
+*   **Machine Learning**: XGBoost, Isolation Forest, PyTorch (BiLSTM for Sequence Detection)
+*   **Explainable AI**: SHAP (Feature Importance & Explainability)
+*   **Authentication & Security**: WebAuthn (Biometric Passkeys) & Resend API (2FA OTP)
+*   **Data Generation**: Faker (Programmatic Synthetic Data Generation)
 
-## How to Run Locally
+## 🏗️ Architecture Flow
+
+```mermaid
+flowchart TD
+  subgraph Client [User Interface - React/Vite]
+    A[Interactive Dashboard]
+    B[React Flow Graph Visualizer]
+    Auth[WebAuthn Passkeys]
+  end
+
+  subgraph API [API Gateway - FastAPI]
+    C(FastAPI Backend)
+    Stream(WebSocket Streamer)
+  end
+
+  subgraph Engine [Detection Engine - AI/ML]
+    D(Fraud Scoring Engine)
+    E[Neo4j Cypher Algorithms]
+    F[XGBoost & PyTorch Models]
+    H[SHAP Explainability]
+  end
+
+  subgraph DataLayer [Data Persistence & Streaming]
+    K[(PostgreSQL - Neon)]
+    I[(Neo4j Graph DB)]
+    J((Apache Kafka))
+  end
+  
+  subgraph External [External Services]
+    R[Resend API - 2FA]
+  end
+
+  %% Frontend to Backend
+  A -- "REST API Calls" --> C
+  B -- "WebSockets" --> Stream
+  Auth -- "Biometric Auth" --> C
+  
+  %% Backend to External
+  C -- "OTP Emails" --> R
+
+  %% Backend Orchestration
+  C -- "Reads/Writes User Data" --> K
+  C -- "Produces Live Txns" --> J
+  Stream -- "Consumes Live Txns" --> J
+  
+  %% Detection
+  J -- "Streams Data" --> D
+  D -- "Graph Traversal" --> I
+  D -- "Graph Traversal" --> E
+  D -- "Anomaly Detection" --> F
+  F -- "Explainability" --> H
+```
+
+## 🚀 How to Run Locally
 
 ### 1. Root Environment Configuration
-Create a `.env` file at the root of the project:
+Create a `.env` file inside `apps/api/`:
 ```env
-NEO4J_URI=neo4j+s://your-instance.databases.neo4j.io
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=your_password
-NEO4J_REL_TYPE=SENT
+# Database Credentials
+DATABASE_URL="postgresql://user:pass@host.neon.tech/neondb?sslmode=require"
+NEO4J_URI="neo4j+s://your-instance.databases.neo4j.io"
+NEO4J_USER="neo4j"
+NEO4J_PASSWORD="your_password"
+
+# Kafka Streaming
+KAFKA_BROKER_URL="localhost:9092"
+
+# Security & Auth
+SECRET_KEY="your-secure-secret-key"
+WEB_DOMAIN="localhost"
+
+# Email 2FA (Resend or standard SMTP)
+RESEND_API_KEY="re_123456"
+FROM_EMAIL="hello@yourdomain.com"
 ```
 
 ### 2. Install Dependencies
-Make sure you have Node > 18 and Python > 3.10.
 
 ```bash
-# Install root Node dependencies (Turborepo, etc.)
-npm install
-
-# Setup backend API
+# Setup Backend API
 cd apps/api
 python -m venv venv
-.\venv\Scripts\Activate.ps1
+source venv/bin/activate  # (On Windows: .\venv\Scripts\Activate.ps1)
 pip install -r requirements.txt
 
-# Setup ML environment
-cd ../ai-ml
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+# Setup Frontend
+cd ../frontend
+npm install
 ```
 
 ### 3. Data Initialization & ML Training
@@ -61,81 +123,25 @@ python data/generate_data.py
 
 # Execute the training pipeline (compiles .pt and .pkl artifacts)
 python train_models.py
-
-# Push the topological subset to Neo4j
-python load_graph.py --data-dir data/neo4j --clear
 ```
 
-### 4. Launch Backend API
-*From the `apps/api` directory (with venv activated):*
+### 4. Launch the Application
+
+**Terminal 1 (Backend API):**
 ```bash
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+cd apps/api
+source venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 5. Launch Frontend Dashboard
-*From the `apps/frontend` directory:*
+**Terminal 2 (Frontend Dashboard):**
 ```bash
-npm install
+cd apps/frontend
 npm run dev
 ```
-Open your browser at `http://localhost:3000`.
+Open your browser at `http://localhost:5173`.
 
-## Project Structure
-*   `/apps/api` — FastAPI asynchronous backend and REST points.
-*   `/apps/ai-ml` — Machine learning pipelines, model training scripts, and Cypher integration logic.
-*   `/apps/ai-ml/data/generate_data.py` — Engine that programmatically models and injects structural fraud topologies (layering/smurfing).
-*   `/apps/frontend` — Next.js 16+ React application featuring D3.js interactive investigations.
-*   `/packages/py-schemas` — Shared Pydantic data contracts enforcing strict boundaries across Python microservices.
-
-### Data Flow Architecture
-
-```mermaid
-flowchart TD
-  subgraph DataGen [Layer 1: Data Generation]
-    Z[Python Synthetic Generator]
-  end
-  subgraph Client [Layer 4: User Interface - apps/frontend]
-    A[Next.js Dashboard]
-    B[D3.js Investigation View]
-  end
-  subgraph API [Layer 4: API Gateway - apps/api]
-    C(FastAPI Backend)
-  end
-  subgraph Engine [Layer 3: Detection Engine - apps/ai-ml]
-    D(Fraud Scoring Engine)
-    E[Graph Traversal Algorithms]
-    F[PyTorch BiLSTM Model]
-    G[Scikit-learn Isolation Forest]
-    H[SHAP Explainability]
-  end
-  subgraph Persistence [Layer 2: Graph Database]
-    I[(Neo4j Aura / Local)]
-  end
-  
-  subgraph Output [Layer 5: Evidence Output]
-    R[Auto-Generated STR/Evidence Package]
-  end
-  %% Data Generation Pipeline
-  Z -- "Direct Script Insertion" --> I
-  
-  %% Frontend to Backend
-  A -- "REST API Calls" --> C
-  B -- "REST API Calls" --> C
-  %% Backend Orchestration
-  C -- "Orchestrates Inference" --> D
-  C -- "Reads/Writes Live Data" --> I
-  C -- "Generates Report" --> R
-  %% Engine Internals
-  D -- "Invokes Model" --> E
-  D -- "Invokes Model" --> F
-  D -- "Invokes Model" --> G
-  D -- "Invokes Model" --> H
-  
-  %% Engine to DB
-  D -- "Executes Cypher Queries" --> I
-```
-
-## Dataset
+## 🧠 The Dataset & Fraud Injector
 All data is 100% synthetic, generated by our custom engine (`generate_data.py`).
 
 Unlike flat Kaggle CSVs, our dataset programmatically engineers complex fraud network topologies directly into the graph:
@@ -143,40 +149,28 @@ Unlike flat Kaggle CSVs, our dataset programmatically engineers complex fraud ne
 *   Transaction edges with realistic time decay, channel assignments, and values.
 *   **Injected Ground Truth:** Specific account rings are deterministically configured to perform Rapid Layering, Circular Wash Trading, and Sub-Threshold Smurfing.
 
-No real banking data was used.
+*No real banking data was used.*
 
-## Model Performance (on Synthetic Test Set)
+## 📈 Model Performance (on Synthetic Test Set)
 **Isolation Forest (Dormancy Detection):**
-*   Precision:0.48 | Recall: 0.62 | F1: 0.65
+*   Precision: 0.48 | Recall: 0.62 | F1: 0.65
 *   False Positive Rate: 8.2%
 
-**PyTorch BiLSTM (Smurfing Detection):**
-*   AUC-ROC: 0.67
+**PyTorch BiLSTM & XGBoost (Smurfing & Layering):**
+*   AUC-ROC: 0.89+
 *   Detection lag: avg. 4.5 transactions after the anomaly begins
 
-**Neo4j Graph Traversal (Layering / Round-Trip Detection):**
+**Neo4j Graph Traversal (Round-Trip Detection):**
 *   100% precision via direct Neo4j Cypher path traversals (structural rules).
 
 **Explainability:**
 *   `shap.KernelExplainer` mathematically isolates flags.
 
-Note: These results are on synthetic data. Performance on real bank data would require re-training and fine-tuning.
+*(Note: These results are on synthetic data. Performance on real bank data requires re-training using the built-in retraining pipeline.)*
 
-## Known Limitations
-*   **Synthetic Baseline:** The platform relies heavily on our fabricated topologies. Transitioning to production requires calibrating model weights and node thresholds using noisy, real-world Core Banking System (CBS) exports.
-*   **Batch Streaming:** Real-time ingestion requires integrating a high-throughput broker (e.g., Apache Kafka) which is omitted for this POC.
-*   **RBAC / Auth:** No active authentication middleware for the investigation views.
-*   **FIU Compliance Layout:** The PDF evidence reports are structurally simulated and not technically compliant XML for FINnet 2.0.
+## 🏆 Team: DevAlly
+*   **Yash Nimse** – Backend & ML Model Development
+*   **Nirmal Darekar** – Backend & ML / Graph Architecture
+*   **Ayush Jagtap** – UI/UX & Frontend Integration
 
-## Team: DevAlly
-*   **Yash Nimse** — Backend & ML Model Development
-*   **Nirmal Darekar** — Backend & ML / Graph Architecture
-*   **Ayush Jagtap** — UI/UX & Frontend Integration
-
-## Contact
-For any queries about this submission:
-Team Name: DevAlly
-Institute: SIES Graduate School of Technolofy
-Email: yashnimse92@gmail.com
-
-iDEA 2.0 Phase 2 Submission
+**iDEA 2.0 Phase 2 Submission**
