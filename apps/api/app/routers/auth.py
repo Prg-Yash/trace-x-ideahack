@@ -9,8 +9,6 @@ from app.core.security import verify_password, create_access_token, ACCESS_TOKEN
 from app.core.deps import get_current_user, require_roles
 from app.db.session import get_pg_conn
 import random
-import smtplib
-from email.message import EmailMessage
 from app.core.config import settings
 from app.core.audit import log_system_event
 import pyotp
@@ -104,22 +102,19 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
             
             # Send real email
             email = user.get("email", "unknown@trace-x.com")
-            if settings.SMTP_EMAIL and settings.SMTP_PASSWORD and email and "@" in email:
+            if settings.RESEND_API_KEY and email and "@" in email:
                 try:
-                    msg = EmailMessage()
-                    msg.set_content(f"Your 6-digit TRACE-X Login OTP is {otp}. It expires in 10 minutes.")
-                    msg['Subject'] = 'Your TRACE-X Login OTP'
-                    msg['From'] = settings.SMTP_EMAIL
-                    msg['To'] = email
-                    
-                    server = smtplib.SMTP('smtp.gmail.com', 587)
-                    server.starttls()
-                    server.login(settings.SMTP_EMAIL, settings.SMTP_PASSWORD)
-                    server.send_message(msg)
-                    server.quit()
-                    print(f"Real email sent to {email}")
+                    import resend
+                    resend.api_key = settings.RESEND_API_KEY
+                    r = resend.Emails.send({
+                        "from": settings.FROM_EMAIL,
+                        "to": email,
+                        "subject": "Your TRACE-X Login OTP",
+                        "html": f"<p>Your 6-digit TRACE-X Login OTP is <strong>{otp}</strong>.</p><p>It expires in 10 minutes.</p>"
+                    })
+                    print(f"Real email sent to {email} via Resend")
                 except Exception as e:
-                    print(f"Failed to send real email to {email}: {e}")
+                    print(f"Failed to send real email to {email} via Resend: {e}")
             else:
                 print(f"\n{'='*50}\n[MOCK EMAIL SERVICE] Sent to: {email}\nSubject: Your TRACE-X Login OTP\nBody: Your 6-digit OTP is {otp}. It expires in 10 minutes.\n{'='*50}\n")
             

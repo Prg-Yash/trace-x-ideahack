@@ -10,6 +10,7 @@ ROOT_ENV = ROOT_DIR / ".env"
 class Settings(BaseSettings):
     PROJECT_NAME: str = "G-TEN  "
     API_V1_STR: str = "/api/v1"
+    WEB_DOMAIN: str = "localhost" # Override in .env with 'gten.devally.in'
 
     NEO4J_URI: str
     NEO4J_USER: str
@@ -20,8 +21,8 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7 # 1 week
     OPEN_ROUTER_API_KEY: str | None = None
-    SMTP_EMAIL: str | None = None
-    SMTP_PASSWORD: str | None = None
+    RESEND_API_KEY: str | None = None
+    FROM_EMAIL: str = "noreply@trace-x.com"
 
     model_config = SettingsConfigDict(env_file=(str(ROOT_ENV), str(API_ENV)), extra="ignore")
 

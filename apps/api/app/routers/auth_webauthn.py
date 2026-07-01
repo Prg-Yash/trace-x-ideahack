@@ -20,11 +20,13 @@ from app.routers.auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
 from app.core.audit import log_system_event
 from datetime import timedelta, datetime
 
+from app.core.config import settings
+
 router = APIRouter(tags=["webauthn"])
 
-RP_ID = "localhost" # For production, this should be the actual domain
+RP_ID = settings.WEB_DOMAIN
 RP_NAME = "TRACE-X"
-ORIGIN = "http://localhost:5173"
+ORIGIN = f"https://{settings.WEB_DOMAIN}" if settings.WEB_DOMAIN != "localhost" else "http://localhost:5173"
 
 # In a real app, this challenge should be stored in Redis with an expiration.
 # For this ideahack, we will store it temporarily in a global dict keyed by user_id.

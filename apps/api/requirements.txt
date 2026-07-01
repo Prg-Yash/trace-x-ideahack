@@ -20,3 +20,4 @@ python-jose[cryptography]
 python-multipart
 pyotp
 webauthn
+resend
