@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { fetchInvestigators, createInvestigator, updateInvestigatorPassword, deleteInvestigator, fetchBranches, unlockInvestigator } from "@/lib/api";
+import { fetchInvestigators, createInvestigator, updateInvestigatorPassword, deleteInvestigator, fetchBranches, unlockInvestigator, updateInvestigator } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -50,6 +50,11 @@ export default function UserManagement() {
   // Delete states
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
+
+  // Edit states
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editUserData, setEditUserData] = useState<any>({});
 
   useEffect(() => {
     loadInvestigators();
@@ -141,6 +146,42 @@ export default function UserManagement() {
       await loadInvestigators();
     } catch (err: any) {
       toast.error(err.message || "Failed to unlock investigator");
+    }
+  };
+
+  const handleEdit = (userToEdit: any) => {
+    setSelectedInvestigator(userToEdit);
+    setEditUserData({
+      username: userToEdit.username || "",
+      full_name: userToEdit.full_name || "",
+      email: userToEdit.email || "",
+      role: userToEdit.role || "",
+      branch_id: userToEdit.branch_id ? userToEdit.branch_id.toString() : "",
+      is_active: userToEdit.is_active !== false,
+      password: ""
+    });
+    setEditModalOpen(true);
+  };
+
+  const handleUpdateUser = async () => {
+    if (!selectedInvestigator) return;
+    
+    setEditLoading(true);
+    try {
+      const payload: any = { ...editUserData };
+      if (payload.branch_id) payload.branch_id = parseInt(payload.branch_id);
+      else delete payload.branch_id;
+      if (!payload.password) delete payload.password;
+      
+      await updateInvestigator(selectedInvestigator.id, payload);
+      toast.success("User updated successfully!");
+      setEditModalOpen(false);
+      setSelectedInvestigator(null);
+      await loadInvestigators();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update user");
+    } finally {
+      setEditLoading(false);
     }
   };
 
@@ -307,6 +348,31 @@ export default function UserManagement() {
                             <Trash2 className="h-3.5 w-3.5 md:mr-2" />
                             <span className="hidden md:inline">Delete</span>
                           </Button>
+                          {user?.role === "Admin" && (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEdit(inv)}
+                                className="text-[10px] uppercase font-bold tracking-widest text-primary hover:text-primary hover:bg-primary/10 h-8 px-3 border-2 border-transparent hover:border-primary/50 rounded-none"
+                                title="Edit User"
+                              >
+                                Edit
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedInvestigator({ id: inv.id, username: inv.username });
+                                  setPasswordModalOpen(true);
+                                }}
+                                className="text-[10px] uppercase font-bold tracking-widest text-primary hover:text-primary hover:bg-primary/10 h-8 px-3 border-2 border-transparent hover:border-primary/50 rounded-none"
+                                title="Change Password"
+                              >
+                                Password
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -475,6 +541,91 @@ export default function UserManagement() {
         </DialogContent>
       </Dialog>
 
+      {/* ── EDIT USER MODAL ── */}
+      <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
+        <DialogContent className="rounded-none p-0 overflow-hidden border-2 border-border bg-card max-w-lg">
+          <DialogHeader className="px-6 pt-6 pb-4 border-b-2 border-border bg-muted/50">
+            <DialogTitle className="text-lg font-black uppercase tracking-widest text-primary">
+              Edit User: <span className="text-foreground">{selectedInvestigator?.username}</span>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="p-6 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-foreground">Full Name</label>
+                <Input
+                  value={editUserData.full_name || ""}
+                  onChange={(e) => setEditUserData({ ...editUserData, full_name: e.target.value })}
+                  className="rounded-none border-2 border-border h-10 px-3 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-primary text-foreground"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-foreground">Username</label>
+                <Input
+                  value={editUserData.username || ""}
+                  onChange={(e) => setEditUserData({ ...editUserData, username: e.target.value })}
+                  className="rounded-none border-2 border-border h-10 px-3 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-primary text-foreground"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-foreground">Email Address</label>
+                <Input
+                  value={editUserData.email || ""}
+                  onChange={(e) => setEditUserData({ ...editUserData, email: e.target.value })}
+                  className="rounded-none border-2 border-border h-10 px-3 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-primary text-foreground"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-foreground">Role</label>
+                <Select value={editUserData.role || ""} onValueChange={(val) => setEditUserData({ ...editUserData, role: val })}>
+                  <SelectTrigger className="w-full rounded-none border-2 border-border h-10 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-primary text-foreground">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-none border-2 border-border bg-card">
+                    <SelectItem value="Investigator">Investigator</SelectItem>
+                    <SelectItem value="Branch Manager">Branch Manager</SelectItem>
+                    <SelectItem value="Admin">Admin</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-foreground">Branch</label>
+                <Select value={editUserData.branch_id || ""} onValueChange={(val) => setEditUserData({ ...editUserData, branch_id: val })}>
+                  <SelectTrigger className="w-full rounded-none border-2 border-border h-10 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-primary text-foreground">
+                    <SelectValue placeholder="No Branch" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-none border-2 border-border bg-card">
+                    {branches.map(b => (
+                      <SelectItem key={b.id} value={b.id.toString()}>
+                        {b.name} ({b.branch_code})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-foreground">Update Password</label>
+                <Input
+                  type="password"
+                  value={editUserData.password || ""}
+                  onChange={(e) => setEditUserData({ ...editUserData, password: e.target.value })}
+                  placeholder="••••••••"
+                  className="rounded-none border-2 border-border h-10 px-3 bg-transparent text-[13px] transition-colors focus-visible:ring-0 focus-visible:border-primary text-foreground"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <Button variant="outline" onClick={() => setEditModalOpen(false)} className="rounded-none text-[11px] font-black uppercase tracking-widest border-2 border-border text-foreground">
+                Cancel
+              </Button>
+              <Button onClick={handleUpdateUser} disabled={editLoading} className="rounded-none text-[11px] font-black uppercase tracking-widest hover:brightness-110 bg-primary text-primary-foreground">
+                {editLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                Save Changes
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
