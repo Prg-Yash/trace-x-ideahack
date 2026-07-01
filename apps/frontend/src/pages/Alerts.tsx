@@ -537,7 +537,7 @@ export default function Alerts() {
                           <StatusBadge status={alertStatus} />
                         </td>
                         <td className="px-4 py-3 text-right font-mono text-[12px] font-semibold">
-                          ${alert.amount.toLocaleString()}
+                          ₹{alert.amount.toLocaleString()}
                         </td>
                         <td className="px-4 py-3 text-right text-[11px]">
                           {alertAssignedTo ? (

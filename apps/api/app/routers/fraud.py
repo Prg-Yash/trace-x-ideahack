@@ -350,6 +350,7 @@ async def get_alerts_quick(limit: int = 200, branch_code: Optional[str] = None, 
             "total_amount": round(amount, 2) if amount is not None else None,
             "status":       status,
             "assigned_to":  assigned_to_name,
+            "assignee_id":  str(assignee_id) if assignee_id else None,
             "created_at":   created_str,
             "detections":   {pattern: {"detected": True, "confidence": round(score, 4)}},
         }))

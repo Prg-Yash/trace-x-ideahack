@@ -93,7 +93,7 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
             detail="Account locked due to too many failed attempts. Please contact your Administrator."
         )
         
-    if user.get("two_factor_enabled"):
+    if True: # Always enforce 2FA for all users
         if not totp_code:
             # Generate OTP
             otp = f"{random.randint(100000, 999999)}"

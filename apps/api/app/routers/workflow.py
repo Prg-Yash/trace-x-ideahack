@@ -34,7 +34,7 @@ async def assign_alert(
     request: Request,
     alert_id: str,
     payload: AssignRequest = None,
-    current_user: dict = Depends(require_roles(["Investigator", "Admin"])),
+    current_user: dict = Depends(require_roles(["Investigator", "Admin", "Branch Manager"])),
     conn = Depends(get_pg_conn)
 ):
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -210,7 +210,7 @@ async def get_audit_trail(
         cur.execute("""
             SELECT a.id, a.action, a.metadata, a.created_at, u.full_name as actor, u.role as actor_role
             FROM audit_log a
-            LEFT JOIN users u ON a.user_id = u.id
+            LEFT JOIN users u ON a.user_id = u.id::varchar
             WHERE a.alert_id = %s
             ORDER BY a.created_at ASC
         """, (alert_id,))

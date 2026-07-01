@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
-import { BASE } from "../lib/api";
+import { BASE, draftStr } from "../lib/api";
 import ReactFlow, {
   Background, Controls, MiniMap,
   type Node, type Edge, type NodeProps, type EdgeProps,
@@ -28,6 +28,8 @@ import { buildNetworkFromGraph, getGraphById } from "@/data/investigationData";
 import { useInvestigation } from "@/context/InvestigationContext";
 import { useTrace, useExplain, useScore, useAlertsQuick } from "@/hooks/useApi";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAuth } from "@/context/AuthContext";
+import { toast } from "sonner";
 
 /* ─────────────────────────────────────────────────────────────
    PALETTE
@@ -469,12 +471,23 @@ function GraphInner() {
   const { zoom } = useViewport();
   const [location, navigate] = useLocation();
   const { investigation, clearInvestigation } = useInvestigation();
+  const { user } = useAuth();
 
   const routeMatch = location.match(/^\/graph\/([^/]+)/);
   const routeAlertId = routeMatch ? decodeURIComponent(routeMatch[1]) : null;
   const routeAccountIdFromUrl = routeAlertId
     ? (routeAlertId.startsWith("ALT-") ? routeAlertId.split("-")[1] : routeAlertId)
     : null;
+
+  const handleEscalate = async () => {
+    if (!investigation) return;
+    try {
+      await draftStr(investigation.alertId);
+      navigate(`/evidence/${investigation.alertId}`);
+    } catch (e) {
+      toast.error("Failed to start STR draft. You may not be assigned to this case.");
+    }
+  };
 
   // URL-pinned pattern — e.g. "ALT-ACC_00002-layering" → "LAYERING"
   // This is the AUTHORITATIVE pattern for this investigation page.
@@ -1128,6 +1141,23 @@ function GraphInner() {
             </div>
           ))}
           <div style={{ flex: 1 }} />
+          {!["PENDING_APPROVAL", "FIU_SUBMITTED", "FILED", "CLOSED"].includes((investigation.investigationStatus || "").toUpperCase()) && (
+            <button
+              onClick={handleEscalate}
+              style={{
+                display: "flex", alignItems: "center", gap: 5,
+                padding: "4px 10px", borderRadius: 3, fontSize: 10, cursor: "pointer",
+                border: `1px solid #450a0a`,
+                background: "#fca5a5",
+                color: "#450a0a",
+                letterSpacing: "0.04em",
+                fontWeight: "bold",
+                textTransform: "uppercase"
+              }}
+            >
+              <AlertTriangle size={11} /> Escalate to FIU Evidence Case
+            </button>
+          )}
           <button
             onClick={handleBackToGlobalGraph}
             style={{
@@ -1205,7 +1235,9 @@ function GraphInner() {
                       </p>
                     </div>
                     {alertsLoading && <div style={{ color: TEXT_MUT, fontSize: 10, padding: 10, textAlign: "center" }}>Loading active alerts...</div>}
-                    {(liveAlertsQuick?.alerts || []).map((alert: any) => {
+                    {(liveAlertsQuick?.alerts || [])
+                      .filter((alert: any) => user?.role !== "Investigator" || alert.assignee_id === user?.id)
+                      .map((alert: any) => {
                       const isSelected = traceQueryId === alert.account_id;
                       const riskColor = (alert.tier || alert.risk_level) === "CRITICAL" ? "#ef4444" : "#f59e0b";
                       return (

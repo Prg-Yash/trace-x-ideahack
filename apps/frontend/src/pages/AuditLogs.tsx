@@ -25,7 +25,7 @@ export function AuditLogs() {
     let mounted = true;
     const fetchLogs = async () => {
       try {
-        const response = await fetchSystemAuditLogs(100, 0);
+        const response = await fetchSystemAuditLogs(1000, 0);
         if (mounted) {
           setLogs(response.audit_logs);
         }
@@ -72,48 +72,50 @@ export function AuditLogs() {
         </div>
       </div>
 
-      <Card className="p-6 bg-slate-900 border-slate-800">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm text-gray-300">
-            <thead className="text-xs text-gray-400 uppercase bg-slate-800/50">
+      <Card className="p-0 bg-slate-900 border-slate-800 overflow-hidden shadow-xl ring-1 ring-white/5">
+        <div className="overflow-auto max-h-[calc(100vh-13rem)] scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+          <table className="w-full text-left text-sm text-gray-300 relative">
+            <thead className="text-xs text-gray-400 uppercase bg-slate-800/90 backdrop-blur-md sticky top-0 z-10 shadow-sm border-b border-slate-700">
               <tr>
-                <th className="px-4 py-3">Timestamp</th>
-                <th className="px-4 py-3">Action</th>
-                <th className="px-4 py-3">Actor</th>
-                <th className="px-4 py-3">Details</th>
-                <th className="px-4 py-3">IP Address</th>
-                <th className="px-4 py-3">Status</th>
+                <th className="px-5 py-4 font-semibold tracking-wider">Timestamp</th>
+                <th className="px-5 py-4 font-semibold tracking-wider">Action</th>
+                <th className="px-5 py-4 font-semibold tracking-wider">Actor</th>
+                <th className="px-5 py-4 font-semibold tracking-wider">Details</th>
+                <th className="px-5 py-4 font-semibold tracking-wider">IP Address</th>
+                <th className="px-5 py-4 font-semibold tracking-wider">Status</th>
               </tr>
             </thead>
             <tbody>
               {logs.map((log) => (
-                <tr key={log.id} className="border-b border-slate-800 hover:bg-slate-800/25">
-                  <td className="px-4 py-3 whitespace-nowrap">
+                <tr key={log.id} className="border-b border-slate-800/50 hover:bg-slate-800/40 transition-colors">
+                  <td className="px-5 py-3 whitespace-nowrap">
                     <div className="flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-gray-500" />
-                      {new Date(log.timestamp).toLocaleString()}
+                      <Clock className="w-4 h-4 text-slate-500" />
+                      <span className="font-mono text-xs">{new Date(log.timestamp).toLocaleString()}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 font-medium text-white">
-                    {log.action_type}
+                  <td className="px-5 py-3 font-medium text-slate-200">
+                    <Badge variant="outline" className="bg-slate-800/50 border-slate-700 text-slate-300">
+                      {log.action_type}
+                    </Badge>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-5 py-3">
                     <div className="flex flex-col">
-                      <span className="text-gray-200">{log.actor_name || 'System'}</span>
-                      <span className="text-xs text-gray-500 truncate w-32">{log.actor_id}</span>
+                      <span className="text-slate-200 font-medium">{log.actor_name || 'System'}</span>
+                      <span className="text-[10px] text-slate-500 font-mono truncate w-32">{log.actor_id}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 max-w-xs">
-                    <div className="flex items-center gap-2">
-                      <Info className="w-4 h-4 text-gray-500 flex-shrink-0" />
+                  <td className="px-5 py-3 max-w-sm">
+                    <div className="flex items-center gap-2 text-slate-400 group">
+                      <Info className="w-4 h-4 text-slate-500 flex-shrink-0 group-hover:text-indigo-400 transition-colors" />
                       <span className="truncate" title={log.description}>{log.description}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-gray-400 text-xs">
+                  <td className="px-5 py-3 text-slate-500 font-mono text-xs">
                     {log.ip_address || 'N/A'}
                   </td>
-                  <td className="px-4 py-3">
-                    <Badge className={getStatusColor(log.status)}>
+                  <td className="px-5 py-3">
+                    <Badge className={`${getStatusColor(log.status)} px-2 py-0.5 rounded-sm shadow-sm`}>
                       {log.status}
                     </Badge>
                   </td>
