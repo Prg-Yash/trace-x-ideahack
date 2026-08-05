@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
   BarChart3, AlertTriangle, Network, Users,
-  FileText, Home, Shield, Activity, Terminal, Building2, Globe2, Settings
+  FileText, Home, Shield, Activity, Terminal, Building2, Globe2, Settings, ServerCrash
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SettingsModal } from "@/components/auth/SettingsModal";
@@ -31,6 +31,7 @@ const navSections = [
     items: [
       { name: "Live Stream", href: "/livestream", icon: Activity, badge: "300 TPS" },
       { name: "Demo Control", href: "/demo", icon: Terminal, badge: "Inject" },
+      { name: "DR Drill", href: "/dr-drill", icon: ServerCrash, badge: "Test" },
     ],
   },
 ];
@@ -244,3 +245,4 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+

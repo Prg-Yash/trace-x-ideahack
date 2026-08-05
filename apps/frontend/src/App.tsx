@@ -25,7 +25,7 @@ import RiskMap from "@/pages/RiskMap";
 import UserManagement from "@/pages/UserManagement";
 import Branches from "@/pages/Branches";
 import { AuditLogs } from "@/pages/AuditLogs";
-
+import DRDrill from "@/pages/DRDrill";
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
   constructor(props: { children: React.ReactNode }) {
     super(props);
@@ -63,6 +63,7 @@ function BranchRoutes() {
       <Switch>
         <Route path="/dashboard" component={Dashboard} />
         <RoleRoute path="/demo" component={Demo} allowedRoles={["Admin", "Branch Manager"]} />
+        <RoleRoute path="/dr-drill" component={DRDrill} allowedRoles={["Admin", "Branch Manager"]} />
         <RoleRoute path="/livestream" component={LiveStream} allowedRoles={["Admin", "Branch Manager"]} />
         <Route path="/alerts" component={Alerts} />
         <Route path="/graph/:alertId" component={GraphAnalytics} />
@@ -110,7 +111,7 @@ function Router() {
     <RoutingGuard>
       <Switch>
         <Route path="/login" component={Login} />
-        
+
         {/* Home Page */}
         <Route path="/" component={Home} />
 
@@ -155,3 +156,4 @@ function App() {
 }
 
 export default App;
+

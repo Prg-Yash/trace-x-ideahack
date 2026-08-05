@@ -528,3 +528,4 @@ async def unlock_user(
         conn=conn
     )
     return {"message": "User unlocked successfully"}
+    return {"message": "User unlocked successfully"}

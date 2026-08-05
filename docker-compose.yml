@@ -18,3 +18,48 @@ services:
       - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
       # Apache Kafka official image requires a CLUSTER_ID to auto-format storage for KRaft
       - CLUSTER_ID=4L6g3nShT-eMCtK--X86sw
+
+  api-mumbai:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    expose:
+      - '8000'
+    volumes:
+      - ./models:/app/models
+    environment:
+      - DATA_CENTER=ap-south-1a
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    depends_on:
+      - kafka
+
+  api-hyderabad:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    expose:
+      - '8000'
+    volumes:
+      - ./models:/app/models
+    environment:
+      - DATA_CENTER=ap-south-1b
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    depends_on:
+      - kafka
+
+  nginx-lb:
+    image: nginx:alpine
+    ports:
+      - '8000:80'
+    volumes:
+      - ./nginx/dr_failover.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api-mumbai
+      - api-hyderabad
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+    ports:
+      - '3000:80'

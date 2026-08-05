@@ -388,3 +388,10 @@ export const sendChatMessage = (message: string, history: ChatHistoryTurn[] = []
 
 export const fetchSystemAuditLogs = (limit = 100, skip = 0) =>
   apiFetch<{ audit_logs: any[] }>(`/admin/audit-logs?limit=${limit}&skip=${skip}`);
+
+/** DR Drill Endpoints */
+export const fetchHealth = () =>
+  apiFetch<{ status: string; data_center: string }>("/health");
+
+export const simulateCrash = () =>
+  apiFetch<{ status: string; data_center: string }>("/health/crash", { method: "POST" });
